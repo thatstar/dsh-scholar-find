@@ -1,0 +1,72 @@
+# AGENTS.md — dsh-scholar-find
+
+## Mission
+
+Build a **scholar plugin** for DSH that offers **tools to the LLM** — not a
+predefined work loop. The plugin has two tool families plus companion
+instructions:
+
+1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
+   relevance / snippets), paper lookup, citations, references, recommendations,
+   authors, BibTeX export.
+2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
+   fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
+   bioRxiv/medRxiv → publisher direct (opt-in) → Sci-Hub (opt-in)), with
+   download, batch, and dry-run resolution.
+3. **Companion instructions** — a prompt section telling the LLM when and how
+   to use each tool (parameter hygiene, envelope interpretation, retry policy).
+
+The user configures plugin parameters (Unpaywall email, S2 API key, Sci-Hub
+toggle, output directory, …) in the **DSH Web UI: Settings → 插件 (Plugins) →
+插件配置 (Plugin Config)**; values persist to `$DSH_HOME/settings.yaml`.
+
+## Implementation rules (mandatory)
+
+- **TypeScript only.** The whole plugin is implemented in TypeScript for the
+  Node.js host. No Python, no shelling out to Python.
+- **Independent implementation.** The plugin is written from scratch against
+  the *public HTTP APIs* (Semantic Scholar Graph API, Unpaywall API, Crossref,
+  arXiv Atom, bioRxiv API, PMC/Europe PMC). Do **not** copy source code from
+  other projects — including the reference skill repos below (copyright /
+  licensing independence is a project requirement).
+- **Reference-only repos.** The following repos are *references* for API
+  behavior and tool UX design — never an upstream to vendor, sync, or import:
+
+  | Repo | What we take from it |
+  | --- | --- |
+  | [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill) | S2 REST endpoint semantics, query/filter vocabulary, result presentation conventions |
+  | [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Source-chain ordering, safety requirements (SSRF gate, `%PDF` check, size cap), agent-facing result envelope design |
+
+  Research clones may live in `.research-tmp/` (git-ignored) for consultation;
+  they are disposable and never part of the shipped plugin.
+
+## The `.notes/` rule (mandatory)
+
+All research findings, analysis and thoughts, design decisions, and plans for
+this project **must** be written down as Markdown files under `.notes/` in this
+repo. A research/planning task is not "done" until its conclusions live there.
+
+- `.notes/` is **git-ignored** — a local-only scratchpad. Do not rely on
+  reading it from a fresh clone; `AGENTS.md` (committed) is the durable rule.
+- Naming: zero-padded numbered Markdown (`01-findings.md`, `02-thoughts.md`,
+  `03-plan.md`, `04-tool-catalog.md`, …), with `.notes/README.md` as the index.
+- Prefer referencing `.notes/` files over dumping their content into chat.
+- Anything discovered that changes the plan must update `.notes/` alongside
+  the conversation.
+
+## Configuration (user-owned, via Web UI settings, not env vars in code)
+
+| Setting (namespace `dsh-scholar`) | Purpose |
+| --- | --- |
+| `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
+| `s2ApiKey` | Optional Semantic Scholar API key (dedicated quota). |
+| `scihubEnabled` | Enable the Sci-Hub last-resort fallback (default decided at review). |
+| `institutionalEnabled` | Opt-in publisher-direct fallback (user's own subscription access). |
+| `pdfOutputDir` | Where downloaded PDFs land (default `pdfs`). |
+| `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
+
+## Code policy
+
+No implementation code until the plan in `.notes/03-plan.md` and the tool
+catalog in `.notes/04-tool-catalog.md` have been reviewed. The current repo
+state is: research complete, plan in review.

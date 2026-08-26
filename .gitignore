@@ -38,3 +38,12 @@ Thumbs.db
 # Local tooling
 .codex/
 .agents/
+
+# Research scratchpad (local-only; rule in AGENTS.md)
+.notes/
+
+# Temporary upstream research clones
+.research-tmp/
+
+# paper-fetch default PDF output (created on use)
+pdfs/
