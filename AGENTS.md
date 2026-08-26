@@ -90,6 +90,10 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 ## Code policy
 
-No implementation code until the plan in `.notes/03-plan.md` and the tool
-catalog in `.notes/04-tool-catalog.md` have been reviewed. The current repo
-state is: research complete, plan in review.
+Implementation (Phase 3) is **done**: `packages/scholar/` is a pure-TypeScript
+DSH plugin (15 tools, settings section, companion instructions), with 31
+passing unit tests and a committed `lib/` build. Remaining: **Phase 4** —
+install into the live profile (`dsh plugin --profile web add ./packages/scholar`),
+reload, user sets `unpaywallEmail` in Settings → 插件 → 插件配置, end-to-end
+smoke test. Future changes must keep the plugin TypeScript-only, clean-room,
+and test-covered.

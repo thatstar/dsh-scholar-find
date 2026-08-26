@@ -39,6 +39,9 @@ Thumbs.db
 .codex/
 .agents/
 
+# npm local cache (dev)
+.npm-cache/
+
 # Research scratchpad (local-only; rule in AGENTS.md)
 .notes/
 
