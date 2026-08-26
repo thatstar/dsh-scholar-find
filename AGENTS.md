@@ -92,10 +92,13 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 Implementation (Phase 3) is **done** and Phase 4 is **in progress**:
 `packages/scholar/` is a pure-TypeScript DSH plugin (15 tools, settings
-section, companion instructions), 31 passing unit tests, committed `lib/`
-build, **installed into the live profile** (`dsh plugin --profile web add
-./packages/scholar` — bundle reconciled, loads in the profile context, live
-API smoke passed). Remaining: restart the deployment so the plugin activates,
-user sets `unpaywallEmail` in Settings → 插件 → 插件配置, in-session end-to-end
-verification. Future changes must keep the plugin TypeScript-only,
-clean-room, and test-covered.
+section, companion instructions, **client-half settings card**), 31 passing
+unit tests, committed `lib/` build, **installed into the live profile**
+(`dsh plugin --profile web add ./packages/scholar` — bundle reconciled,
+host row mounts cleanly, live API smoke passed). The missing settings card
+was a client-half gap: the Plugins tab only renders cards registered through
+the `settings.plugin.item` slot, so the fix ships a self-contained client
+bundle (`lib/client.js`, `__ModuleLoader__` format). Remaining: **one more
+deployment restart**, user sets `unpaywallEmail` in Settings → 插件 → 插件配置,
+in-session end-to-end verification. Future changes must keep the plugin
+TypeScript-only, clean-room, and test-covered.
