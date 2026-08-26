@@ -14,6 +14,7 @@ import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime } from '../fetch/service.js'
+import { sanitizeForOutput } from '../util/sanitize.js'
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
@@ -62,7 +63,16 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
   const register = (tool: ReturnType<typeof defineTool>): void => {
     const tools = ctx.get('tools')
     if (!tools) return
-    disposers.push(tools.register(tool))
+    // Wrap the tool's execute so its returned value is always lossless JSON:
+    // DSH rejects any tool result containing undefined / NaN / ±Infinity / -0
+    // / sparse arrays ("value is not lossless JSON"). Upstream data (S2 etc.)
+    // is messy, so every tool output goes through the sanitizer before it is
+    // snapshotted.
+    const execute = tool.execute.bind(tool)
+    disposers.push(tools.register({
+      ...tool,
+      execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
+    }))
   }
 
   // -------------------------------------------------------------------------

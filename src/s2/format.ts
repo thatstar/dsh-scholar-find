@@ -85,13 +85,14 @@ export function exportBibtex(papers: readonly PaperLike[]): string {
 /** Project papers to the compact model-facing shape used in tool results. */
 export function compactPapers(papers: readonly PaperLike[]): JsonValue[] {
   return papers.map((p) => ({
-    paperId: p.paperId,
-    title: p.title,
-    year: p.year,
-    citationCount: p.citationCount,
-    authors: (p.authors ?? []).map((a) => a.name),
-    venue: p.venue,
-    doi: doiOf(p) || undefined,
-    tldr: p.tldr?.text,
-  }) as unknown as JsonValue)
+    paperId: p.paperId ?? null,
+    title: p.title ?? null,
+    year: p.year ?? null,
+    citationCount: p.citationCount ?? 0,
+    // Every element is a lossless string; empty/missing author names are dropped.
+    authors: (p.authors ?? []).map((a) => a?.name ?? '').filter((n) => n !== ''),
+    venue: p.venue ?? null,
+    doi: doiOf(p) || null,
+    tldr: p.tldr?.text ?? null,
+  }) as JsonValue)
 }
