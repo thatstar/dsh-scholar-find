@@ -9,7 +9,8 @@ export const NS = 'dsh-scholar'
 /** Locale keys this card renders. */
 export type ScholarLocaleKey =
   | 'title' | 'description'
-  | 'save' | 'saving' | 'discard' | 'overridden' | 'reset' | 'invalidNumber'
+  | 'save' | 'saving' | 'discard' | 'overridden' | 'reset'
+  | 'unsaved' | 'expand' | 'collapse' | 'readOnly' | 'invalidNumber'
   | 'unpaywallEmail' | 'unpaywallEmailHint' | 'unpaywallEmailWarning'
   | 's2ApiKeyRef' | 's2ApiKeyRefHint'
   | 'scihubEnabled' | 'scihubEnabledHint'
@@ -29,6 +30,10 @@ export const en: Record<ScholarLocaleKey, string> = {
   discard: 'Discard',
   overridden: 'Overridden',
   reset: 'Reset',
+  unsaved: 'Unsaved',
+  expand: 'Show settings',
+  collapse: 'Hide settings',
+  readOnly: 'This deployment stores settings read-only.',
   invalidNumber: 'Enter a number, or leave blank to use the default.',
   unpaywallEmail: 'Unpaywall contact email',
   unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
@@ -61,6 +66,10 @@ export const zh: Record<ScholarLocaleKey, string> = {
   discard: '放弃修改',
   overridden: '已覆盖',
   reset: '恢复默认',
+  unsaved: '未保存',
+  expand: '显示设置',
+  collapse: '收起设置',
+  readOnly: '当前部署以只读方式存储设置。',
   invalidNumber: '请填数字；留空表示使用默认值。',
   unpaywallEmail: 'Unpaywall 联系邮箱',
   unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',

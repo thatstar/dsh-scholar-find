@@ -35,143 +35,254 @@ module.exports = __toCommonJS(client_exports);
 // src/client/ScholarCard.tsx
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
-var styles = {
-  card: {
-    listStyle: "none",
-    border: "1px solid var(--dsh-border, #333)",
-    borderRadius: 8,
-    padding: "12px 14px",
-    margin: "8px 0",
-    background: "var(--dsh-surface, #1c1c1c)",
-    color: "var(--dsh-text, #eee)"
-  },
-  header: { display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" },
-  title: { fontWeight: 600, fontSize: 14 },
-  description: { opacity: 0.7, fontSize: 12 },
-  badge: {
-    fontSize: 11,
-    padding: "1px 8px",
-    borderRadius: 10,
-    border: "1px solid currentColor",
-    opacity: 0.8
-  },
-  warning: { fontSize: 12, color: "#e2b93d", margin: "8px 0 0" },
-  field: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 },
-  fieldLabel: { fontSize: 12, fontWeight: 500 },
-  fieldHint: { fontSize: 11, opacity: 0.65 },
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "6px 8px",
-    borderRadius: 6,
-    border: "1px solid var(--dsh-border, #444)",
-    background: "var(--dsh-input, #262626)",
-    color: "inherit",
-    fontSize: 13
-  },
-  inputInvalid: { outline: "1px solid #d9534f" },
-  invalidText: { fontSize: 11, color: "#d9534f" },
-  row: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10 },
-  actions: { display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" },
-  button: {
-    padding: "5px 14px",
-    borderRadius: 6,
-    border: "1px solid var(--dsh-border, #555)",
-    background: "var(--dsh-button, #2c2c2c)",
-    color: "inherit",
-    cursor: "pointer",
-    fontSize: 13
-  },
-  buttonPrimary: { background: "#0b6bcb", borderColor: "#0b6bcb", color: "#fff" }
+var tokens = {
+  card: "var(--dsw-alias-border-l2)",
+  cardOpenBorder: "var(--dsw-alias-label-dimmed)",
+  layer3: "var(--dsw-alias-bg-layer-3)",
+  layer2: "var(--dsw-alias-bg-layer-2)",
+  labelPrimary: "var(--dsw-alias-label-primary)",
+  labelSecondary: "var(--dsw-alias-label-secondary)",
+  labelTertiary: "var(--dsw-alias-label-tertiary)",
+  labelError: "var(--dsw-alias-label-error)",
+  brand: "var(--dsw-alias-brand-primary)",
+  moduleBg: "var(--dsw-alias-bg-module-platform)",
+  border: "var(--dsw-alias-border-l2)"
 };
+var css = {
+  card: (open) => ({
+    listStyle: "none",
+    border: `1px solid ${open ? tokens.cardOpenBorder : tokens.card}`,
+    borderRadius: 12,
+    background: open ? tokens.layer2 : tokens.layer3,
+    transition: "border-color .16s, background .16s",
+    color: tokens.labelPrimary
+  }),
+  header: {
+    width: "100%",
+    appearance: "none",
+    border: 0,
+    background: "none",
+    font: "inherit",
+    color: "inherit",
+    textAlign: "left",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 16px",
+    borderRadius: 12
+  },
+  headText: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 },
+  name: { fontSize: 15, fontWeight: 600, lineHeight: 1.4, color: tokens.labelPrimary },
+  description: { fontSize: 13, lineHeight: 1.5, color: tokens.labelTertiary },
+  pending: {
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    lineHeight: "17px",
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+    background: tokens.moduleBg,
+    color: tokens.labelSecondary
+  },
+  chevron: (open) => ({
+    flex: "none",
+    color: tokens.labelTertiary,
+    transform: open ? "rotate(180deg)" : "none",
+    transition: "transform .16s"
+  }),
+  body: { borderTop: `1px solid ${tokens.border}`, margin: "0 16px", paddingBottom: 8 },
+  readOnly: { margin: "12px 0 0", fontSize: 12, lineHeight: 1.5, color: tokens.labelTertiary },
+  field: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: "12px 0",
+    borderTop: `1px solid ${tokens.border}`
+  },
+  fieldHead: { display: "flex", alignItems: "center", gap: 8 },
+  label: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, lineHeight: 1.5, color: tokens.labelPrimary },
+  badges: { display: "inline-flex", alignItems: "center", gap: 8 },
+  badge: {
+    borderRadius: 999,
+    padding: "1px 8px",
+    fontSize: 11,
+    lineHeight: "17px",
+    whiteSpace: "nowrap",
+    fontWeight: 500,
+    background: tokens.moduleBg,
+    color: tokens.labelSecondary
+  },
+  reset: {
+    border: "none",
+    background: "none",
+    padding: 0,
+    font: "inherit",
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: tokens.labelSecondary,
+    cursor: "pointer"
+  },
+  control: {
+    boxSizing: "border-box",
+    width: "100%",
+    padding: "7px 10px",
+    borderRadius: 8,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.layer3,
+    color: tokens.labelPrimary,
+    fontSize: 13,
+    lineHeight: 1.5
+  },
+  controlInvalid: { outline: `2px solid ${tokens.labelError}`, outlineOffset: 0 },
+  hint: { fontSize: 12, lineHeight: 1.5, color: tokens.labelTertiary },
+  invalidText: { fontSize: 12, lineHeight: 1.5, color: tokens.labelError },
+  boolean: { display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" },
+  footer: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: "12px 0 4px", borderTop: `1px solid ${tokens.border}` },
+  action: {
+    appearance: "none",
+    border: "1px solid transparent",
+    borderRadius: 8,
+    padding: "5px 14px",
+    font: "inherit",
+    fontSize: 13,
+    lineHeight: 1.5,
+    cursor: "pointer",
+    color: tokens.labelSecondary,
+    background: "none",
+    borderColor: tokens.border
+  },
+  actionSave: { background: tokens.labelPrimary, color: tokens.layer3, borderColor: "transparent" },
+  actionDisabled: { opacity: 0.4, cursor: "default" },
+  warning: {
+    margin: "12px 0 0",
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: tokens.labelError
+  }
+};
+function Chevron({ open }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 14 14", style: css.chevron(open), "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M3 5l4 4 4-4", stroke: "currentColor", strokeWidth: "1.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }) });
+}
+function Field(props) {
+  const { field, t, disabled } = props;
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.field, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.fieldHead, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { style: css.label, children: field.label }),
+      field.overridden && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: css.badges, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.badge, children: t("overridden") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: css.reset, disabled, onClick: props.onReset, children: t("reset") })
+      ] })
+    ] }),
+    field.kind === "boolean" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.boolean, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.hint, children: field.hint }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          type: "checkbox",
+          checked: field.raw === "true",
+          disabled,
+          "aria-label": field.label,
+          onChange: (e) => {
+            props.onToggle(e.target.checked);
+          }
+        }
+      )
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          type: field.kind === "secret" ? "password" : "text",
+          value: field.raw,
+          disabled,
+          placeholder: field.resolvedRaw || void 0,
+          "aria-label": field.label,
+          style: field.invalid ? { ...css.control, ...css.controlInvalid } : css.control,
+          onChange: (e) => {
+            props.onEdit(e.target.value);
+          }
+        }
+      ),
+      field.invalid && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.invalidText, children: field.invalid })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.hint, children: field.hint }),
+    field.raw !== "" && !field.overridden && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: css.reset, disabled, onClick: props.onReset, children: t("reset") })
+  ] });
+}
 function ScholarCard(props) {
   const [open, setOpen] = (0, import_react.useState)(false);
   const { t } = props;
   const state = props.useScholarCard((snapshot) => snapshot);
   if (state.status !== "ready") return null;
+  const blocked = !state.dirty || state.invalid || state.saving;
   const disabled = !state.writable || state.saving;
   const email = state.fields.unpaywallEmail;
   const emailEmpty = email !== void 0 && email.raw === "" && email.resolvedRaw === "";
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: styles.card, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.header, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-        "button",
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: css.card(open), children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "button",
+      {
+        type: "button",
+        style: css.header,
+        "aria-expanded": open,
+        "aria-label": `${t(open ? "collapse" : "expand")}: ${t("title")}`,
+        onClick: () => {
+          setOpen(!open);
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: css.headText, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.name, children: t("title") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.description, children: t("description") })
+          ] }),
+          state.dirty && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.pending, children: t("unsaved") }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Chevron, { open })
+        ]
+      }
+    ),
+    open && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.body, children: [
+      !state.writable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: css.readOnly, role: "status", children: t("readOnly") }),
+      emailEmpty && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: css.warning, role: "status", children: t("unpaywallEmailWarning") }),
+      Object.values(state.fields).map((field) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        Field,
         {
-          type: "button",
-          "aria-expanded": open,
-          onClick: () => {
-            setOpen(!open);
+          field,
+          t,
+          disabled,
+          onEdit: (raw) => {
+            props.edit(field.key, raw);
           },
-          style: { ...styles.button, fontSize: 14, fontWeight: 600 },
-          children: [
-            open ? "\u25BE" : "\u25B8",
-            " ",
-            t("title")
-          ]
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.description, children: t("description") }),
-      state.dirty && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.badge, children: t("saving") })
-    ] }),
-    emailEmpty && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.warning, children: t("unpaywallEmailWarning") }),
-    open && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-      Object.values(state.fields).map((field) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.field, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: styles.fieldLabel, children: [
-          field.label,
-          field.overridden && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { marginLeft: 8, fontSize: 11, opacity: 0.8 }, children: [
-            "\xB7 ",
-            t("overridden")
-          ] })
-        ] }),
-        field.kind === "boolean" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.row, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.fieldHint, children: field.hint }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
-            {
-              type: "checkbox",
-              checked: field.raw === "true",
-              disabled,
-              onChange: (e) => {
-                props.toggle(field.key, e.target.checked);
-              }
-            }
-          )
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
-            {
-              type: field.kind === "secret" ? "password" : "text",
-              value: field.raw,
-              disabled,
-              placeholder: field.resolvedRaw,
-              "aria-label": field.label,
-              style: { ...styles.input, ...field.invalid ? styles.inputInvalid : {} },
-              onChange: (e) => {
-                props.edit(field.key, e.target.value);
-              }
-            }
-          ),
-          field.invalid && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.invalidText, children: field.invalid })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.fieldHint, children: field.hint }),
-        (field.overridden || field.raw !== field.resolvedRaw) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, disabled, onClick: () => {
-          props.resetField(field.key);
-        }, children: t("reset") })
-      ] }, field.key)),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.actions, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: styles.button, disabled: !state.dirty || disabled, onClick: () => {
-          props.discard();
-        }, children: t("discard") }),
+          onToggle: (checked) => {
+            props.toggle(field.key, checked);
+          },
+          onReset: () => {
+            props.resetField(field.key);
+          }
+        },
+        field.key
+      )),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.footer, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
             type: "button",
-            style: { ...styles.button, ...styles.buttonPrimary },
-            disabled: !state.dirty || state.invalid || disabled,
+            style: { ...css.action, ...state.saving ? css.actionDisabled : {} },
+            disabled: !state.dirty || state.saving,
+            onClick: () => {
+              props.discard();
+            },
+            children: t("discard")
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            style: { ...css.action, ...css.actionSave, ...blocked ? css.actionDisabled : {} },
+            disabled: blocked,
             onClick: () => {
               void props.save();
             },
-            children: state.saving ? t("saving") : t("save")
+            children: t(state.saving ? "saving" : "save")
           }
         )
       ] })
@@ -349,6 +460,10 @@ var en = {
   discard: "Discard",
   overridden: "Overridden",
   reset: "Reset",
+  unsaved: "Unsaved",
+  expand: "Show settings",
+  collapse: "Hide settings",
+  readOnly: "This deployment stores settings read-only.",
   invalidNumber: "Enter a number, or leave blank to use the default.",
   unpaywallEmail: "Unpaywall contact email",
   unpaywallEmailHint: "Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.",
@@ -380,6 +495,10 @@ var zh = {
   discard: "\u653E\u5F03\u4FEE\u6539",
   overridden: "\u5DF2\u8986\u76D6",
   reset: "\u6062\u590D\u9ED8\u8BA4",
+  unsaved: "\u672A\u4FDD\u5B58",
+  expand: "\u663E\u793A\u8BBE\u7F6E",
+  collapse: "\u6536\u8D77\u8BBE\u7F6E",
+  readOnly: "\u5F53\u524D\u90E8\u7F72\u4EE5\u53EA\u8BFB\u65B9\u5F0F\u5B58\u50A8\u8BBE\u7F6E\u3002",
   invalidNumber: "\u8BF7\u586B\u6570\u5B57\uFF1B\u7559\u7A7A\u8868\u793A\u4F7F\u7528\u9ED8\u8BA4\u503C\u3002",
   unpaywallEmail: "Unpaywall \u8054\u7CFB\u90AE\u7BB1",
   unpaywallEmailHint: "\u542F\u7528 Unpaywall \u6765\u6E90\uFF08\u540C\u65F6\u7528\u4F5C Crossref \u793C\u8C8C\u6C60\u90AE\u7BB1\uFF09\u3002\u7559\u7A7A\u5219\u8DF3\u8FC7 Unpaywall\u3002",
