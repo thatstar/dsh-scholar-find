@@ -91,10 +91,10 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 ## Code policy
 
 Implementation (Phase 3) is **done** and Phase 4 is **in progress**:
-`packages/scholar/` is a pure-TypeScript DSH plugin (15 tools, settings
+`packages/scholar_find/` is a pure-TypeScript DSH plugin (15 tools, settings
 section, companion instructions, **client-half settings card**), 31 passing
 unit tests, committed `lib/` build, **installed into the live profile**
-(`dsh plugin --profile web add ./packages/scholar` — bundle reconciled,
+(`dsh plugin --profile web add ./packages/scholar_find` — bundle reconciled,
 host row mounts cleanly, live API smoke passed). The missing settings card
 was a client-half gap: the Plugins tab only renders cards registered through
 the `settings.plugin.item` slot, so the fix ships a self-contained client
