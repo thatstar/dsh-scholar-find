@@ -29,6 +29,10 @@ toggle, output directory, …) in the **DSH Web UI: Settings → 插件 (Plugins
   arXiv Atom, bioRxiv API, PMC/Europe PMC). Do **not** copy source code from
   other projects — including the reference skill repos below (copyright /
   licensing independence is a project requirement).
+- **No user-preset dependency.** The plugin is a self-contained
+  host-composition unit — tools, settings section, and companion-instructions
+  prompt row are mounted deployment-wide (host plane). No personalized agent
+  preset is required or used.
 - **Reference-only repos.** The following repos are *references* for API
   behavior and tool UX design — never an upstream to vendor, sync, or import:
 
@@ -59,10 +63,10 @@ repo. A research/planning task is not "done" until its conclusions live there.
 | Setting (namespace `dsh-scholar`) | Purpose |
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
-| `s2ApiKey` | Optional Semantic Scholar API key (dedicated quota). |
-| `scihubEnabled` | Enable the Sci-Hub last-resort fallback (default decided at review). |
+| `s2ApiKey` | Optional Semantic Scholar API key. **Decided: anonymous mode** (leave empty, 5 s pacing). |
+| `scihubEnabled` | Enable the Sci-Hub last-resort fallback. **Decided: off.** |
 | `institutionalEnabled` | Opt-in publisher-direct fallback (user's own subscription access). |
-| `pdfOutputDir` | Where downloaded PDFs land (default `pdfs`). |
+| `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
 ## Code policy
