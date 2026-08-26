@@ -1,12 +1,12 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 /**
- * The dsh-scholar settings card (client half). Rendered inside the Plugins
- * configuration tab for the `dsh-scholar` namespace via the
+ * The dsh-scholar-find settings card (client half). Rendered inside the Plugins
+ * configuration tab for the `dsh-scholar-find` namespace via the
  * `settings.plugin.item` keyed slot. The markup and design tokens mirror the
  * shipped `PluginCard`/`ValueField` cards so it reads as part of the same
  * surface (the shipped components are not publicly exportable, so the card
  * draws its own DOM using the same `--dsw-alias-*` theme variables).
- * @module dsh-scholar/client-card
+ * @module dsh-scholar-find/client-card
  */
 import { useState } from 'react';
 /** Design tokens reused from the settings surface (theme-controlled). */
@@ -144,7 +144,7 @@ function Field(props) {
     return (_jsxs("div", { style: css.field, children: [_jsxs("div", { style: css.fieldHead, children: [_jsx("label", { style: css.label, children: field.label }), field.overridden && (_jsxs("span", { style: css.badges, children: [_jsx("span", { style: css.badge, children: t('overridden') }), _jsx("button", { type: "button", style: css.reset, disabled: disabled, onClick: props.onReset, children: t('reset') })] }))] }), field.kind === 'boolean' ? (_jsx("div", { style: css.boolean, children: _jsx("input", { type: "checkbox", checked: field.raw === 'true', disabled: disabled, "aria-label": field.label, onChange: (e) => { props.onToggle(e.target.checked); } }) })) : (_jsxs(_Fragment, { children: [_jsx("input", { type: field.kind === 'secret' ? 'password' : 'text', value: field.raw, disabled: disabled, placeholder: field.resolvedRaw || undefined, "aria-label": field.label, style: field.invalid ? { ...css.control, ...css.controlInvalid } : css.control, onChange: (e) => { props.onEdit(e.target.value); } }), field.invalid && _jsx("span", { style: css.invalidText, children: field.invalid })] })), _jsx("span", { style: css.hint, children: field.hint })] }));
 }
 /**
- * Render the dsh-scholar card, mirroring the shipped plugin-card chrome.
+ * Render the dsh-scholar-find card, mirroring the shipped plugin-card chrome.
  * @param props - locale copy, the card snapshot hook, and the form actions.
  * @returns the card, or nothing while the namespace is unavailable.
  */

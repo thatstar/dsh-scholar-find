@@ -4,7 +4,7 @@
  * bioRxiv/medRxiv -> publisher direct (institutional opt-in) -> Sci-Hub
  * (opt-in, off by decision). Each resolver returns PDF URL candidates plus
  * metadata; the download loop validates and writes.
- * @module dsh-scholar/fetch-chain
+ * @module dsh-scholar-find/fetch-chain
  */
 import { getPaper } from '../s2/client.js';
 const DEFAULT_SCIHUB_MIRRORS = ['sci-hub.ru', 'sci-hub.st', 'sci-hub.su', 'sci-hub.box', 'sci-hub.red', 'sci-hub.al', 'sci-hub.mk', 'sci-hub.ee'];

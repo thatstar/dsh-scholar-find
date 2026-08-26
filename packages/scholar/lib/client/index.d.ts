@@ -1,16 +1,16 @@
 /**
- * dsh-scholar client half: renders the plugin's settings card inside the
+ * dsh-scholar-find client half: renders the plugin's settings card inside the
  * Plugins configuration tab. The card registers under the `settings.plugin.item`
- * keyed slot for the `dsh-scholar` namespace the host half serves.
+ * keyed slot for the `dsh-scholar-find` namespace the host half serves.
  *
  * This entry is bundled into a single self-contained file
  * (`window.__ModuleLoader__.load({ id, factory })`) by
  * `scripts/build-client.mjs` and served by the web shell as
- * `/plugins/dsh-scholar/client.js`.
- * @module dsh-scholar/client
+ * `/plugins/dsh-scholar-find/client.js`.
+ * @module dsh-scholar-find/client
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
-export declare const name = "dsh-scholar-client";
+export declare const name = "dsh-scholar-find-client";
 /** Required client services (cordis fiber inject). */
 export declare const inject: readonly ["slots", "settingsScope", "locale"];
 /**

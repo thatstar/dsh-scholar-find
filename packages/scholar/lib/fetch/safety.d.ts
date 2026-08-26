@@ -3,7 +3,7 @@
  * check, size cap, and a redirect walk that re-validates every hop.
  * Independent TypeScript implementation of the documented safety
  * requirements (no code from the reference repos).
- * @module dsh-scholar/fetch-safety
+ * @module dsh-scholar-find/fetch-safety
  */
 /** Reasons one URL was refused. */
 export type SafetyReason = 'malformed_url' | 'scheme_not_allowed' | 'port_not_allowed' | 'empty_host' | 'blocked_host' | 'private_ip' | 'ipv6_literal' | 'dns_error' | 'dns_private_ip';

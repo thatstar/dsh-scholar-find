@@ -3,7 +3,7 @@
  * check, size cap, and a redirect walk that re-validates every hop.
  * Independent TypeScript implementation of the documented safety
  * requirements (no code from the reference repos).
- * @module dsh-scholar/fetch-safety
+ * @module dsh-scholar-find/fetch-safety
  */
 
 import { isIP } from 'node:net'

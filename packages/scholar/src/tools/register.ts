@@ -1,7 +1,7 @@
 /**
- * Tool registration for dsh-scholar: `scholar_search_*` and `paper_fetch_*`
+ * Tool registration for dsh-scholar-find: `scholar_search_*` and `paper_fetch_*`
  * families, defined with `defineTool` and registered into `ctx.tools`.
- * @module dsh-scholar/tools
+ * @module dsh-scholar-find/tools
  */
 
 import { Context } from '@deepseek-ai/cordis'

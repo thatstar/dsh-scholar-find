@@ -5,7 +5,7 @@
  *
  * Enforces: per-request pacing (auto 1100 ms with a key / 5000 ms anonymous),
  * exponential backoff on 429/504, and a 403-with-key fallback to anonymous.
- * @module dsh-scholar/s2-client
+ * @module dsh-scholar-find/s2-client
  */
 /** Default anonymous pacing, ms. */
 export declare const ANONYMOUS_GAP_MS = 5000;

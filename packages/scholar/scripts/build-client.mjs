@@ -22,7 +22,7 @@ const result = await build({
 
 const code = result.outputFiles[0].text.replace(/\s*\/\/# sourceMappingURL=.*$/, '')
 const wrapped = `window.__ModuleLoader__.load({
-  id: 'dsh-scholar',
+  id: 'dsh-scholar-find',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

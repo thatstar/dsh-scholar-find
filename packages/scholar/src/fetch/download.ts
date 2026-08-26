@@ -2,7 +2,7 @@
  * Downloading and library bookkeeping: deterministic filenames,
  * skip-existing, `%PDF` + size validation through the safety gate, and the
  * idempotency sidecar (`<out>/.paper-fetch-idem/<sha256>.json`).
- * @module dsh-scholar/fetch-download
+ * @module dsh-scholar-find/fetch-download
  */
 
 import { createHash } from 'node:crypto'

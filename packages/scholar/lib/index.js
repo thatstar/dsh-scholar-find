@@ -1,12 +1,12 @@
 /**
- * dsh-scholar — DSH plugin registering:
- *   1. the `dsh-scholar` settings section (Web UI: Settings -> Plugins ->
+ * dsh-scholar-find — DSH plugin registering:
+ *   1. the `dsh-scholar-find` settings section (Web UI: Settings -> Plugins ->
  *      Plugin configuration; persisted to $DSH_HOME/settings.yaml),
  *   2. the `scholar_search_*` / `paper_fetch_*` tools,
  *   3. the companion-instructions prompt section.
  *
  * Pure TypeScript, Node host, no Python, no vendored upstream code.
- * @module dsh-scholar
+ * @module dsh-scholar-find
  */
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { installSettingsSection } from '@deepseek-ai/dsh-settings';
@@ -26,7 +26,7 @@ export const DEFAULT_SCHOLAR_SETTINGS = {
     maxPdfSizeMb: 50,
     s2RequestGapMs: 0,
 };
-export const name = 'dsh-scholar';
+export const name = 'dsh-scholar-find';
 export function apply(ctx) {
     let source = () => DEFAULT_SCHOLAR_SETTINGS;
     // 1. Settings section -----------------------------------------------------

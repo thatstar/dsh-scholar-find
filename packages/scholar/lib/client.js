@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-scholar',
+  id: 'dsh-scholar-find',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -447,7 +447,7 @@ var ScholarCardController = class {
 };
 
 // src/client/locales.ts
-var NS = "dsh-scholar";
+var NS = "dsh-scholar-find";
 var en = {
   title: "Scholar",
   description: "Semantic Scholar search and open-access PDF fetch.",
@@ -520,7 +520,7 @@ var zh = {
 };
 
 // src/client/index.ts
-var name = "dsh-scholar-client";
+var name = "dsh-scholar-find-client";
 var inject = ["slots", "settingsScope", "locale"];
 var FIELD_SPECS = [
   { key: "unpaywallEmail", kind: "text" },
@@ -535,7 +535,7 @@ var FIELD_SPECS = [
   { key: "s2RequestGapMs", kind: "number" }
 ];
 function apply(ctx) {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-scholar: card dictionaries");
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-scholar-find: card dictionaries");
   const t = ctx.locale.bind(NS);
   const scope = ctx.settingsScope.bind({ namespace: NS });
   const controller = new ScholarCardController(scope, FIELD_SPECS, (key) => t(key));

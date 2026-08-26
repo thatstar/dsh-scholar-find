@@ -79,7 +79,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 ## Configuration (user-owned, via Web UI settings, not env vars in code)
 
-| Setting (namespace `dsh-scholar`) | Purpose |
+| Setting (namespace `dsh-scholar-find`) | Purpose |
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
 | `s2ApiKeyRef` | Optional S2 key as a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials` — same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |

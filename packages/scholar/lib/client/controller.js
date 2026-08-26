@@ -1,10 +1,10 @@
 /**
- * The dsh-scholar card controller (client half): a small zustand-free
+ * The dsh-scholar-find card controller (client half): a small zustand-free
  * snapshot store plus the form logic driven by a bound settings scope.
  * Mirrors the pattern of the shipped plugin cards without importing their
  * internal utilities (client bundle purity). The scope is consumed
  * structurally so the bundle never value-imports a DSH client package.
- * @module dsh-scholar/client-controller
+ * @module dsh-scholar-find/client-controller
  */
 /** Minimal observable snapshot store (no external store dependency). */
 class SnapshotStoreImpl {

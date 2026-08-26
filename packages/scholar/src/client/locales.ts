@@ -1,10 +1,10 @@
 /**
- * Locale dictionaries for the dsh-scholar settings card (client half).
- * Registered under the `dsh-scholar` dictionary namespace.
- * @module dsh-scholar/client-locales
+ * Locale dictionaries for the dsh-scholar-find settings card (client half).
+ * Registered under the `dsh-scholar-find` dictionary namespace.
+ * @module dsh-scholar-find/client-locales
  */
 
-export const NS = 'dsh-scholar'
+export const NS = 'dsh-scholar-find'
 
 /** Locale keys this card renders. */
 export type ScholarLocaleKey =

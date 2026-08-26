@@ -2,10 +2,10 @@
  * Companion instructions for the scholar tools, registered as a system-prompt
  * section by the plugin so the model knows when and how to use each tool
  * family. Guidance only — the model composes the pipeline per the user's goal.
- * @module dsh-scholar/instructions
+ * @module dsh-scholar-find/instructions
  */
 
-export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar)
+export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar-find)
 
 Two tool families are available for academic paper research:
 

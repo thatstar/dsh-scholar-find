@@ -2,7 +2,7 @@
  * Result envelopes and error classes for the paper_fetch tools. Structured so
  * the model can route retries deterministically: some errors are retryable
  * now, some only later, some never.
- * @module dsh-scholar/fetch-envelope
+ * @module dsh-scholar-find/fetch-envelope
  */
 /** Retry hints in hours per error code (recommendations for the model). */
 export declare const RETRY_AFTER_HOURS: Readonly<Record<string, number>>;

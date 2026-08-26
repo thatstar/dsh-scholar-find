@@ -1,13 +1,13 @@
 /**
- * dsh-scholar client half: renders the plugin's settings card inside the
+ * dsh-scholar-find client half: renders the plugin's settings card inside the
  * Plugins configuration tab. The card registers under the `settings.plugin.item`
- * keyed slot for the `dsh-scholar` namespace the host half serves.
+ * keyed slot for the `dsh-scholar-find` namespace the host half serves.
  *
  * This entry is bundled into a single self-contained file
  * (`window.__ModuleLoader__.load({ id, factory })`) by
  * `scripts/build-client.mjs` and served by the web shell as
- * `/plugins/dsh-scholar/client.js`.
- * @module dsh-scholar/client
+ * `/plugins/dsh-scholar-find/client.js`.
+ * @module dsh-scholar-find/client
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
@@ -21,7 +21,7 @@ import { ScholarCard } from './ScholarCard.js'
 import { ScholarCardController, type ScholarFieldSpec, type ScholarScopeLike } from './controller.js'
 import { NS, en, zh } from './locales.js'
 
-export const name = 'dsh-scholar-client'
+export const name = 'dsh-scholar-find-client'
 
 /** Required client services (cordis fiber inject). */
 export const inject = ['slots', 'settingsScope', 'locale'] as const
@@ -46,7 +46,7 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-scholar: card dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-scholar-find: card dictionaries')
 
   const t = ctx.locale.bind(NS)
   const scope = ctx.settingsScope.bind({ namespace: NS }) as unknown as ScholarScopeLike

@@ -1,9 +1,9 @@
 /**
- * Shared settings and validation for the dsh-scholar plugin.
+ * Shared settings and validation for the dsh-scholar-find plugin.
  * The namespace shows up in the Web UI as a plugin configuration card
  * (Settings -> Plugins -> Plugin configuration) and persists to
  * `$DSH_HOME/settings.yaml`.
- * @module dsh-scholar/settings
+ * @module dsh-scholar-find/settings
  */
 import z from '@deepseek-ai/schemastery';
 /** Settings namespace of this plugin. */

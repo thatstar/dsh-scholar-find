@@ -1,7 +1,7 @@
 /**
  * Present S2 papers/authors as compact Markdown for the model, plus BibTeX
  * export from the `citationStyles` field.
- * @module dsh-scholar/s2-format
+ * @module dsh-scholar-find/s2-format
  */
 
 /** Lossless JSON value (matches the DSH tool-output contract). */

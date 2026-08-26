@@ -1,7 +1,7 @@
 /**
  * Orchestration for the paper_fetch tools: resolve-only, single download, and
  * batch with idempotency. Produces the stable JSON envelopes the tools return.
- * @module dsh-scholar/fetch-service
+ * @module dsh-scholar-find/fetch-service
  */
 
 import { join } from 'node:path'

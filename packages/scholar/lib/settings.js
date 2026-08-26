@@ -1,14 +1,14 @@
 /**
- * Shared settings and validation for the dsh-scholar plugin.
+ * Shared settings and validation for the dsh-scholar-find plugin.
  * The namespace shows up in the Web UI as a plugin configuration card
  * (Settings -> Plugins -> Plugin configuration) and persists to
  * `$DSH_HOME/settings.yaml`.
- * @module dsh-scholar/settings
+ * @module dsh-scholar-find/settings
  */
 import z from '@deepseek-ai/schemastery';
 import { settingsNamespace } from '@deepseek-ai/dsh-settings';
 /** Settings namespace of this plugin. */
-export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar');
+export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find');
 /**
  * Schema of the resolved section, typed against {@link ScholarSettings}. All
  * fields carry defaults so the plugin is usable before the user touches the
@@ -51,14 +51,14 @@ export function assertServiceableScholarSettings(config) {
         ['maxPdfSizeMb', config.maxPdfSizeMb],
     ]) {
         if (!Number.isFinite(value) || value <= 0) {
-            throw new Error(`dsh-scholar: ${name} must be a positive finite number`);
+            throw new Error(`dsh-scholar-find: ${name} must be a positive finite number`);
         }
     }
     if (!Number.isFinite(config.s2RequestGapMs) || config.s2RequestGapMs < 0) {
-        throw new Error('dsh-scholar: s2RequestGapMs must be a non-negative finite number');
+        throw new Error('dsh-scholar-find: s2RequestGapMs must be a non-negative finite number');
     }
     if (config.maxResultsPerSearch > 1000) {
-        throw new Error('dsh-scholar: maxResultsPerSearch must be no greater than 1000');
+        throw new Error('dsh-scholar-find: maxResultsPerSearch must be no greater than 1000');
     }
 }
 //# sourceMappingURL=settings.js.map

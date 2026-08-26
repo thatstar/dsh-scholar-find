@@ -2,7 +2,7 @@
  * Downloading and library bookkeeping: deterministic filenames,
  * skip-existing, `%PDF` + size validation through the safety gate, and the
  * idempotency sidecar (`<out>/.paper-fetch-idem/<sha256>.json`).
- * @module dsh-scholar/fetch-download
+ * @module dsh-scholar-find/fetch-download
  */
 import type { PaperMeta } from './chain.js';
 /** Deterministic filename: {first_author}_{year}_{journal_abbrev}_{title_slug}.pdf */

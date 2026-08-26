@@ -1,7 +1,7 @@
 {
-  "name": "dsh-scholar",
+  "name": "dsh-scholar-find",
   "version": "0.1.0",
-  "description": "DSH scholar plugin: Semantic Scholar search tools (scholar_search_*) and open-access PDF fetch tools (paper_fetch_*), configured via the Web UI settings (dsh-scholar namespace).",
+  "description": "DSH scholar plugin: Semantic Scholar search tools (scholar_search_*) and open-access PDF fetch tools (paper_fetch_*), configured via the Web UI settings (dsh-scholar-find namespace).",
   "license": "MIT",
   "type": "module",
   "engines": {
