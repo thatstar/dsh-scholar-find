@@ -122,7 +122,7 @@ const css = {
   controlInvalid: { outline: `2px solid ${tokens.labelError}`, outlineOffset: 0 },
   hint: { fontSize: 12, lineHeight: 1.5, color: tokens.labelTertiary },
   invalidText: { fontSize: 12, lineHeight: 1.5, color: tokens.labelError },
-  boolean: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between' },
+  boolean: { display: 'flex', alignItems: 'center', gap: 10 },
   footer: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '12px 0 4px', borderTop: `1px solid ${tokens.border}` },
   action: {
     appearance: 'none' as const,
@@ -177,7 +177,6 @@ function Field(props: {
       </div>
       {field.kind === 'boolean' ? (
         <div style={css.boolean}>
-          <span style={css.hint}>{field.hint}</span>
           <input
             type="checkbox"
             checked={field.raw === 'true'}
@@ -201,9 +200,6 @@ function Field(props: {
         </>
       )}
       <span style={css.hint}>{field.hint}</span>
-      {field.raw !== '' && !field.overridden && (
-        <button type="button" style={css.reset} disabled={disabled} onClick={props.onReset}>{t('reset')}</button>
-      )}
     </div>
   )
 }

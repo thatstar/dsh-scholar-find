@@ -137,7 +137,7 @@ var css = {
   controlInvalid: { outline: `2px solid ${tokens.labelError}`, outlineOffset: 0 },
   hint: { fontSize: 12, lineHeight: 1.5, color: tokens.labelTertiary },
   invalidText: { fontSize: 12, lineHeight: 1.5, color: tokens.labelError },
-  boolean: { display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" },
+  boolean: { display: "flex", alignItems: "center", gap: 10 },
   footer: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: "12px 0 4px", borderTop: `1px solid ${tokens.border}` },
   action: {
     appearance: "none",
@@ -174,21 +174,18 @@ function Field(props) {
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: css.reset, disabled, onClick: props.onReset, children: t("reset") })
       ] })
     ] }),
-    field.kind === "boolean" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.boolean, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.hint, children: field.hint }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "input",
-        {
-          type: "checkbox",
-          checked: field.raw === "true",
-          disabled,
-          "aria-label": field.label,
-          onChange: (e) => {
-            props.onToggle(e.target.checked);
-          }
+    field.kind === "boolean" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: css.boolean, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "input",
+      {
+        type: "checkbox",
+        checked: field.raw === "true",
+        disabled,
+        "aria-label": field.label,
+        onChange: (e) => {
+          props.onToggle(e.target.checked);
         }
-      )
-    ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      }
+    ) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "input",
         {
@@ -205,8 +202,7 @@ function Field(props) {
       ),
       field.invalid && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.invalidText, children: field.invalid })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.hint, children: field.hint }),
-    field.raw !== "" && !field.overridden && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: css.reset, disabled, onClick: props.onReset, children: t("reset") })
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: css.hint, children: field.hint })
   ] });
 }
 function ScholarCard(props) {

@@ -112,7 +112,7 @@ const css = {
     controlInvalid: { outline: `2px solid ${tokens.labelError}`, outlineOffset: 0 },
     hint: { fontSize: 12, lineHeight: 1.5, color: tokens.labelTertiary },
     invalidText: { fontSize: 12, lineHeight: 1.5, color: tokens.labelError },
-    boolean: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between' },
+    boolean: { display: 'flex', alignItems: 'center', gap: 10 },
     footer: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '12px 0 4px', borderTop: `1px solid ${tokens.border}` },
     action: {
         appearance: 'none',
@@ -141,7 +141,7 @@ function Chevron({ open }) {
 }
 function Field(props) {
     const { field, t, disabled } = props;
-    return (_jsxs("div", { style: css.field, children: [_jsxs("div", { style: css.fieldHead, children: [_jsx("label", { style: css.label, children: field.label }), field.overridden && (_jsxs("span", { style: css.badges, children: [_jsx("span", { style: css.badge, children: t('overridden') }), _jsx("button", { type: "button", style: css.reset, disabled: disabled, onClick: props.onReset, children: t('reset') })] }))] }), field.kind === 'boolean' ? (_jsxs("div", { style: css.boolean, children: [_jsx("span", { style: css.hint, children: field.hint }), _jsx("input", { type: "checkbox", checked: field.raw === 'true', disabled: disabled, "aria-label": field.label, onChange: (e) => { props.onToggle(e.target.checked); } })] })) : (_jsxs(_Fragment, { children: [_jsx("input", { type: field.kind === 'secret' ? 'password' : 'text', value: field.raw, disabled: disabled, placeholder: field.resolvedRaw || undefined, "aria-label": field.label, style: field.invalid ? { ...css.control, ...css.controlInvalid } : css.control, onChange: (e) => { props.onEdit(e.target.value); } }), field.invalid && _jsx("span", { style: css.invalidText, children: field.invalid })] })), _jsx("span", { style: css.hint, children: field.hint }), field.raw !== '' && !field.overridden && (_jsx("button", { type: "button", style: css.reset, disabled: disabled, onClick: props.onReset, children: t('reset') }))] }));
+    return (_jsxs("div", { style: css.field, children: [_jsxs("div", { style: css.fieldHead, children: [_jsx("label", { style: css.label, children: field.label }), field.overridden && (_jsxs("span", { style: css.badges, children: [_jsx("span", { style: css.badge, children: t('overridden') }), _jsx("button", { type: "button", style: css.reset, disabled: disabled, onClick: props.onReset, children: t('reset') })] }))] }), field.kind === 'boolean' ? (_jsx("div", { style: css.boolean, children: _jsx("input", { type: "checkbox", checked: field.raw === 'true', disabled: disabled, "aria-label": field.label, onChange: (e) => { props.onToggle(e.target.checked); } }) })) : (_jsxs(_Fragment, { children: [_jsx("input", { type: field.kind === 'secret' ? 'password' : 'text', value: field.raw, disabled: disabled, placeholder: field.resolvedRaw || undefined, "aria-label": field.label, style: field.invalid ? { ...css.control, ...css.controlInvalid } : css.control, onChange: (e) => { props.onEdit(e.target.value); } }), field.invalid && _jsx("span", { style: css.invalidText, children: field.invalid })] })), _jsx("span", { style: css.hint, children: field.hint })] }));
 }
 /**
  * Render the dsh-scholar card, mirroring the shipped plugin-card chrome.
