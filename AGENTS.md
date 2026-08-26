@@ -63,7 +63,7 @@ repo. A research/planning task is not "done" until its conclusions live there.
 | Setting (namespace `dsh-scholar`) | Purpose |
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
-| `s2ApiKey` | Optional Semantic Scholar API key. **Decided: anonymous mode** (leave empty, 5 s pacing). |
+| `s2ApiKeyRef` | Optional S2 key as a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials` — same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |
 | `scihubEnabled` | Enable the Sci-Hub last-resort fallback. **Decided: off.** |
 | `institutionalEnabled` | Opt-in publisher-direct fallback (user's own subscription access). |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
