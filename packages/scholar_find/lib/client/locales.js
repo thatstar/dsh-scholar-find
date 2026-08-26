@@ -5,7 +5,7 @@
  */
 export const NS = 'dsh-scholar-find';
 export const en = {
-    title: 'Scholar',
+    title: 'Scholar Retrieval',
     description: 'Semantic Scholar search and open-access PDF fetch.',
     save: 'Save',
     saving: 'Saving…',
@@ -19,7 +19,6 @@ export const en = {
     invalidNumber: 'Enter a number, or leave blank to use the default.',
     unpaywallEmail: 'Unpaywall contact email',
     unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
-    unpaywallEmailWarning: 'No email set: Unpaywall is skipped and fetch coverage is reduced.',
     s2ApiKeyRef: 'Semantic Scholar API key reference',
     s2ApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).',
     scihubEnabled: 'Sci-Hub fallback',
@@ -40,7 +39,7 @@ export const en = {
     s2RequestGapMsHint: '0 = auto (1100 ms with key, 5000 ms anonymous).',
 };
 export const zh = {
-    title: 'Scholar 学术搜索',
+    title: '学术检索',
     description: 'Semantic Scholar 论文检索与开放获取 PDF 下载。',
     save: '保存',
     saving: '保存中…',
@@ -54,7 +53,6 @@ export const zh = {
     invalidNumber: '请填数字；留空表示使用默认值。',
     unpaywallEmail: 'Unpaywall 联系邮箱',
     unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',
-    unpaywallEmailWarning: '未设置邮箱：Unpaywall 将被跳过，下载覆盖率下降。',
     s2ApiKeyRef: 'Semantic Scholar API 密钥引用',
     s2ApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。',
     scihubEnabled: 'Sci-Hub 兜底',

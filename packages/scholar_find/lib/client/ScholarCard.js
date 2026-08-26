@@ -129,12 +129,6 @@ const css = {
     },
     actionSave: { background: tokens.labelPrimary, color: tokens.layer3, borderColor: 'transparent' },
     actionDisabled: { opacity: 0.4, cursor: 'default' },
-    warning: {
-        margin: '12px 0 0',
-        fontSize: 12,
-        lineHeight: 1.5,
-        color: tokens.labelError,
-    },
 };
 function Chevron({ open }) {
     return (_jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", style: css.chevron(open), "aria-hidden": "true", children: _jsx("path", { d: "M3 5l4 4 4-4", stroke: "currentColor", strokeWidth: "1.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }) }));
@@ -156,8 +150,6 @@ export function ScholarCard(props) {
         return null;
     const blocked = !state.dirty || state.invalid || state.saving;
     const disabled = !state.writable || state.saving;
-    const email = state.fields.unpaywallEmail;
-    const emailEmpty = email !== undefined && email.raw === '' && email.resolvedRaw === '';
-    return (_jsxs("li", { style: css.card(open), children: [_jsxs("button", { type: "button", style: css.header, "aria-expanded": open, "aria-label": `${t(open ? 'collapse' : 'expand')}: ${t('title')}`, onClick: () => { setOpen(!open); }, children: [_jsxs("span", { style: css.headText, children: [_jsx("span", { style: css.name, children: t('title') }), _jsx("span", { style: css.description, children: t('description') })] }), state.dirty && _jsx("span", { style: css.pending, children: t('unsaved') }), _jsx(Chevron, { open: open })] }), open && (_jsxs("div", { style: css.body, children: [!state.writable && _jsx("p", { style: css.readOnly, role: "status", children: t('readOnly') }), emailEmpty && _jsx("p", { style: css.warning, role: "status", children: t('unpaywallEmailWarning') }), Object.values(state.fields).map((field) => (_jsx(Field, { field: field, t: t, disabled: disabled, onEdit: (raw) => { props.edit(field.key, raw); }, onToggle: (checked) => { props.toggle(field.key, checked); }, onReset: () => { props.resetField(field.key); } }, field.key))), _jsxs("div", { style: css.footer, children: [_jsx("button", { type: "button", style: { ...css.action, ...(state.saving ? css.actionDisabled : {}) }, disabled: !state.dirty || state.saving, onClick: () => { props.discard(); }, children: t('discard') }), _jsx("button", { type: "button", style: { ...css.action, ...css.actionSave, ...(blocked ? css.actionDisabled : {}) }, disabled: blocked, onClick: () => { void props.save(); }, children: t(state.saving ? 'saving' : 'save') })] })] }))] }));
+    return (_jsxs("li", { style: css.card(open), children: [_jsxs("button", { type: "button", style: css.header, "aria-expanded": open, "aria-label": `${t(open ? 'collapse' : 'expand')}: ${t('title')}`, onClick: () => { setOpen(!open); }, children: [_jsxs("span", { style: css.headText, children: [_jsx("span", { style: css.name, children: t('title') }), _jsx("span", { style: css.description, children: t('description') })] }), state.dirty && _jsx("span", { style: css.pending, children: t('unsaved') }), _jsx(Chevron, { open: open })] }), open && (_jsxs("div", { style: css.body, children: [!state.writable && _jsx("p", { style: css.readOnly, role: "status", children: t('readOnly') }), Object.values(state.fields).map((field) => (_jsx(Field, { field: field, t: t, disabled: disabled, onEdit: (raw) => { props.edit(field.key, raw); }, onToggle: (checked) => { props.toggle(field.key, checked); }, onReset: () => { props.resetField(field.key); } }, field.key))), _jsxs("div", { style: css.footer, children: [_jsx("button", { type: "button", style: { ...css.action, ...(state.saving ? css.actionDisabled : {}) }, disabled: !state.dirty || state.saving, onClick: () => { props.discard(); }, children: t('discard') }), _jsx("button", { type: "button", style: { ...css.action, ...css.actionSave, ...(blocked ? css.actionDisabled : {}) }, disabled: blocked, onClick: () => { void props.save(); }, children: t(state.saving ? 'saving' : 'save') })] })] }))] }));
 }
 //# sourceMappingURL=ScholarCard.js.map

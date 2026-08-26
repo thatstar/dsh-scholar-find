@@ -14,6 +14,8 @@ const result = await build({
   platform: 'browser',
   target: 'es2022',
   jsx: 'automatic',
+  // Keep non-ASCII (CJK card copy) as-is instead of ASCII-escaping it.
+  charset: 'utf8',
   // Externals come from the page's module table (import map), never bundled.
   external: ['react', 'react/jsx-runtime', 'react-dom', '@deepseek-ai/*'],
   write: false,

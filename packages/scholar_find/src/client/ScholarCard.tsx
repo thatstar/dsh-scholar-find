@@ -139,12 +139,6 @@ const css = {
   },
   actionSave: { background: tokens.labelPrimary, color: tokens.layer3, borderColor: 'transparent' },
   actionDisabled: { opacity: 0.4, cursor: 'default' },
-  warning: {
-    margin: '12px 0 0',
-    fontSize: 12,
-    lineHeight: 1.5,
-    color: tokens.labelError,
-  },
 } as const
 
 function Chevron({ open }: { open: boolean }) {
@@ -217,8 +211,6 @@ export function ScholarCard(props: ScholarCardProps) {
 
   const blocked = !state.dirty || state.invalid || state.saving
   const disabled = !state.writable || state.saving
-  const email = state.fields.unpaywallEmail
-  const emailEmpty = email !== undefined && email.raw === '' && email.resolvedRaw === ''
 
   return (
     <li style={css.card(open)}>
@@ -239,7 +231,6 @@ export function ScholarCard(props: ScholarCardProps) {
       {open && (
         <div style={css.body}>
           {!state.writable && <p style={css.readOnly} role="status">{t('readOnly')}</p>}
-          {emailEmpty && <p style={css.warning} role="status">{t('unpaywallEmailWarning')}</p>}
           {Object.values(state.fields).map((field) => (
             <Field
               key={field.key}

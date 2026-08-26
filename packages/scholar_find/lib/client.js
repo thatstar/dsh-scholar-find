@@ -153,13 +153,7 @@ var css = {
     borderColor: tokens.border
   },
   actionSave: { background: tokens.labelPrimary, color: tokens.layer3, borderColor: "transparent" },
-  actionDisabled: { opacity: 0.4, cursor: "default" },
-  warning: {
-    margin: "12px 0 0",
-    fontSize: 12,
-    lineHeight: 1.5,
-    color: tokens.labelError
-  }
+  actionDisabled: { opacity: 0.4, cursor: "default" }
 };
 function Chevron({ open }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 14 14", style: css.chevron(open), "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M3 5l4 4 4-4", stroke: "currentColor", strokeWidth: "1.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }) });
@@ -212,8 +206,6 @@ function ScholarCard(props) {
   if (state.status !== "ready") return null;
   const blocked = !state.dirty || state.invalid || state.saving;
   const disabled = !state.writable || state.saving;
-  const email = state.fields.unpaywallEmail;
-  const emailEmpty = email !== void 0 && email.raw === "" && email.resolvedRaw === "";
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: css.card(open), children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "button",
@@ -237,7 +229,6 @@ function ScholarCard(props) {
     ),
     open && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: css.body, children: [
       !state.writable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: css.readOnly, role: "status", children: t("readOnly") }),
-      emailEmpty && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: css.warning, role: "status", children: t("unpaywallEmailWarning") }),
       Object.values(state.fields).map((field) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         Field,
         {
@@ -449,10 +440,10 @@ var ScholarCardController = class {
 // src/client/locales.ts
 var NS = "dsh-scholar-find";
 var en = {
-  title: "Scholar",
+  title: "Scholar Retrieval",
   description: "Semantic Scholar search and open-access PDF fetch.",
   save: "Save",
-  saving: "Saving\u2026",
+  saving: "Saving…",
   discard: "Discard",
   overridden: "Overridden",
   reset: "Reset",
@@ -463,7 +454,6 @@ var en = {
   invalidNumber: "Enter a number, or leave blank to use the default.",
   unpaywallEmail: "Unpaywall contact email",
   unpaywallEmailHint: "Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.",
-  unpaywallEmailWarning: "No email set: Unpaywall is skipped and fetch coverage is reduced.",
   s2ApiKeyRef: "Semantic Scholar API key reference",
   s2ApiKeyRefHint: "Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).",
   scihubEnabled: "Sci-Hub fallback",
@@ -484,39 +474,38 @@ var en = {
   s2RequestGapMsHint: "0 = auto (1100 ms with key, 5000 ms anonymous)."
 };
 var zh = {
-  title: "Scholar \u5B66\u672F\u641C\u7D22",
-  description: "Semantic Scholar \u8BBA\u6587\u68C0\u7D22\u4E0E\u5F00\u653E\u83B7\u53D6 PDF \u4E0B\u8F7D\u3002",
-  save: "\u4FDD\u5B58",
-  saving: "\u4FDD\u5B58\u4E2D\u2026",
-  discard: "\u653E\u5F03\u4FEE\u6539",
-  overridden: "\u5DF2\u8986\u76D6",
-  reset: "\u6062\u590D\u9ED8\u8BA4",
-  unsaved: "\u672A\u4FDD\u5B58",
-  expand: "\u663E\u793A\u8BBE\u7F6E",
-  collapse: "\u6536\u8D77\u8BBE\u7F6E",
-  readOnly: "\u5F53\u524D\u90E8\u7F72\u4EE5\u53EA\u8BFB\u65B9\u5F0F\u5B58\u50A8\u8BBE\u7F6E\u3002",
-  invalidNumber: "\u8BF7\u586B\u6570\u5B57\uFF1B\u7559\u7A7A\u8868\u793A\u4F7F\u7528\u9ED8\u8BA4\u503C\u3002",
-  unpaywallEmail: "Unpaywall \u8054\u7CFB\u90AE\u7BB1",
-  unpaywallEmailHint: "\u542F\u7528 Unpaywall \u6765\u6E90\uFF08\u540C\u65F6\u7528\u4F5C Crossref \u793C\u8C8C\u6C60\u90AE\u7BB1\uFF09\u3002\u7559\u7A7A\u5219\u8DF3\u8FC7 Unpaywall\u3002",
-  unpaywallEmailWarning: "\u672A\u8BBE\u7F6E\u90AE\u7BB1\uFF1AUnpaywall \u5C06\u88AB\u8DF3\u8FC7\uFF0C\u4E0B\u8F7D\u8986\u76D6\u7387\u4E0B\u964D\u3002",
-  s2ApiKeyRef: "Semantic Scholar API \u5BC6\u94A5\u5F15\u7528",
-  s2ApiKeyRefHint: "~/.dsh/.credentials.yaml \u4E2D\u7684\u51ED\u636E\u8BB0\u5F55\u540D\uFF08\u5982 S2_API_KEY\uFF09\u3002\u7559\u7A7A = \u533F\u540D\u6A21\u5F0F\uFF085 \u79D2\u95F4\u9694\uFF09\u3002",
-  scihubEnabled: "Sci-Hub \u515C\u5E95",
-  scihubEnabledHint: "\u975E\u5F00\u653E\u83B7\u53D6\u7684\u6700\u540E\u515C\u5E95\u6765\u6E90\u3002\u9ED8\u8BA4\u5173\u95ED\u3002",
-  institutionalEnabled: "\u673A\u6784\u6A21\u5F0F\uFF08\u51FA\u7248\u793E\u76F4\u8FDE\uFF09",
-  institutionalEnabledHint: "\u9700\u8981\u60A8\u81EA\u5DF1\u7684\u8BA2\u9605\u8BBF\u95EE\u6743\u9650\uFF08\u6821\u56ED\u7F51/VPN\uFF09\u3002",
-  scihubMirrors: "Sci-Hub \u955C\u50CF\u8986\u76D6",
-  scihubMirrorsHint: "\u9017\u53F7\u5206\u9694\u7684\u4E3B\u673A\u540D\uFF1B\u7559\u7A7A\u4F7F\u7528\u5185\u7F6E\u5217\u8868\u3002",
-  pdfOutputDir: "PDF \u8F93\u51FA\u76EE\u5F55",
-  pdfOutputDirHint: "\u76F8\u5BF9\u8DEF\u5F84\u57FA\u4E8E\u5F53\u524D\u4F1A\u8BDD\u5DE5\u4F5C\u533A\u89E3\u6790\u3002",
-  maxResultsPerSearch: "\u9ED8\u8BA4\u641C\u7D22\u7ED3\u679C\u6570",
-  maxResultsPerSearchHint: "scholar_search_* \u5DE5\u5177\u7684\u9ED8\u8BA4\u7ED3\u679C\u4E0A\u9650\uFF08\u6700\u5927 1000\uFF09\u3002",
-  fetchTimeoutSec: "HTTP \u8D85\u65F6\uFF08\u79D2\uFF09",
-  fetchTimeoutSecHint: "\u641C\u7D22\u4E0E\u4E0B\u8F7D\u7684\u5355\u4E2A\u8BF7\u6C42\u8D85\u65F6\u3002",
-  maxPdfSizeMb: "PDF \u5927\u5C0F\u4E0A\u9650\uFF08MB\uFF09",
-  maxPdfSizeMbHint: "\u8D85\u8FC7\u8BE5\u5927\u5C0F\u7684\u54CD\u5E94\u4F1A\u88AB\u62D2\u7EDD\u3002",
-  s2RequestGapMs: "S2 \u8BF7\u6C42\u95F4\u9694\u8986\u76D6\uFF08\u6BEB\u79D2\uFF09",
-  s2RequestGapMsHint: "0 = \u81EA\u52A8\uFF08\u6709\u5BC6\u94A5 1100 \u6BEB\u79D2\uFF0C\u533F\u540D 5000 \u6BEB\u79D2\uFF09\u3002"
+  title: "学术检索",
+  description: "Semantic Scholar 论文检索与开放获取 PDF 下载。",
+  save: "保存",
+  saving: "保存中…",
+  discard: "放弃修改",
+  overridden: "已覆盖",
+  reset: "恢复默认",
+  unsaved: "未保存",
+  expand: "显示设置",
+  collapse: "收起设置",
+  readOnly: "当前部署以只读方式存储设置。",
+  invalidNumber: "请填数字；留空表示使用默认值。",
+  unpaywallEmail: "Unpaywall 联系邮箱",
+  unpaywallEmailHint: "启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。",
+  s2ApiKeyRef: "Semantic Scholar API 密钥引用",
+  s2ApiKeyRefHint: "~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。",
+  scihubEnabled: "Sci-Hub 兜底",
+  scihubEnabledHint: "非开放获取的最后兜底来源。默认关闭。",
+  institutionalEnabled: "机构模式（出版社直连）",
+  institutionalEnabledHint: "需要您自己的订阅访问权限（校园网/VPN）。",
+  scihubMirrors: "Sci-Hub 镜像覆盖",
+  scihubMirrorsHint: "逗号分隔的主机名；留空使用内置列表。",
+  pdfOutputDir: "PDF 输出目录",
+  pdfOutputDirHint: "相对路径基于当前会话工作区解析。",
+  maxResultsPerSearch: "默认搜索结果数",
+  maxResultsPerSearchHint: "scholar_search_* 工具的默认结果上限（最大 1000）。",
+  fetchTimeoutSec: "HTTP 超时（秒）",
+  fetchTimeoutSecHint: "搜索与下载的单个请求超时。",
+  maxPdfSizeMb: "PDF 大小上限（MB）",
+  maxPdfSizeMbHint: "超过该大小的响应会被拒绝。",
+  s2RequestGapMs: "S2 请求间隔覆盖（毫秒）",
+  s2RequestGapMsHint: "0 = 自动（有密钥 1100 毫秒，匿名 5000 毫秒）。"
 };
 
 // src/client/index.ts
