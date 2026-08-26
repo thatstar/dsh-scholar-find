@@ -74,7 +74,13 @@ dsh plugin --profile web list            # pnpm list passthrough
 The CLI initializes the profile on first use, runs pnpm in the profile
 directory (relative specs anchored to the invoking directory), and re-
 conciles `dsh.profile.bundles` from the installed state. After install the
-deployment must reload to activate the rows. Live examples already in this
+deployment must reload to activate the rows.
+
+Build note: `lib/` is **not git-tracked** (built by `prepare`, mirroring
+upstream dsh plugins — only the published/installed package carries `lib/`).
+A local `link:`/`file:` install does not run `prepare`, so build once with
+`npm run build` before `dsh plugin add`; a git/registry install runs `prepare`
+automatically. Live examples already in this
 deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 ## Configuration (user-owned, via Web UI settings, not env vars in code)
@@ -93,7 +99,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 Implementation (Phase 3) is **done** and Phase 4 is **in progress**:
 `packages/scholar_find/` is a pure-TypeScript DSH plugin (15 tools, settings
 section, companion instructions, **client-half settings card**), 31 passing
-unit tests, committed `lib/` build, **installed into the live profile**
+unit tests, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed into the live profile**
 (`dsh plugin --profile web add ./packages/scholar_find` — bundle reconciled,
 host row mounts cleanly, live API smoke passed). The missing settings card
 was a client-half gap: the Plugins tab only renders cards registered through

@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 
+# Plugin build output (built via `prepare`, not git-tracked — mirrors upstream dsh plugins)
+packages/scholar_find/lib/
+
 # Logs
 logs/
 *.log
