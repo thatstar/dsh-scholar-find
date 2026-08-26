@@ -6,7 +6,10 @@ dist/
 build/
 
 # Plugin build output (built via `prepare`, not git-tracked — mirrors upstream dsh plugins)
-packages/scholar_find/lib/
+lib/
+
+# Plugin PDF output (created on use in the session workspace)
+scholar-pdfs/
 
 # Logs
 logs/
