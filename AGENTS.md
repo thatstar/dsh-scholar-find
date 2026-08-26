@@ -58,6 +58,25 @@ repo. A research/planning task is not "done" until its conclusions live there.
 - Anything discovered that changes the plan must update `.notes/` alongside
   the conversation.
 
+## Installation (per-profile DSH plugin)
+
+The plugin is an **npm package** whose `package.json` declares
+`dsh.bundle.patch` (pointing at the package's `cordis.patch.yml`, which
+carries the plugin rows). The user installs it per profile with the DSH
+plugin CLI — **checkout location is irrelevant**:
+
+```bash
+dsh plugin --profile web add <spec>      # spec: relative path | file: | git URL | registry name
+dsh plugin --profile web remove <name>
+dsh plugin --profile web list            # pnpm list passthrough
+```
+
+The CLI initializes the profile on first use, runs pnpm in the profile
+directory (relative specs anchored to the invoking directory), and re-
+conciles `dsh.profile.bundles` from the installed state. After install the
+deployment must reload to activate the rows. Live examples already in this
+deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
+
 ## Configuration (user-owned, via Web UI settings, not env vars in code)
 
 | Setting (namespace `dsh-scholar`) | Purpose |
