@@ -52,6 +52,8 @@ export interface DownloadOptions {
   readonly checkDns?: boolean
   /** Operator-opted-in CloakBrowser fallback for Cloudflare/WAF-blocked PDFs. */
   readonly cloakEnabled?: boolean
+  /** Proxy URL for the CloakBrowser (e.g. `http://127.0.0.1:10808`); unset = direct. */
+  readonly proxyUrl?: string
 }
 
 /** Retry on transient 429 with exponential backoff (bioRxiv/publishers burst-throttle). */
@@ -115,7 +117,7 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
 
   // Operator-opted-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs.
   if (opts.cloakEnabled) {
-    const cloak = await cloakFetchPdf(url, opts.timeoutMs)
+    const cloak = await cloakFetchPdf(url, opts.timeoutMs, opts.proxyUrl)
     if (cloak.ok && cloak.bytes) {
       if (!looksLikePdf(cloak.bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'cloak returned non-PDF' }
       if (cloak.bytes.length > opts.maxBytes) return { ok: false, reason: 'download_size_exceeded', detail: `cloak response exceeds ${opts.maxBytes} bytes` }

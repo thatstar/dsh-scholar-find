@@ -61,13 +61,22 @@ function base64ToBytes(b64: string): Uint8Array {
   return new Uint8Array(bin.buffer, bin.byteOffset, bin.byteLength)
 }
 
+/** Ensure the proxy string has the `http://` scheme cloakbrowser's parser needs. */
+function normalizeProxy(value: string): string {
+  const v = value.trim()
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`
+}
+
 /**
  * Fetch a PDF through CloakBrowser. Lazy-imports `cloakbrowser`; fails closed
  * (returns `{ ok:false, detail }`) if it is unavailable or cannot launch.
  * @param url - the PDF URL to fetch in-page on the same origin.
  * @param timeoutMs - per-step timeout.
+ * @param proxyUrl - optional proxy (e.g. `http://127.0.0.1:10808`) routed
+ *   through the CloakBrowser's own network stack; unset means direct. Required
+ *   where the PDF host is only reachable via a proxy (GFW).
  */
-export async function cloakFetchPdf(url: string, timeoutMs: number): Promise<CloakResult> {
+export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
   // Default the browser cache to a real home dir; env override wins.
   process.env.CLOAKBROWSER_CACHE_DIR ||= join(homedir(), '.cloakbrowser')
 
@@ -80,7 +89,8 @@ export async function cloakFetchPdf(url: string, timeoutMs: number): Promise<Clo
 
   let browser: Awaited<ReturnType<typeof cloak.launch>>
   try {
-    browser = await cloak.launch({ headless: true })
+    const proxy = proxyUrl?.trim() ? normalizeProxy(proxyUrl) : undefined
+    browser = await cloak.launch({ headless: true, ...(proxy ? { proxy } : {}) })
   } catch (e) {
     return { ok: false, detail: `cloak launch failed: ${(e as Error).message}` }
   }
@@ -89,15 +99,38 @@ export async function cloakFetchPdf(url: string, timeoutMs: number): Promise<Clo
     const { origin } = new URL(url)
     const ctx = await browser.newContext({ acceptDownloads: false })
     const page = await ctx.newPage()
-    // Clear the origin's Cloudflare challenge so the in-page fetch carries the
-    // cf_clearance cookie. best-effort; some challenges need a headed window.
+    // Clear the origin's bot challenge so the in-page fetch carries the cleared
+    // cookie. best-effort; some challenges need a headed window.
     try {
       await page.goto(`${origin}/`, { timeout: timeoutMs, waitUntil: 'domcontentloaded' })
-      await page.waitForLoadState('networkidle', { timeout: Math.min(timeoutMs, 10_000) }).catch(() => {})
     } catch (e) {
-      // origin navigation may still be partial; proceed to the in-page fetch
+      // origin navigation may still be partial; proceed to poll for clearance
     }
-    const res = await page.evaluate(FETCH_JS, [url, MAX_PDF_SIZE])
+    // Poll until the Cloudflare/DataDome interstitial clears: the challenge
+    // shows "Just a moment…" then a transitional "Loading" title before the
+    // real page. Treat both as not-ready. Deadline mirrors the reference tool.
+    const deadline = Date.now() + Math.min(timeoutMs, 40_000)
+    let title = ''
+    while (Date.now() < deadline) {
+      title = await page.title().catch(() => '')
+      if (title && !title.includes('Just a moment') && !title.startsWith('Loading')) break
+      await sleep(1000)
+    }
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {})
+    await sleep(1000) // settle late-loading JS / redirects
+    // In-page fetch from the cleared page so the request carries the browser's
+    // real fingerprint + cleared cookie. Retry once if a late navigation tears
+    // down the execution context mid-evaluate.
+    let res: { status: number; b64?: string; oversized?: boolean } | null = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await page.evaluate(FETCH_JS, [url, MAX_PDF_SIZE])
+        break
+      } catch (e) {
+        if (attempt === 0) await sleep(2000)
+        else throw e
+      }
+    }
     if (!res || res.oversized) return { ok: false, detail: res?.oversized ? 'response exceeds 50 MB' : 'no result' }
     if (res.status !== 200 || !res.b64) return { ok: false, detail: `in-page fetch returned HTTP ${res.status}` }
     return { ok: true, bytes: base64ToBytes(res.b64) }
@@ -106,6 +139,11 @@ export async function cloakFetchPdf(url: string, timeoutMs: number): Promise<Clo
   } finally {
     await browser.close().catch(() => {})
   }
+}
+
+/** Promise-based setTimeout for the challenge-clear polling loop. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** Whether the operator has opted into the cloak fallback. */

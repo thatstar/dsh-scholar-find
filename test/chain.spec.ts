@@ -29,6 +29,7 @@ function baseCtx(overrides: Partial<ChainContext> = {}): ChainContext {
     institutional: false,
     scihubEnabled: false,
     scihubMirrors: '',
+    cloakEnabled: false,
     timeoutMs: 5000,
     ...overrides,
   }
@@ -216,5 +217,30 @@ describe('extractScihubPdf', () => {
   it('handles protocol-relative srcs', () => {
     const html = '<embed src="//cdn.example.com/x.pdf">'
     expect(extractScihubPdf(html, 'https://sci-hub.ru')).toBe('https://cdn.example.com/x.pdf')
+  })
+})
+describe('publisher-direct cloak candidate', () => {
+  it('adds a publisher-direct PDF candidate for cloaked (Cloudflare-gated) OA papers', async () => {
+    // No OA anywhere and S2 404; cloak enabled -> still emit a publisher-direct
+    // candidate so the download loop can hit 403 and fall back to CloakBrowser.
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse({ best_oa_location: null, oa_locations: [] })
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { candidates, sourcesTried } = await resolveChain(baseCtx({ doi: '10.1073/pnas.2419854122', cloakEnabled: true }))
+    expect(candidates.some((c) => c.source.includes('publisher_direct'))).toBe(true)
+    expect(candidates.find((c) => c.source.includes('publisher_direct'))!.pdfUrl).toBe('https://www.pnas.org/doi/pdf/10.1073/pnas.2419854122')
+    expect(sourcesTried.some((s) => s.includes('publisher_direct'))).toBe(true)
+  })
+
+  it('does not add a publisher-direct candidate when cloak is off', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse({ best_oa_location: null, oa_locations: [] })
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { candidates } = await resolveChain(baseCtx({ doi: '10.1007/s11263-022-01611-x', cloakEnabled: false }))
+    expect(candidates.some((c) => c.source.includes('publisher_direct'))).toBe(false)
   })
 })

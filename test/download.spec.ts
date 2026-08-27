@@ -112,7 +112,7 @@ describe('downloadPdf cloak fallback', () => {
     tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
     const out = await downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 4000, maxBytes: 1024, checkDns: false, cloakEnabled: true })
     expect(out.ok).toBe(true)
-    expect(cloakFetchPdf).toHaveBeenCalledWith('https://example.com/a.pdf', 4000)
+    expect(cloakFetchPdf).toHaveBeenCalledWith('https://example.com/a.pdf', 4000, undefined)
   })
 
   it('does not use CloakBrowser unless the operator opted in', async () => {
