@@ -57,6 +57,28 @@ describe('resolveChain', () => {
     expect(sourcesTried).not.toContain('semantic_scholar')
   })
 
+  it('derives an arXiv candidate from an Unpaywall abs landing URL (no url_for_pdf)', async () => {
+    const unpaywallBody = {
+      title: 'Curriculum Learning: A Survey',
+      year: 2022,
+      journal_name: 'International Journal of Computer Vision',
+      is_oa: true,
+      best_oa_location: { url: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository', version: 'submittedVersion' },
+      oa_locations: [{ url: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository' }],
+    }
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse(unpaywallBody)
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { candidates, sourcesTried, meta } = await resolveChain(baseCtx())
+    expect(sourcesTried).toContain('unpaywall')
+    expect(sourcesTried).not.toContain('unpaywall skipped')
+    expect(candidates.map((c) => c.source)).toContain('arxiv')
+    expect(candidates.find((c) => c.source === 'arxiv')!.pdfUrl).toBe('https://arxiv.org/pdf/2101.10382.pdf')
+    expect(meta.title).toBe('Curriculum Learning: A Survey')
+  })
+
   it('skips Unpaywall without email and falls through to arXiv via externalIds', async () => {
     const s2Body = {
       title: 'Attention Is All You Need',

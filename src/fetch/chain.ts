@@ -74,7 +74,7 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
       const up = await unpaywallResolve(ctx.doi, ctx.email, ctx.timeoutMs, ctx.signal)
       if (up) {
         mergeMeta(up.meta)
-        add('unpaywall', up.pdfUrl)
+        for (const c of up.candidates) add(c.source, c.pdfUrl)
       }
     } catch {
       // transport failure — recorded implicitly by the caller via sourcesTried
@@ -180,20 +180,46 @@ async function jsonGet(url: string, timeoutMs: number, signal?: AbortSignal, hea
   }
 }
 
-/** Unpaywall v2: read best_oa_location.url_for_pdf. */
-async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ pdfUrl: string; meta: PaperMeta } | undefined> {
+/** Extract an arXiv id from an arXiv abs/pdf URL (tolerates a stray `arXiv:` token). */
+export function arxivIdFromUrl(url: string): string | undefined {
+  const m = /arxiv\.org\/(?:abs|pdf)\/([^/?#]+)/i.exec(url)
+  if (!m?.[1]) return undefined
+  const id = m[1].replace(/^arXiv:/i, '')
+  return id || undefined
+}
+
+/** Unpaywall v2: collect OA PDF candidates from every OA location. */
+async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ candidates: Array<{ source: 'unpaywall' | 'arxiv'; pdfUrl: string }>; meta: PaperMeta } | undefined> {
   const d = await jsonGet(`https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(email)}`, timeoutMs, signal)
-  const loc = d.best_oa_location ?? {}
-  if (!loc.url_for_pdf) return undefined
-  return {
-    pdfUrl: loc.url_for_pdf,
-    meta: {
-      title: d.title,
-      year: d.year,
-      author: d.z_authors?.[0]?.family,
-      journal: d.journal_name,
-    },
+  const meta: PaperMeta = {
+    title: d.title,
+    year: d.year,
+    author: d.z_authors?.[0]?.family,
+    journal: d.journal_name,
   }
+  const locs: any[] = [d.best_oa_location, ...(d.oa_locations ?? [])].filter(Boolean)
+  const candidates: Array<{ source: 'unpaywall' | 'arxiv'; pdfUrl: string }> = []
+  const seen = new Set<string>()
+  for (const loc of locs) {
+    const direct = loc.url_for_pdf
+    if (direct && !seen.has(direct)) {
+      seen.add(direct)
+      candidates.push({ source: 'unpaywall', pdfUrl: direct })
+      continue
+    }
+    // Unpaywall often returns a landing/abs URL (e.g. an arXiv abs page) with no
+    // direct PDF; derive the arXiv PDF so those OA copies are still reachable.
+    const arxivId = arxivIdFromUrl(loc.url ?? '')
+    if (arxivId) {
+      const pdf = `https://arxiv.org/pdf/${arxivId}.pdf`
+      if (!seen.has(pdf)) {
+        seen.add(pdf)
+        candidates.push({ source: 'arxiv', pdfUrl: pdf })
+      }
+    }
+  }
+  if (!candidates.length) return { candidates, meta }
+  return { candidates, meta }
 }
 
 async function biorxivResolve(doi: string, timeoutMs: number, signal?: AbortSignal): Promise<string | undefined> {
