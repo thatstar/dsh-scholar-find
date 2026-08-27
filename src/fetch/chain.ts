@@ -97,7 +97,11 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
     // 404 / transport: continue with other sources
   }
   if (Object.keys(s2Ext).length) ext = { ...ext, ...s2Ext }
-  if (s2Pdf) {
+  // S2 sometimes reports a landing / DOI-resolver link as `openAccessPdf.url`
+  // (e.g. https://doi.org/…), which is NOT a direct PDF. Skip those so we don't
+  // burn a download attempt on a page that can only fail the %PDF gate — the
+  // real OA copy is usually reachable via the Europe PMC / PMC / arXiv steps.
+  if (s2Pdf && !/^https?:\/\/(www\.|dx\.)?doi\.org\//i.test(s2Pdf)) {
     sourcesTried.push('semantic_scholar')
     add('semantic_scholar', s2Pdf)
   }
