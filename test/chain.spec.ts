@@ -204,3 +204,21 @@ describe('resolveTitle', () => {
   })
 })
 
+
+  it('rejects a Crossref top hit that is a different paper (title mismatch), even with a high score', async () => {
+    // The real bug: 'Self-Paced Learning for Latent Variable Models' was resolved
+    // to a *different* paper's DOI that scored well. Crossref's fuzzy title search
+    // surfaced 'Learning Latent Variable Models with Regularization' at score 90.
+    stubFetch((url) => {
+      if (url.startsWith('https://api.crossref.org/')) {
+        return jsonResponse({ message: { items: [{ DOI: '10.1109/icecet52533.2021.9698660', title: ['Learning Latent Variable Models with Regularization'], score: 90.0 }] } })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ data: [] })
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const client = createScholarClient({ minGapMs: 1 })
+    const { doi, resolution } = await resolveTitle('Self-Paced Learning for Latent Variable Models', { email: '', s2: client, timeoutMs: 5000 })
+    expect(doi).toBeUndefined() // never hand back a DIFFERENT paper's DOI
+    expect(resolution.lowConfidence).toBe(true)
+    expect(resolution.lowConfidenceReason).toBe('title_mismatch')
+  })

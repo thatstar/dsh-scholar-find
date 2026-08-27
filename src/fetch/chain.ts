@@ -296,6 +296,26 @@ export interface TitleResolution {
 const MIN_TITLE_LEN = 6
 const TITLE_SCORE_MIN = 40
 const TITLE_GAP_MIN = 3
+/** Minimum Jaccard similarity between the query title and a resolved title to
+ * accept the match — Crossref's fuzzy title search can surface a different paper
+ * that still clears TITLE_SCORE_MIN, so we also require the titles to look alike. */
+const TITLE_SIMILARITY_MIN = 0.5
+
+/** Normalized token set (lowercase, alphanumeric) for title similarity. */
+function titleTokens(s: string): Set<string> {
+  return new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean))
+}
+
+/** Jaccard similarity between two titles (0..1). Exact/close titles -> high. */
+function titleSimilarity(a: string, b: string): number {
+  const A = titleTokens(a)
+  const B = titleTokens(b)
+  if (!A.size || !B.size) return 0
+  let inter = 0
+  for (const t of A) if (B.has(t)) inter++
+  const union = A.size + B.size - inter
+  return union ? inter / union : 0
+}
 
 /** Resolve a paper title to a DOI. Crossref primary, S2 match fallback. */
 export async function resolveTitle(
@@ -336,12 +356,15 @@ export async function resolveTitle(
   const crGap: number | undefined = crCandidates.length >= 2 && typeof crScore === 'number' && typeof crCandidates[1].score === 'number'
     ? crScore - crCandidates[1].score
     : undefined
+  const crSimilar = crTop?.title ? titleSimilarity(q, crTop.title) : 0
   const crLowReason: string | undefined = crTop?.doi
-    ? crScore !== undefined && crScore < TITLE_SCORE_MIN
-      ? 'score_below_threshold'
-      : crGap !== undefined && crGap < TITLE_GAP_MIN
-        ? 'ambiguous_runner_up'
-        : undefined
+    ? crSimilar < TITLE_SIMILARITY_MIN
+      ? 'title_mismatch'
+      : crScore !== undefined && crScore < TITLE_SCORE_MIN
+        ? 'score_below_threshold'
+        : crGap !== undefined && crGap < TITLE_GAP_MIN
+          ? 'ambiguous_runner_up'
+          : undefined
     : 'no_match'
 
   if (crTop?.doi && !crLowReason) {
@@ -365,7 +388,7 @@ export async function resolveTitle(
   try {
     const d = await ctx.s2.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search/match', { query: q, fields: 'title,authors,year,venue,externalIds' })
     const top = (d.data ?? [])[0]
-    if (top) {
+    if (top && titleSimilarity(q, top.title ?? '') >= TITLE_SIMILARITY_MIN) {
       const ext = top.externalIds ?? {}
       let doi = ext.DOI
       if (!doi && ext.ArXiv) doi = `10.48550/arXiv.${ext.ArXiv}`
@@ -389,8 +412,11 @@ export async function resolveTitle(
     // S2 unavailable
   }
 
-  // Pass 3 — low-confidence Crossref pick.
-  if (crTop?.doi) {
+  // Pass 3 — low-confidence Crossref pick. Only when the top result at least
+  // title-matches: a `title_mismatch` is a DIFFERENT paper (Crossref's fuzzy
+  // search can surface one), so never hand back its DOI — report it unresolved
+  // so the caller can ask the user for a DOI instead.
+  if (crTop?.doi && crLowReason !== 'title_mismatch') {
     return {
       doi: crTop.doi,
       resolution: {
@@ -407,5 +433,12 @@ export async function resolveTitle(
     }
   }
 
-  return { doi: undefined, resolution: empty }
+  return {
+    doi: undefined,
+    resolution: {
+      ...empty,
+      lowConfidence: true,
+      lowConfidenceReason: crTop?.doi ? crLowReason ?? 'no_match' : 'no_match',
+    },
+  }
 }

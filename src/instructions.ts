@@ -26,7 +26,10 @@ Usage rules:
 1. Compose the pipeline per the user's goal — search first when the user
    names a topic, fetch directly when they already have DOIs. Never invent a
    DOI: use \`scholar_match_title\` or \`paper_fetch_resolve\` (title) to
-   resolve one.
+   resolve one. **Prefer a DOI when the user has one** — title→DOI resolution
+   (Crossref → Semantic Scholar) is fuzzy: it can fail or match a *different*
+   paper. If a title won't resolve confidently, ask the user for the DOI
+   instead of guessing.
 2. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
