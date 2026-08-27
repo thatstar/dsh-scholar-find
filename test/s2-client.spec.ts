@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildBoolQuery, createScholarClient, deduplicate, searchBulk } from '../src/s2/client.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildBoolQuery, createScholarClient, deduplicate, resetSharedPacing, searchBulk } from '../src/s2/client.js'
 
 const fetchMock = vi.fn()
+
+beforeEach(() => {
+  resetSharedPacing()
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -72,6 +76,23 @@ describe('createScholarClient', () => {
     const out = await client.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search', { query: 'x' })
     expect(out).toEqual({ data: [] })
     expect(calls).toBe(3)
+  })
+
+  it('shares pacing across separate client instances (no burst)', async () => {
+    resetSharedPacing()
+    const fetchTimes: number[] = []
+    stubFetch(() => {
+      fetchTimes.push(Date.now())
+      return jsonResponse({ data: [] })
+    })
+    // Two clients = two separate tool calls in one turn. Without a shared
+    // clock the second would fire immediately and burst the pool.
+    const a = createScholarClient({ minGapMs: 120 })
+    const b = createScholarClient({ minGapMs: 120 })
+    await a.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search', { query: 'x' })
+    await b.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search', { query: 'y' })
+    expect(fetchTimes).toHaveLength(2)
+    expect(fetchTimes[1]! - fetchTimes[0]!).toBeGreaterThanOrEqual(100)
   })
 })
 

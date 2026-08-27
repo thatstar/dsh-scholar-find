@@ -20,6 +20,21 @@ export const ANONYMOUS_GAP_MS = 5_000
 /** Default authenticated pacing, ms. */
 export const KEYED_GAP_MS = 1_100
 
+/**
+ * Shared pacing state, GLOBAL across every client instance in the process.
+ * Each tool call constructs a fresh client, so without a shared clock a burst
+ * of calls would fire immediately and exhaust Semantic Scholar's shared
+ * anonymous pool (429). Serialized via `pacingChain`.
+ */
+let sharedLastRequestAt = 0
+let pacingChain: Promise<void> = Promise.resolve()
+
+/** Reset the shared pacing clock (tests only). */
+export function resetSharedPacing(): void {
+  sharedLastRequestAt = 0
+  pacingChain = Promise.resolve()
+}
+
 /** A semantic-scholar HTTP error with the API message when available. */
 export class ScholarHttpError extends Error {
   constructor(
@@ -67,9 +82,11 @@ export interface ScholarClient {
   readonly signal?: AbortSignal
 }
 
-/** Create one client instance; pacing/auth state is per instance. */
+/** Create one client instance. Pacing is GLOBAL across all instances in the
+ * process (a module-level clock + serialized queue), so consecutive tool calls
+ * cannot burst the shared anonymous pool; auth fallback state stays per
+ * instance. */
 export function createScholarClient(options: ScholarClientOptions): ScholarClient {
-  let lastRequestAt = 0
   let keyInvalid = false
 
   async function currentKey(): Promise<string | undefined> {
@@ -93,12 +110,17 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
 
   async function pace(keyed: boolean): Promise<void> {
     const gap = effectiveGap(keyed)
-    const elapsed = Date.now() - lastRequestAt
-    const wait = gap - elapsed
-    if (wait > 0) {
-      await sleep(wait, options.signal)
-    }
-    lastRequestAt = Date.now()
+    const follow = pacingChain.then(async () => {
+      const elapsed = Date.now() - sharedLastRequestAt
+      const wait = gap - elapsed
+      if (wait > 0) {
+        await sleep(wait, options.signal)
+      }
+      sharedLastRequestAt = Date.now()
+    })
+    // A rejected waiter must not strand later callers.
+    pacingChain = follow.catch(() => {})
+    return follow
   }
 
   async function request(
