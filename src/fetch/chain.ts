@@ -9,6 +9,7 @@
 
 import type { ScholarClient } from '../s2/client.js'
 import { getPaper } from '../s2/client.js'
+import { fetchWithRedirects, isSafeUrl } from './safety.js'
 
 export interface PaperMeta {
   title?: string
@@ -188,8 +189,58 @@ export function arxivIdFromUrl(url: string): string | undefined {
   return id || undefined
 }
 
+/** Standard HTML signals that point at an article's actual PDF. */
+const PDF_URL_SIGNALS = [
+  /<meta[^>]+name=["']citation_pdf_url["'][^>]+content=["']([^"']+)["']/i, // academic convention (arXiv, ChemRxiv, bioRxiv, PMC, …)
+  /<link[^>]+rel=["']alternate["'][^>]+type=["']application\/pdf["'][^>]+href=["']([^"']+)["']/i,
+  /\shref=["']([^"']+\.pdf)["']/i, // first anchor with a .pdf href
+] as const
+
+/**
+ * Discover the actual PDF URL for an OA *landing page* (Unpaywall gives
+ * `url_for_landing_page` when it has no stable direct PDF link). Site-agnostic:
+ * reads `citation_pdf_url`, an `<link rel="alternate" application/pdf>`, or the
+ * first `.pdf` anchor, and normalises it against the page URL. An arXiv
+ * abs/pdf URL is resolved directly (no fetch) as a fast path. Best-effort —
+ * returns undefined on any failure (JS-rendered landings are out of scope).
+ */
+export async function landingPdfUrl(url: string, timeoutMs: number, signal?: AbortSignal, opts: { checkDns?: boolean } = {}): Promise<string | undefined> {
+  const arxiv = arxivIdFromUrl(url)
+  if (arxiv) return `https://arxiv.org/pdf/${arxiv}.pdf`
+
+  if (!isSafeUrl(url).ok) return undefined
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', onAbort, { once: true })
+  const timer = setTimeout(() => controller.abort(new Error('landing timeout')), timeoutMs)
+  let html = ''
+  try {
+    const r = await fetchWithRedirects(url, { headers: { Accept: 'text/html,application/xhtml+xml' }, signal: controller.signal }, { checkDns: opts.checkDns })
+    if (!r.ok) return undefined
+    // PDFs can be big; a landing page rarely is. Cap the read.
+    html = await r.text()
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
+
+  for (const re of PDF_URL_SIGNALS) {
+    const m = re.exec(html)
+    if (m?.[1]) {
+      try {
+        return new URL(m[1], url).toString()
+      } catch {
+        return m[1]
+      }
+    }
+  }
+  return undefined
+}
+
 /** Unpaywall v2: collect OA PDF candidates from every OA location. */
-async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ candidates: Array<{ source: 'unpaywall' | 'arxiv'; pdfUrl: string }>; meta: PaperMeta } | undefined> {
+async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ candidates: Array<{ source: 'unpaywall'; pdfUrl: string }>; meta: PaperMeta } | undefined> {
   const d = await jsonGet(`https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(email)}`, timeoutMs, signal)
   const meta: PaperMeta = {
     title: d.title,
@@ -198,27 +249,29 @@ async function unpaywallResolve(doi: string, email: string, timeoutMs: number, s
     journal: d.journal_name,
   }
   const locs: any[] = [d.best_oa_location, ...(d.oa_locations ?? [])].filter(Boolean)
-  const candidates: Array<{ source: 'unpaywall' | 'arxiv'; pdfUrl: string }> = []
+  const candidates: Array<{ source: 'unpaywall'; pdfUrl: string }> = []
   const seen = new Set<string>()
+
+  // Pass 1 — a direct PDF URL (cheap; no extra fetch).
   for (const loc of locs) {
     const direct = loc.url_for_pdf
     if (direct && !seen.has(direct)) {
       seen.add(direct)
       candidates.push({ source: 'unpaywall', pdfUrl: direct })
-      continue
     }
-    // Unpaywall often returns a landing/abs URL (e.g. an arXiv abs page) with no
-    // direct PDF; derive the arXiv PDF so those OA copies are still reachable.
-    const arxivId = arxivIdFromUrl(loc.url ?? '')
-    if (arxivId) {
-      const pdf = `https://arxiv.org/pdf/${arxivId}.pdf`
-      if (!seen.has(pdf)) {
+  }
+  // Pass 2 — no direct PDF anywhere: discover one from the best landing pages.
+  if (candidates.length === 0) {
+    for (const loc of locs.slice(0, 3)) {
+      const landing = loc.url_for_landing_page || loc.url
+      if (!landing) continue
+      const pdf = await landingPdfUrl(landing, timeoutMs, signal)
+      if (pdf && !seen.has(pdf)) {
         seen.add(pdf)
-        candidates.push({ source: 'arxiv', pdfUrl: pdf })
+        candidates.push({ source: 'unpaywall', pdfUrl: pdf })
       }
     }
   }
-  if (!candidates.length) return { candidates, meta }
   return { candidates, meta }
 }
 

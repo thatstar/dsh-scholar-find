@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
 import type { ScholarClient } from '../src/s2/client.js'
-import { resolveChain, resolveTitle, extractScihubPdf } from '../src/fetch/chain.js'
+import { resolveChain, resolveTitle, extractScihubPdf, landingPdfUrl } from '../src/fetch/chain.js'
 import type { ChainContext } from '../src/fetch/chain.js'
 
 const fetchMock = vi.fn()
@@ -63,8 +63,8 @@ describe('resolveChain', () => {
       year: 2022,
       journal_name: 'International Journal of Computer Vision',
       is_oa: true,
-      best_oa_location: { url: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository', version: 'submittedVersion' },
-      oa_locations: [{ url: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository' }],
+      best_oa_location: { url: 'https://arxiv.org/abs/arXiv:2101.10382', url_for_landing_page: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository', version: 'submittedVersion' },
+      oa_locations: [{ url: 'https://arxiv.org/abs/arXiv:2101.10382', url_for_landing_page: 'https://arxiv.org/abs/arXiv:2101.10382', host_type: 'repository' }],
     }
     stubFetch((url) => {
       if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse(unpaywallBody)
@@ -74,9 +74,21 @@ describe('resolveChain', () => {
     const { candidates, sourcesTried, meta } = await resolveChain(baseCtx())
     expect(sourcesTried).toContain('unpaywall')
     expect(sourcesTried).not.toContain('unpaywall skipped')
-    expect(candidates.map((c) => c.source)).toContain('arxiv')
-    expect(candidates.find((c) => c.source === 'arxiv')!.pdfUrl).toBe('https://arxiv.org/pdf/2101.10382.pdf')
+    expect(candidates.map((c) => c.source)).toContain('unpaywall')
+    expect(candidates[0]!.pdfUrl).toBe('https://arxiv.org/pdf/2101.10382.pdf')
     expect(meta.title).toBe('Curriculum Learning: A Survey')
+  })
+
+  it('discovers a PDF from a non-arXiv OA landing page via citation_pdf_url', async () => {
+    // A repository (e.g. ChemRxiv-like) landing page is JS-free enough to carry
+    // the citation_pdf_url meta tag; the resolver should find it, not assume
+    // the host is arXiv.
+    stubFetch(() => new Response(
+      '<html><head><meta name="citation_pdf_url" content="https://chemrxiv.org/engage/api-gateway/chemrxiv/assets/download/abc123.pdf"></head></html>',
+      { status: 200, headers: { 'Content-Type': 'text/html' } },
+    ))
+    const pdf = await landingPdfUrl('https://chemrxiv.org/engage/chemrxiv/article-details/123', 5000, undefined, { checkDns: false })
+    expect(pdf).toBe('https://chemrxiv.org/engage/api-gateway/chemrxiv/assets/download/abc123.pdf')
   })
 
   it('skips Unpaywall without email and falls through to arXiv via externalIds', async () => {
