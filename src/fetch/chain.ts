@@ -39,35 +39,8 @@ export interface ChainContext {
   readonly institutional: boolean
   readonly scihubEnabled: boolean
   readonly scihubMirrors: string
-  readonly cloakEnabled: boolean
   readonly timeoutMs: number
   readonly signal?: AbortSignal
-}
-
-/** Publisher-direct PDF URL templates by DOI prefix. Only added as candidates
- * when CloakBrowser is enabled: the direct URL is usually Cloudflare/WAF-gated,
- * so downloadPdf gets blocked (403/non-PDF) and the operator-opted-in cloak
- * fallback fetches it through the stealth browser. */
-const PUBLISHER_PDF_TEMPLATES: Record<string, [string, (doi: string, suffix: string) => string]> = {
-  '10.1038/': ['nature', (_d, suffix) => `https://www.nature.com/articles/${suffix}.pdf`],
-  '10.1126/': ['science', (d) => `https://www.science.org/doi/pdf/${d}`],
-  '10.1002/': ['wiley', (d) => `https://onlinelibrary.wiley.com/doi/pdf/${d}`],
-  '10.1007/': ['springer', (d) => `https://link.springer.com/content/pdf/${d}.pdf`],
-  '10.1021/': ['acs', (d) => `https://pubs.acs.org/doi/pdf/${d}`],
-  '10.1073/': ['pnas', (d) => `https://www.pnas.org/doi/pdf/${d}`],
-  '10.1056/': ['nejm', (d) => `https://www.nejm.org/doi/pdf/${d}`],
-  '10.1177/': ['sage', (d) => `https://journals.sagepub.com/doi/pdf/${d}`],
-  '10.1080/': ['tandf', (d) => `https://www.tandfonline.com/doi/pdf/${d}`],
-}
-
-function publisherDirectUrl(doi: string): { source: string; pdfUrl: string } | undefined {
-  for (const [prefix, [label, build]] of Object.entries(PUBLISHER_PDF_TEMPLATES)) {
-    if (doi.startsWith(prefix)) {
-      const suffix = doi.slice(prefix.length)
-      return { source: `publisher_direct (${label})`, pdfUrl: build(doi, suffix) }
-    }
-  }
-  return undefined
 }
 
 const DEFAULT_SCIHUB_MIRRORS = ['sci-hub.ru', 'sci-hub.st', 'sci-hub.su', 'sci-hub.box', 'sci-hub.red', 'sci-hub.al', 'sci-hub.mk', 'sci-hub.ee']
@@ -182,17 +155,6 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
     sourcesTried.push('scihub')
     const hit = await scihubResolve(ctx.doi, ctx.scihubMirrors, ctx.timeoutMs, ctx.signal)
     if (hit) add('scihub', hit.url, { detail: { mirror: hit.mirror } })
-  }
-
-  // Cloak path: a publisher-direct PDF candidate for Cloudflare/WAF-gated OA.
-  // The direct URL is blocked (403/non-PDF) in normal fetch, so the
-  // operator-opted-in CloakBrowser fallback fetches it through the browser.
-  if (ctx.cloakEnabled) {
-    const pub = publisherDirectUrl(ctx.doi)
-    if (pub) {
-      sourcesTried.push(pub.source)
-      add(pub.source, pub.pdfUrl, { detail: { publisher: pub.source } })
-    }
   }
 
   return { candidates, sourcesTried, meta, ext }
