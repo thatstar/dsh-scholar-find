@@ -12,7 +12,7 @@ Two tool families are available for academic paper research:
 - \`scholar_search_*\` — discover and inspect papers through Semantic Scholar:
   ranked search with filters and boolean queries, exact title match, paper
   lookup, citations and references (with intent labels), recommendations,
-  author profiles, and BibTeX export. \`scholar_get_paper_content\` retrieves
+  author profiles, and BibTeX export. \`scholar_get_paper_snippets\` retrieves
   ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic
   Scholar owner's full-text index, not exposed by the public S2 API).
 - \`paper_fetch_*\` — obtain PDFs: \`paper_fetch_resolve\` finds the best
@@ -51,7 +51,7 @@ Usage rules:
    Settings -> Plugins -> Plugin configuration for the best source coverage.
 7. Offer exports (\`scholar_export_bibtex\`) when the user collects references,
    and point to the exact PDF file paths returned by the fetch tools.
-8. \`scholar_get_paper_content\` requires the Asta API key: if it reports it is
+8. \`scholar_get_paper_snippets\` requires the Asta API key: if it reports it is
    unconfigured, tell the user to set the key on the plugin's settings card
    (Settings -> Plugins -> Plugin configuration → "Ai2 Asta API key"), which
    stores it in DSH key management; the "Ai2 Asta key record" field names the

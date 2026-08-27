@@ -8,7 +8,7 @@ instructions:
 
 1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
    relevance / snippets), paper lookup, citations, references, recommendations,
-   authors, BibTeX export, and `scholar_get_paper_content` (~500-word full-text
+   authors, BibTeX export, and `scholar_get_paper_snippets` (~500-word full-text
    content via the Ai2 Asta MCP server, not exposed by the public S2 API).
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
@@ -94,7 +94,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
 | `s2ApiKeyRef` | Optional S2 key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Semantic Scholar API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`) — never stored in the settings section. **Decided: anonymous mode** (empty ref → 5 s pacing). |
-| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Ai2 Asta API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`). Enables `scholar_get_paper_content` (~500-word full text). |
+| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Ai2 Asta API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`). Enables `scholar_get_paper_snippets` (~500-word full text). |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
@@ -104,7 +104,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 Implementation is **complete** and committed:
 The repository root is the pure-TypeScript DSH plugin (**16 tools**: `scholar_search_*`
-incl. `scholar_get_paper_content` via the Ai2 Asta MCP server, and `paper_fetch_*`),
+incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, and `paper_fetch_*`),
 settings section, companion instructions, client-half settings card. **59 passing
 unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).

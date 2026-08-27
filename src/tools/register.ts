@@ -207,8 +207,8 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
   }))
 
   register(defineTool({
-    name: 'scholar_search_snippets',
-    description: `Search Semantic Scholar full-text passages: find papers containing specific sentences, methods, or section content rather than just titles.`,
+    name: 'scholar_search_papers_by_snippet',
+    description: `Search Semantic Scholar full-text to find PAPERS that contain a specific passage/sentence/method: returns the matched snippet and the paper it appears in (a discovery-by-text search, unlike scholar_search_papers which searches metadata).`,
     parameters: {
       query: { type: 'string', description: 'Passage/method text to find in full-text bodies', required: true },
       paperIds: { type: 'string', description: 'Optional comma-separated paperIds to scope the search' },
@@ -281,8 +281,8 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
   }))
 
   register(defineTool({
-    name: 'scholar_get_paper_content',
-    description: `Retrieve ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API). Searches a paper's title/abstract/body text; pass \`paperIds\` to get content from specific papers.`,
+    name: 'scholar_get_paper_snippets',
+    description: `Get ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API). Requires a \`query\` (topic/phrase/title); pass \`paperIds\` to scope to specific papers. Returns the snippets plus paper metadata (title, authors, license).`,
     parameters: {
       query: { type: 'string', description: 'Text to find in the paper(s) — the topic, a phrase, or the paper title. Required.', required: true },
       paperIds: { type: 'string', description: 'Restrict to these papers: comma-separated S2 IDs, CorpusId:<id>, DOI:<doi>, ARXIV:<id>, PMID:<id>, PMCID:<id>.' },
