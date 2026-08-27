@@ -5,17 +5,22 @@
  * the challenge (drop-in Playwright replacement, `cloakbrowser` npm package).
  *
  * Flow mirrors the reference tool: launch a headless browser, navigate to the
- * PDF host's origin (so the `cf_clearance` cookie is set), then run an in-page
- * `fetch()` for the PDF (carries the real browser fingerprint + cookies) and
- * return the bytes. Re-validated by the caller (`%PDF` + size). Best-effort:
- * returns `{ ok: false, detail }` on any failure (fails closed).
+ * URL's origin (so the challenge cookie is set), then run an in-page `fetch()`
+ * for the target (carries the real browser fingerprint + cookies) and return
+ * the bytes. Re-validated by the caller (`%PDF` + size). Best-effort: fails
+ * closed (`{ ok:false, detail }`).
+ *
+ * Two entry points share one browser flow:
+ *  - `cloakFetchPdf` — fetch a PDF (used by the download fallback).
+ *  - `cloakFetchHtml` — fetch an HTML page (used to resolve an anti-bot-gated
+ *    landing/article page, e.g. a Sci-Hub mirror whose article page is behind
+ *    DDoS-Guard/captcha).
  *
  * This module is lazy — `cloakbrowser` (and its Chromium binary) are only
- * touched when a cloaked download is actually attempted. The binary
- * auto-downloads (~200 MB, cached in `~/.cloakbrowser/`; override with
- * `CLOAKBROWSER_CACHE_DIR`). Its own downloader uses Node's global `fetch`,
- * which ignores proxy environment vars — so when the operator configures a
- * proxy we route that download through it too (see `cloakFetchPdf`).
+ * touched when a cloaked fetch is actually attempted. The binary auto-downloads
+ * (~200 MB, cached in `~/.cloakbrowser/`; override with `CLOAKBROWSER_CACHE_DIR`).
+ * Its own downloader uses Node's global `fetch`, which ignores proxy env vars —
+ * so when the operator configures a proxy we route that download through it too.
  * @module dsh-scholar-find/cloak
  */
 
@@ -25,7 +30,7 @@ import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 
-/** In-page fetch: stream the PDF up to `cap` bytes, base64 back. */
+/** In-page fetch: stream the body up to `cap` bytes, base64 back. */
 const FETCH_JS = /* @__PURE__ */ ((arg: unknown) => {
   const [u, cap] = arg as [string, number]
   return (async () => {
@@ -56,6 +61,14 @@ const FETCH_JS = /* @__PURE__ */ ((arg: unknown) => {
 export interface CloakResult {
   ok: boolean
   bytes?: Uint8Array
+  status?: number
+  detail?: string
+}
+
+export interface CloakHtmlResult {
+  ok: boolean
+  html?: string
+  status?: number
   detail?: string
 }
 
@@ -70,16 +83,10 @@ function normalizeProxy(value: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`
 }
 
-/**
- * Fetch a PDF through CloakBrowser. Lazy-imports `cloakbrowser`; fails closed
- * (returns `{ ok:false, detail }`) if it is unavailable or cannot launch.
- * @param url - the PDF URL to fetch in-page on the same origin.
- * @param timeoutMs - per-step timeout.
- * @param proxyUrl - optional proxy (e.g. `http://127.0.0.1:10808`) routed
- *   through the CloakBrowser's own network stack; unset means direct. Required
- *   where the PDF host is only reachable via a proxy (GFW).
- */
-export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
+/** Shared browser flow: launch (+ proxy dispatcher swap for the binary
+ * download), clear the origin's bot challenge, then in-page `fetch()` `url` and
+ * return the raw bytes. */
+async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
   // Default the browser cache to a real home dir; env override wins.
   process.env.CLOAKBROWSER_CACHE_DIR ||= join(homedir(), '.cloakbrowser')
 
@@ -90,7 +97,6 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
     return { ok: false, detail: `cloakbrowser unavailable: ${(e as Error).message}` }
   }
 
-  let browser: Awaited<ReturnType<typeof cloak.launch>>
   // CloakBrowser's binary download (and its signed-manifest fetch) uses Node's
   // global `fetch`, which ignores HTTP(S)_PROXY. Route it through the operator's
   // proxy so a fresh download works behind a firewall/GFW. The browser's own
@@ -109,6 +115,8 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
       return { ok: false, detail: `cloak proxy setup failed: ${(e as Error).message}` }
     }
   }
+
+  let browser: Awaited<ReturnType<typeof cloak.launch>>
   try {
     browser = await cloak.launch({ headless: true, ...(proxy ? { proxy } : {}) })
   } catch (e) {
@@ -121,7 +129,12 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
   }
 
   try {
-    const { origin } = new URL(url)
+    let origin: string
+    try {
+      origin = new URL(url).origin
+    } catch {
+      return { ok: false, detail: 'cloak: invalid target URL' }
+    }
     const ctx = await browser.newContext({ acceptDownloads: false })
     const page = await ctx.newPage()
     // Clear the origin's bot challenge so the in-page fetch carries the cleared
@@ -131,14 +144,14 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
     } catch (e) {
       // origin navigation may still be partial; proceed to poll for clearance
     }
-    // Poll until the Cloudflare/DataDome interstitial clears: the challenge
-    // shows "Just a moment…" then a transitional "Loading" title before the
-    // real page. Treat both as not-ready. Deadline mirrors the reference tool.
+    // Poll until the Cloudflare/DataDome/DDoS-Guard interstitial clears: the
+    // challenge shows "Just a moment…"/"DDoS-Guard"/"Loading" before the real
+    // page. Treat those as not-ready. Deadline mirrors the reference tool.
     const deadline = Date.now() + Math.min(timeoutMs, 40_000)
     let title = ''
     while (Date.now() < deadline) {
       title = await page.title().catch(() => '')
-      if (title && !title.includes('Just a moment') && !title.startsWith('Loading')) break
+      if (title && !/Just a moment|Loading|DDoS-Guard|Verification|robot/i.test(title)) break
       await sleep(1000)
     }
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {})
@@ -153,17 +166,32 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
         break
       } catch (e) {
         if (attempt === 0) await sleep(2000)
-        else throw e
+        else return { ok: false, status: undefined, detail: `cloak fetch failed: ${(e as Error).message}` }
       }
     }
     if (!res || res.oversized) return { ok: false, detail: res?.oversized ? 'response exceeds 50 MB' : 'no result' }
-    if (res.status !== 200 || !res.b64) return { ok: false, detail: `in-page fetch returned HTTP ${res.status}` }
-    return { ok: true, bytes: base64ToBytes(res.b64) }
+    if (res.status !== 200 || !res.b64) return { ok: false, status: res.status, detail: `in-page fetch returned HTTP ${res.status}` }
+    return { ok: true, status: res.status, bytes: base64ToBytes(res.b64) }
   } catch (e) {
     return { ok: false, detail: `cloak fetch failed: ${(e as Error).message}` }
   } finally {
     await browser.close().catch(() => {})
   }
+}
+
+/**
+ * Fetch a PDF through CloakBrowser. Fails closed (`{ ok:false, detail }`) if
+ * unavailable or cannot launch; the caller re-validates `%PDF` + size.
+ */
+export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
+  return cloakFetchRaw(url, timeoutMs, proxyUrl)
+}
+
+/** Fetch an HTML page through CloakBrowser (decoded to a UTF-8 string). */
+export async function cloakFetchHtml(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakHtmlResult> {
+  const r = await cloakFetchRaw(url, timeoutMs, proxyUrl)
+  if (!r.ok || !r.bytes) return { ok: false, status: r.status, detail: r.detail ?? 'no result' }
+  return { ok: true, status: r.status, html: Buffer.from(r.bytes).toString('utf8') }
 }
 
 /** Promise-based setTimeout for the challenge-clear polling loop. */

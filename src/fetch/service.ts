@@ -47,6 +47,8 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     institutional: rt.settings.institutionalEnabled,
     scihubEnabled: rt.settings.scihubEnabled,
     scihubMirrors: rt.settings.scihubMirrors,
+    cloakEnabled: rt.settings.cloakEnabled,
+    proxyUrl: resolveProxyUrl(rt.settings.proxyUrl),
     timeoutMs: rt.settings.fetchTimeoutSec * 1000,
     signal: rt.signal,
   }
