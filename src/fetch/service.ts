@@ -147,6 +147,28 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
   }
 
   const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+
+  // No candidate source yielded a PDF URL. Report a clean not_found rather
+  // than falling through to the (empty) download loop and crashing on
+  // `failures[length-1]`.
+  if (!chain.candidates.length) {
+    const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
+    if (!rt.settings.institutionalEnabled) {
+      err.suggest_institutional = true
+      err.reason = 'No OA copy found. If your institution subscribes to this paper, enable institutional mode in the plugin settings.'
+    }
+    return {
+      doi: normalized,
+      success: false,
+      source: null,
+      pdfUrl: null,
+      file: null,
+      meta: { ...chain.meta },
+      sourcesTried: chain.sourcesTried,
+      error: err,
+    }
+  }
+
   const fname = buildFilename(chain.meta, normalized)
   const dest = join(outDir, fname)
 
@@ -191,6 +213,22 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       }
     }
     failures.push({ source: cand.source, reason: outcome.reason ?? 'download_network_error', detail: outcome.detail })
+  }
+
+  if (failures.length === 0) {
+    // Defensive: should be unreachable (candidates was non-empty above), but
+    // never index an empty list.
+    const err = makeError('not_found', 'No candidate could be downloaded', 'All resolved URLs were unusable')
+    return {
+      doi: normalized,
+      success: false,
+      source: null,
+      pdfUrl: null,
+      file: null,
+      meta: { ...chain.meta },
+      sourcesTried: chain.sourcesTried,
+      error: err,
+    }
   }
 
   const last = failures[failures.length - 1]!

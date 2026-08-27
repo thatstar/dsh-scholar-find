@@ -18,7 +18,7 @@ import { sanitizeForOutput } from '../util/sanitize.js'
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
-  session?: { meta?: { cwd?: string } }
+  session?: { header?: { cwd?: string } }
 }
 
 export interface ScholarToolEnv {
@@ -34,7 +34,10 @@ function text(content: string): ContentBlock[] {
 
 function baseDirOf(exec: ToolRunContext): string {
   const agent = exec.agent as AgentLike | undefined
-  return agent?.session?.meta?.cwd ?? process.cwd()
+  // The session workspace root is the header cwd ("absolute working directory
+  // the session was created in"). Never fall back to the plugin's own process
+  // cwd — that is where the deployment was launched, not the session.
+  return agent?.session?.header?.cwd ?? process.cwd()
 }
 
 function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s2: ScholarClient; fetch: FetchRuntime } {
