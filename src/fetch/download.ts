@@ -51,6 +51,11 @@ export interface DownloadOptions {
   readonly checkDns?: boolean
 }
 
+/** A browser-like User-Agent for PDF downloads. Several OA hosts (bioRxiv,
+ * medRxiv, arXiv, some publishers) return HTTP 403 to plain `node` UAs even on
+ * legitimately open PDFs; a modern browser UA avoids the blanket block. */
+const DOWNLOAD_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
 /**
  * Download `url` to `dest` with the full safety gate. Returns an outcome:
  * `ok: false` means the caller may try the next candidate source.
@@ -58,7 +63,7 @@ export interface DownloadOptions {
 export async function downloadPdf(url: string, dest: string, opts: DownloadOptions): Promise<DownloadOutcome> {
   let r: Response
   try {
-    r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8' } }, { checkDns: opts.checkDns })
+    r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8', 'User-Agent': DOWNLOAD_UA } }, { checkDns: opts.checkDns })
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
   } catch (e) {
     const code = (e as Error & { code?: string }).code
