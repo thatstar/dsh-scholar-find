@@ -57,36 +57,28 @@ export function apply(ctx: Context): void {
     applyScholarTools(ctx, {
       settings: () => source(),
       resolveApiKey: async () => {
-        const value = source().s2ApiKeyRef.trim()
-        if (!value) return undefined
-        // Accept either a DSH credential record name (resolved from key
-        // management) or a literal key pasted straight into the setting.
-        const credentials = ctx.get('credentials')
-        if (credentials) {
-          try {
-            const resolved = await credentials.resolve(credentialRef(value))
-            if (resolved?.value) return resolved.value
-          } catch {
-            // not a resolvable record name — fall back to using value as the key
-          }
+        const refName = source().s2ApiKeyRef.trim()
+        if (!refName) return undefined
+        try {
+          const credentials = ctx.get('credentials')
+          if (!credentials) return undefined
+          const resolved = await credentials.resolve(credentialRef(refName))
+          return resolved?.value
+        } catch {
+          return undefined
         }
-        return value
       },
       resolveAstaKey: async () => {
-        const value = source().astaApiKeyRef.trim()
-        if (!value) return undefined
-        // Accept either a DSH credential record name (resolved from key
-        // management) or a literal key pasted straight into the setting.
-        const credentials = ctx.get('credentials')
-        if (credentials) {
-          try {
-            const resolved = await credentials.resolve(credentialRef(value))
-            if (resolved?.value) return resolved.value
-          } catch {
-            // not a resolvable record name — fall back to using value as the key
-          }
+        const refName = source().astaApiKeyRef.trim()
+        if (!refName) return undefined
+        try {
+          const credentials = ctx.get('credentials')
+          if (!credentials) return undefined
+          const resolved = await credentials.resolve(credentialRef(refName))
+          return resolved?.value
+        } catch {
+          return undefined
         }
-        return value
       },
     })
   }
