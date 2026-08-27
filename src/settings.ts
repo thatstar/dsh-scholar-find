@@ -19,6 +19,7 @@ export interface ScholarSettings {
   scihubEnabled: boolean
   institutionalEnabled: boolean
   scihubMirrors: string
+  proxyUrl: string
   pdfOutputDir: string
   maxResultsPerSearch: number
   fetchTimeoutSec: number
@@ -43,6 +44,8 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   institutionalEnabled: z.boolean().default(false),
   /** Optional comma-separated Sci-Hub mirror override. */
   scihubMirrors: z.string().default(''),
+  /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */
+  proxyUrl: z.string().default(''),
   /** Download directory; relative values resolve against the session workspace. */
   pdfOutputDir: z.string().default('scholar-pdfs'),
   /** Default result cap for scholar search tools. */

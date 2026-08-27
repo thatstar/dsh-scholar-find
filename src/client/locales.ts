@@ -16,6 +16,7 @@ export type ScholarLocaleKey =
   | 'scihubEnabled' | 'scihubEnabledHint'
   | 'institutionalEnabled' | 'institutionalEnabledHint'
   | 'scihubMirrors' | 'scihubMirrorsHint'
+  | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
   | 'maxResultsPerSearch' | 'maxResultsPerSearchHint'
   | 'fetchTimeoutSec' | 'fetchTimeoutSecHint'
@@ -45,6 +46,8 @@ export const en: Record<ScholarLocaleKey, string> = {
   institutionalEnabledHint: 'Requires your own subscription access (on-campus/VPN).',
   scihubMirrors: 'Sci-Hub mirror override',
   scihubMirrorsHint: 'Comma-separated hostnames; empty = built-in list.',
+  proxyUrl: 'Outbound HTTP proxy',
+  proxyUrlHint: 'e.g. http://127.0.0.1:10808. Empty = off / fall back to HTTPS_PROXY.',
   pdfOutputDir: 'PDF output directory',
   pdfOutputDirHint: 'Relative paths resolve against the session workspace.',
   maxResultsPerSearch: 'Default results per search',
@@ -80,6 +83,8 @@ export const zh: Record<ScholarLocaleKey, string> = {
   institutionalEnabledHint: '需要您自己的订阅访问权限（校园网/VPN）。',
   scihubMirrors: 'Sci-Hub 镜像覆盖',
   scihubMirrorsHint: '逗号分隔的主机名；留空使用内置列表。',
+  proxyUrl: '出站 HTTP 代理',
+  proxyUrlHint: '例如 http://127.0.0.1:10808。留空 = 关闭 / 回退到 HTTPS_PROXY。',
   pdfOutputDir: 'PDF 输出目录',
   pdfOutputDirHint: '相对路径基于当前会话工作区解析。',
   maxResultsPerSearch: '默认搜索结果数',

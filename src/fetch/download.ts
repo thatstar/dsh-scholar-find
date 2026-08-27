@@ -51,35 +51,47 @@ export interface DownloadOptions {
   readonly checkDns?: boolean
 }
 
-/** A browser-like User-Agent for PDF downloads. Several OA hosts (bioRxiv,
- * medRxiv, arXiv, some publishers) return HTTP 403 to plain `node` UAs even on
- * legitimately open PDFs; a modern browser UA avoids the blanket block. */
-const DOWNLOAD_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+/** Retry on transient 429 with exponential backoff (bioRxiv/publishers burst-throttle). */
+const DOWNLOAD_RETRIES = 3
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /**
- * Download `url` to `dest` with the full safety gate. Returns an outcome:
- * `ok: false` means the caller may try the next candidate source.
+ * Download `url` to `dest` with the full safety gate, retrying a transient 429
+ * with backoff. Returns an outcome: `ok: false` means the caller may try the
+ * next candidate source. The browser UA is applied by the shared transport.
  */
 export async function downloadPdf(url: string, dest: string, opts: DownloadOptions): Promise<DownloadOutcome> {
-  let r: Response
-  try {
-    r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8', 'User-Agent': DOWNLOAD_UA } }, { checkDns: opts.checkDns })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  } catch (e) {
-    const code = (e as Error & { code?: string }).code
-    if (code === 'host_not_allowed') return { ok: false, reason: 'download_host_not_allowed', detail: (e as Error).message }
-    return { ok: false, reason: 'download_network_error', detail: (e as Error).message }
+  let lastStatus = 0
+  for (let attempt = 0; attempt < DOWNLOAD_RETRIES; attempt++) {
+    if (attempt > 0) await sleep(3000 * 2 ** (attempt - 1))
+    let r: Response
+    try {
+      r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8' } }, { checkDns: opts.checkDns })
+    } catch (e) {
+      const code = (e as Error & { code?: string }).code
+      if (code === 'host_not_allowed') return { ok: false, reason: 'download_host_not_allowed', detail: (e as Error).message }
+      return { ok: false, reason: 'download_network_error', detail: (e as Error).message }
+    }
+    if (r.status === 429 && attempt < DOWNLOAD_RETRIES - 1) {
+      lastStatus = r.status
+      continue
+    }
+    if (!r.ok) return { ok: false, reason: 'download_network_error', detail: `HTTP ${r.status}` }
+    const bytes = await readBodyCapped(r, opts.maxBytes, opts.signal)
+    if (bytes === null) return { ok: false, reason: 'download_size_exceeded', detail: `response exceeds ${opts.maxBytes} bytes` }
+    if (!looksLikePdf(bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'response is not a PDF (HTML landing page?)' }
+    try {
+      await mkdir(dirname(dest), { recursive: true })
+      await writeFile(dest, bytes)
+    } catch (e) {
+      return { ok: false, reason: 'download_io_error', detail: (e as Error).message }
+    }
+    return { ok: true }
   }
-  const bytes = await readBodyCapped(r, opts.maxBytes, opts.signal)
-  if (bytes === null) return { ok: false, reason: 'download_size_exceeded', detail: `response exceeds ${opts.maxBytes} bytes` }
-  if (!looksLikePdf(bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'response is not a PDF (HTML landing page?)' }
-  try {
-    await mkdir(dirname(dest), { recursive: true })
-    await writeFile(dest, bytes)
-  } catch (e) {
-    return { ok: false, reason: 'download_io_error', detail: (e as Error).message }
-  }
-  return { ok: true }
+  return { ok: false, reason: 'download_network_error', detail: `HTTP ${lastStatus || 429}` }
 }
 
 // ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'scihubEnabled', kind: 'boolean' },
   { key: 'institutionalEnabled', kind: 'boolean' },
   { key: 'scihubMirrors', kind: 'text' },
+  { key: 'proxyUrl', kind: 'text' },
   { key: 'pdfOutputDir', kind: 'text' },
   { key: 'maxResultsPerSearch', kind: 'number' },
   { key: 'fetchTimeoutSec', kind: 'number' },

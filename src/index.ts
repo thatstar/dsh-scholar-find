@@ -16,6 +16,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { assertServiceableScholarSettings, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
 import { applyScholarTools } from './tools/register.js'
 import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
+import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 
 /** Schema defaults (the composition base layer of the settings section). */
 export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
@@ -24,6 +25,7 @@ export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   scihubEnabled: false,
   institutionalEnabled: false,
   scihubMirrors: '',
+  proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',
   maxResultsPerSearch: 20,
   fetchTimeoutSec: 30,
@@ -43,10 +45,12 @@ export function apply(ctx: Context): void {
       source = current
     },
     onChange: () => {
-      // Every tool reads the settings source getter live, so nothing derived
-      // needs rebuilding when the document changes.
+      // Proxy is read live so a settings change applies without a restart.
+      configureProxy(resolveProxyUrl(source().proxyUrl))
     },
   })
+  // Apply the proxy on boot (falls back to HTTPS_PROXY etc. when unset).
+  configureProxy(resolveProxyUrl(source().proxyUrl))
 
   // 2. Tools ----------------------------------------------------------------
   const tools = ctx.get('tools')

@@ -66,6 +66,25 @@ describe('downloadPdf', () => {
     expect(out.ok).toBe(false)
     expect(out.reason).toBe('download_host_not_allowed')
   })
+
+  it('retries a transient 429 with backoff then succeeds', async () => {
+    vi.useFakeTimers()
+    tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
+    let calls = 0
+    fetchMock.mockImplementation(() => {
+      calls++
+      return calls < 3 ? Promise.resolve(new Response('rate limited', { status: 429 })) : Promise.resolve(new Response(PDF_BYTES, { status: 200 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const outPromise = downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 5000, maxBytes: 1024, checkDns: false })
+    let out: Awaited<ReturnType<typeof downloadPdf>> | undefined
+    const p = outPromise.then((r) => { out = r })
+    await vi.advanceTimersByTimeAsync(12000)
+    await p
+    expect(out?.ok).toBe(true)
+    expect(calls).toBe(3)
+    vi.useRealTimers()
+  })
 })
 
 describe('idempotency sidecar', () => {

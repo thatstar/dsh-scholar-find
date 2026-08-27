@@ -10,6 +10,7 @@
 import type { ScholarClient } from '../s2/client.js'
 import { getPaper } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
+import { pluginFetch } from './transport.js'
 
 export interface PaperMeta {
   title?: string
@@ -165,7 +166,7 @@ async function jsonGet(url: string, timeoutMs: number, signal?: AbortSignal, hea
   signal?.addEventListener('abort', onAbort, { once: true })
   const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs)
   try {
-    const r = await fetch(url, { headers: { Accept: 'application/json', ...headers }, signal: controller.signal })
+    const r = await pluginFetch(url, { headers: { Accept: 'application/json', ...headers }, signal: controller.signal })
     const text = await r.text()
     let body: any
     try {
@@ -331,7 +332,7 @@ async function scihubResolve(doi: string, mirrorsEnv: string, timeoutMs: number,
       const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs)
       let html = ''
       try {
-        const r = await fetch(`https://${mirror}/${doi}`, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1' } })
+        const r = await pluginFetch(`https://${mirror}/${doi}`, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1' } })
         html = await r.text()
       } finally {
         clearTimeout(timer)

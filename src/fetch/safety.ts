@@ -8,6 +8,7 @@
 
 import { isIP } from 'node:net'
 import { lookup } from 'node:dns/promises'
+import { pluginFetch } from './transport.js'
 
 const BLOCKED_HOSTS = new Set([
   'localhost',
@@ -128,7 +129,7 @@ export async function fetchWithRedirects(
       err.code = 'host_not_allowed'
       throw err
     }
-    const r = await fetch(current, { ...init, redirect: 'manual' })
+    const r = await pluginFetch(current, { ...init, redirect: 'manual' })
     if (r.status >= 300 && r.status < 400) {
       const location = r.headers.get('location')
       if (!location) return r

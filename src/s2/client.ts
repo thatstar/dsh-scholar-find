@@ -8,6 +8,8 @@
  * @module dsh-scholar-find/s2-client
  */
 
+import { pluginFetch } from '../fetch/transport.js'
+
 const GRAPH = 'https://api.semanticscholar.org/graph/v1'
 const RECS = 'https://api.semanticscholar.org/recommendations/v1'
 
@@ -145,7 +147,7 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
       options.signal?.addEventListener('abort', onAbort, { once: true })
       const timer = setTimeout(() => controller.abort(new Error(`timeout after ${options.timeoutMs ?? 30_000}ms`)), options.timeoutMs ?? 30_000)
       try {
-        return await fetch(url + query, { ...init, signal: controller.signal })
+        return await pluginFetch(url + query, { ...init, signal: controller.signal })
       } finally {
         clearTimeout(timer)
         options.signal?.removeEventListener('abort', onAbort)
