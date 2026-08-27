@@ -44,7 +44,6 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     doi,
     email: rt.settings.unpaywallEmail.trim(),
     s2: rt.s2,
-    institutional: rt.settings.institutionalEnabled,
     timeoutMs: rt.settings.fetchTimeoutSec * 1000,
     signal: rt.signal,
   }
@@ -82,10 +81,6 @@ export async function resolveOne(rt: FetchRuntime, doi: string): Promise<FetchIt
   }
   if (!chain.candidates.length) {
     const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
-    if (!rt.settings.institutionalEnabled) {
-      err.suggest_institutional = true
-      err.reason = 'No OA copy found. If your institution subscribes to this paper, enable institutional mode in the plugin settings.'
-    }
     return {
       doi: normalized,
       success: false,
@@ -152,10 +147,6 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
   // `failures[length-1]`.
   if (!chain.candidates.length) {
     const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
-    if (!rt.settings.institutionalEnabled) {
-      err.suggest_institutional = true
-      err.reason = 'No OA copy found. If your institution subscribes to this paper, enable institutional mode in the plugin settings.'
-    }
     return {
       doi: normalized,
       success: false,
@@ -210,7 +201,6 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
         file: dest,
         meta: { ...chain.meta },
         sourcesTried: chain.sourcesTried,
-        ...(cand.detail?.publisher ? { via: 'publisher_direct' } : {}),
       }
     }
     failures.push({ source: cand.source, reason: outcome.reason ?? 'download_network_error', detail: outcome.detail })

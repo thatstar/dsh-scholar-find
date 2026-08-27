@@ -26,7 +26,6 @@ function baseCtx(overrides: Partial<ChainContext> = {}): ChainContext {
     doi: '10.1038/s41586-021-03819-2',
     email: 'you@example.com',
     s2,
-    institutional: false,
     timeoutMs: 5000,
     ...overrides,
   }

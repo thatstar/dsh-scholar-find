@@ -11,10 +11,9 @@ instructions:
    authors, BibTeX export.
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
-   bioRxiv/medRxiv → publisher direct (opt-in)). We rely strictly on the OA
-   sources' own return values: a direct PDF is tested, then a CloakBrowser
-   fallback, and if both fail we report no PDF fetched. (No Sci-Hub / pirate
-   fallback.)
+   bioRxiv/medRxiv). We rely strictly on the OA sources' own return values: a
+   direct PDF is tested, then a CloakBrowser fallback, and if both fail we
+   report no PDF fetched. (No publisher-guess, Sci-Hub, or pirate fallback.)
 3. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
 
@@ -91,7 +90,6 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
 | `s2ApiKeyRef` | Optional S2 key as a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials` — same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |
-| `institutionalEnabled` | Opt-in publisher-direct fallback (user's own subscription access). |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |

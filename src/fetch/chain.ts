@@ -1,10 +1,9 @@
 /**
  * The paper_fetch source chain, reimplemented in TypeScript against the
  * public OA APIs: Unpaywall -> Semantic Scholar -> arXiv -> Europe PMC/PMC ->
- * bioRxiv/medRxiv -> publisher direct (institutional opt-in). Each resolver
- * returns PDF URL candidates plus metadata; the download loop validates and
- * writes. We rely strictly on the OA sources' own return values — no
- * last-resort/pirate fallback.
+ * bioRxiv/medRxiv. Each resolver returns PDF URL candidates plus metadata; the
+ * download loop validates and writes. We rely strictly on the OA sources' own
+ * return values — no last-resort/publisher-guess/pirate fallback.
  * @module dsh-scholar-find/fetch-chain
  */
 
@@ -29,7 +28,7 @@ export interface SourceResolution {
   meta: PaperMeta
   /** External ids learned along the way (ArXiv, PubMedCentral, DOI). */
   ext: Record<string, string>
-  /** Extra diagnostics for the envelope (e.g. publisher-direct detail). */
+  /** Extra diagnostics for the envelope (e.g. mirror detail). */
   detail?: Record<string, string>
 }
 
@@ -37,7 +36,6 @@ export interface ChainContext {
   readonly doi: string
   readonly email: string
   readonly s2: ScholarClient
-  readonly institutional: boolean
   readonly timeoutMs: number
   readonly signal?: AbortSignal
 }
@@ -136,14 +134,6 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
       if (bx) add('biorxiv', bx)
     } catch {
       // ignore
-    }
-  }
-
-  // 6. Publisher direct (institutional opt-in)
-  if (ctx.institutional) {
-    sourcesTried.push('publisher_direct')
-    for (const [publisher, url] of publisherCandidates(ctx.doi, ctx.timeoutMs)) {
-      add('publisher_direct', url, { detail: { publisher } })
     }
   }
 
@@ -285,30 +275,6 @@ async function biorxivResolve(doi: string, timeoutMs: number, signal?: AbortSign
     }
   }
   return undefined
-}
-
-/** Publisher-direct URL templates by DOI prefix (institutional mode). */
-export function publisherCandidates(doi: string, timeoutMs: number): Array<[publisher: string, url: string]> {
-  const suffix = doi.slice(doi.indexOf('/') + 1)
-  const out: Array<[string, string]> = []
-  const templates: Record<string, [string, string]> = {
-    '10.1038/': ['nature', `https://www.nature.com/articles/${suffix}.pdf`],
-    '10.1126/': ['science', `https://www.science.org/doi/pdf/${doi}`],
-    '10.1002/': ['wiley', `https://onlinelibrary.wiley.com/doi/pdf/${doi}`],
-    '10.1007/': ['springer', `https://link.springer.com/content/pdf/${doi}.pdf`],
-    '10.1021/': ['acs', `https://pubs.acs.org/doi/pdf/${doi}`],
-    '10.1073/': ['pnas', `https://www.pnas.org/doi/pdf/${doi}`],
-    '10.1056/': ['nejm', `https://www.nejm.org/doi/pdf/${doi}`],
-    '10.1177/': ['sage', `https://journals.sagepub.com/doi/pdf/${doi}`],
-    '10.1080/': ['tandf', `https://www.tandfonline.com/doi/pdf/${doi}`],
-  }
-  for (const [prefix, entry] of Object.entries(templates)) {
-    if (doi.startsWith(prefix)) {
-      out.push(entry)
-      return out
-    }
-  }
-  return out
 }
 
 // ---------------------------------------------------------------------------

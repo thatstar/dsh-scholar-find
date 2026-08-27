@@ -23,7 +23,6 @@ function defaults(): ScholarSettings {
   return {
     unpaywallEmail: '',
     s2ApiKeyRef: '',
-    institutionalEnabled: false,
     cloakEnabled: false,
     proxyUrl: '',
     pdfOutputDir: 'scholar-pdfs',

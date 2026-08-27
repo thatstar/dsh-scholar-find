@@ -22,7 +22,6 @@ import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   unpaywallEmail: '',
   s2ApiKeyRef: '',
-  institutionalEnabled: false,
   cloakEnabled: false,
   proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',

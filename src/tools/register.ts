@@ -436,7 +436,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         : `**Not found.** ${(result.error as any)?.message ?? ''}`
       return {
         doi,
-        markdown: `## Resolve ${doi}\n\n${sourceLine}${result.error?.suggest_institutional ? '\n\n> Tip: enable institutional mode in plugin settings if your institution subscribes.' : ''}`,
+        markdown: `## Resolve ${doi}\n\n${sourceLine}`,
         data: { ok: result.success, ...(resolution ? { titleResolution: resolution } : {}), result },
       } as any
     },

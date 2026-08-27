@@ -32,7 +32,6 @@ export interface EnvelopeError {
   retryable: boolean
   retry_after_hours?: number
   reason?: string
-  suggest_institutional?: boolean
 }
 
 /** One per-DOI outcome inside a paper_fetch result. */

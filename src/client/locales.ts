@@ -13,7 +13,6 @@ export type ScholarLocaleKey =
   | 'unsaved' | 'expand' | 'collapse' | 'readOnly' | 'invalidNumber'
   | 'unpaywallEmail' | 'unpaywallEmailHint'
   | 's2ApiKeyRef' | 's2ApiKeyRefHint'
-  | 'institutionalEnabled' | 'institutionalEnabledHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
   | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
@@ -39,8 +38,6 @@ export const en: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
   s2ApiKeyRef: 'Semantic Scholar API key reference',
   s2ApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).',
-  institutionalEnabled: 'Institutional (publisher-direct) mode',
-  institutionalEnabledHint: 'Requires your own subscription access (on-campus/VPN).',
   cloakEnabled: 'CloakBrowser fallback',
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
   proxyUrl: 'Outbound HTTP proxy',
@@ -74,8 +71,6 @@ export const zh: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',
   s2ApiKeyRef: 'Semantic Scholar API 密钥引用',
   s2ApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。',
-  institutionalEnabled: '机构模式（出版社直连）',
-  institutionalEnabledHint: '需要您自己的订阅访问权限（校园网/VPN）。',
   cloakEnabled: 'CloakBrowser 兜底',
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
   proxyUrl: '出站 HTTP 代理',

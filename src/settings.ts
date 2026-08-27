@@ -16,7 +16,6 @@ export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
 export interface ScholarSettings {
   unpaywallEmail: string
   s2ApiKeyRef: string
-  institutionalEnabled: boolean
   cloakEnabled: boolean
   proxyUrl: string
   pdfOutputDir: string
@@ -37,8 +36,6 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   unpaywallEmail: z.string().default(''),
   /** DSH credential reference (record name in ~/.dsh/.credentials.yaml, e.g. `S2_API_KEY`). Empty -> anonymous. */
   s2ApiKeyRef: z.string().default(''),
-  /** Publisher-direct fallback (requires the user's own subscription access). */
-  institutionalEnabled: z.boolean().default(false),
   /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
   cloakEnabled: z.boolean().default(false),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */
