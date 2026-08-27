@@ -12,30 +12,23 @@ import { fetchWithRedirects, looksLikePdf, readBodyCapped } from './safety.js'
 import { cloakFetchPdf } from './cloak.js'
 import type { PaperMeta } from './chain.js'
 
-/** Deterministic filename: {first_author}_{year}_{journal_abbrev}_{title_slug}.pdf */
-export function buildFilename(meta: PaperMeta, fallbackTitle: string): string {
-  const author = slug((meta.author ?? 'unknown').split(/\s+/).pop() ?? 'unknown', 20)
-  const year = String(meta.year ?? 'nd')
-  const journal = journalAbbrev(meta.journal)
-  const title = slug(meta.title ?? fallbackTitle, 40)
-  return [author, year, ...(journal ? [journal] : []), title].join('_') + '.pdf'
-}
+/** Max length for the title portion of the canonical filename. */
+const TITLE_MAX_LEN = 50
 
-const STOPWORDS = new Set(['the', 'of', 'and', 'for', 'in', 'on', 'a', 'an', 'to', '&'])
+/** Deterministic canonical filename: {first author}-{year}-{title(≤50, spaces→_)}.pdf */
+export function buildFilename(meta: PaperMeta, fallbackTitle: string): string {
+  // First author's surname; blank/whitespace author falls back to 'unknown'.
+  const author = slug(meta.author?.trim() ? meta.author.trim().split(/\s+/).pop()! : 'unknown', 20)
+  const year = String(meta.year ?? 'nd')
+  // Slug the title into underscore-separated tokens, then cap the length and
+  // drop any trailing underscore left by the cut so it reads cleanly.
+  const title = slug(meta.title ?? fallbackTitle, TITLE_MAX_LEN).replace(/_+$/, '') || 'paper'
+  return [author, year, title].filter(Boolean).join('-') + '.pdf'
+}
 
 function slug(value: string, max: number): string {
   const s = value.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, max)
   return s || 'paper'
-}
-
-export function journalAbbrev(name: string | undefined, maxLen = 20): string {
-  if (!name) return ''
-  const words = name.split(/[^A-Za-z0-9]+/).filter((w) => w && !STOPWORDS.has(w.toLowerCase()))
-  if (!words.length) return ''
-  const abbrev = words.length >= 3
-    ? words.map((w) => w[0]!.toUpperCase()).join('')
-    : words.map((w) => w[0]!.toUpperCase() + w.slice(1)).join('')
-  return abbrev.slice(0, maxLen)
 }
 
 export interface DownloadOutcome {

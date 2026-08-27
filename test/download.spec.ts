@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildFilename, downloadPdf, idemLoad, idemStore, journalAbbrev } from '../src/fetch/download.js'
+import { buildFilename, downloadPdf, idemLoad, idemStore } from '../src/fetch/download.js'
 import type { PaperMeta } from '../src/fetch/chain.js'
 
 const fetchMock = vi.fn()
@@ -27,15 +27,19 @@ function stubFetch(response: Response): void {
 const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 1, 2, 3])
 
 describe('buildFilename', () => {
-  it('builds the deterministic author_year_journal_title name', () => {
-    const meta: PaperMeta = { title: 'Highly accurate protein structure prediction', year: 2021, author: 'Jumper', journal: 'Nature' }
-    expect(buildFilename(meta, 'x')).toBe('Jumper_2021_Nature_Highly_accurate_protein_structure_predic.pdf')
+  it('builds the canonical author-year-title name with underscores and a ≤50-char title', () => {
+    const meta: PaperMeta = { title: 'Highly accurate protein structure prediction with AlphaFold', year: 2021, author: 'John Jumper', journal: 'Nature' }
+    const name = buildFilename(meta, 'x')
+    const title = name.slice(0, -4).split('-').slice(2).join('-') // drop author-year + .pdf
+    expect(name).toMatch(/^Jumper-2021-.+\.pdf$/) // surname, year, hyphenated
+    expect(title.length).toBeLessThanOrEqual(50)
+    expect(title).not.toContain(' ')
   })
 
-  it('abbreviates long journal names', () => {
-    expect(journalAbbrev('Proceedings of the National Academy of Sciences')).toBe('PNAS')
-    expect(journalAbbrev('Journal of the American Chemical Society')).toBe('JACS')
-    expect(journalAbbrev('Neural Computation')).toBe('NeuralComputation')
+  it('falls back to unknown author when metadata is missing', () => {
+    const meta: PaperMeta = { title: 'A very long paper title that should be truncated to fifty characters exactly', year: 2024, author: '' }
+    const name = buildFilename(meta, 'x')
+    expect(name).toMatch(/^unknown-2024-A_very_long_paper_title_that_should_be_truncated_t\.pdf$/)
   })
 })
 

@@ -72,7 +72,7 @@ describe('fetchOne', () => {
     const result = await fetchOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1038/s41586-021-03819-2')
     expect(result.success).toBe(true)
     expect(result.source).toBe('unpaywall')
-    expect(result.file).toMatch(/Jumper_2021_.*\.pdf$/)
+    expect(result.file).toMatch(/Jumper-2021-A_paper\.pdf$/)
   })
 })
 describe('fetchOne web-search fallback', () => {
