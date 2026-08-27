@@ -14,9 +14,7 @@ export type ScholarLocaleKey =
   | 'configured' | 'notConfigured'
   | 'unpaywallEmail' | 'unpaywallEmailHint'
   | 's2ApiKey' | 's2ApiKeyHint'
-  | 's2ApiKeyRef' | 's2ApiKeyRefHint'
   | 'astaApiKey' | 'astaApiKeyHint'
-  | 'astaApiKeyRef' | 'astaApiKeyRefHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
   | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
@@ -44,12 +42,8 @@ export const en: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
   s2ApiKey: 'Semantic Scholar API key',
   s2ApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
-  s2ApiKeyRef: 'Semantic Scholar key record',
-  s2ApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).',
   astaApiKey: 'Ai2 Asta API key',
   astaApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
-  astaApiKeyRef: 'Ai2 Asta key record',
-  astaApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. ASTA_API_KEY). Enables the ~500-word paper content tool.',
   cloakEnabled: 'CloakBrowser fallback',
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
   proxyUrl: 'Outbound HTTP proxy',
@@ -85,12 +79,8 @@ export const zh: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',
   s2ApiKey: 'Semantic Scholar API 密钥',
   s2ApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
-  s2ApiKeyRef: 'Semantic Scholar 密钥记录',
-  s2ApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。',
   astaApiKey: 'Ai2 Asta API 密钥',
   astaApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
-  astaApiKeyRef: 'Ai2 Asta 密钥记录',
-  astaApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 ASTA_API_KEY）。启用约 500 词的论文内容工具。',
   cloakEnabled: 'CloakBrowser 兜底',
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
   proxyUrl: '出站 HTTP 代理',
