@@ -13,7 +13,7 @@ import { createScholarClient, type ScholarClient } from '../s2/client.js'
 import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
-import type { FetchRuntime } from '../fetch/service.js'
+import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
 
 /** Minimal view over the agent a tool call runs for. */
@@ -40,6 +40,11 @@ function baseDirOf(exec: ToolRunContext): string {
   return agent?.session?.header?.cwd ?? process.cwd()
 }
 
+/** Minimal structural view of the DSH `web` service (the web_search backing). */
+interface WebServiceLike {
+  search(req: { query: string; maxResults?: number }, signal?: AbortSignal): Promise<{ sources?: Array<{ url: string; title?: string; snippet?: string }> }>
+}
+
 function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s2: ScholarClient; fetch: FetchRuntime } {
   const settings = env.settings()
   const s2Client = createScholarClient({
@@ -48,6 +53,20 @@ function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s
     timeoutMs: settings.fetchTimeoutSec * 1000,
     signal: exec.signal,
   })
+  // Last-resort title-search fallback via the DSH web service (same provider as
+  // the `web_search` tool). Optional: if no web capability is available or it
+  // errors, the fallback is silently skipped (searchWeb returns []).
+  const web = ctx.get('web') as WebServiceLike | undefined
+  const searchWeb = web
+    ? async (query: string, maxResults: number, signal?: AbortSignal): Promise<WebSearchHit[]> => {
+        try {
+          const r = await web.search({ query, maxResults }, signal)
+          return (r?.sources ?? []).map((s) => ({ url: s.url, title: s.title, snippet: s.snippet }))
+        } catch {
+          return []
+        }
+      }
+    : undefined
   return {
     s2: s2Client,
     fetch: {
@@ -55,6 +74,7 @@ function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s
       s2: s2Client,
       baseDir: baseDirOf(exec),
       signal: exec.signal,
+      searchWeb,
     },
   }
 }

@@ -75,3 +75,36 @@ describe('fetchOne', () => {
     expect(result.file).toMatch(/Jumper_2021_.*\.pdf$/)
   })
 })
+describe('fetchOne web-search fallback', () => {
+  it('searches the title and downloads a free PDF after the OA source fails', async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 1, 2])
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title: 'Self-Paced Learning for Latent Variable Models', year: 2010, journal_name: 'NIPS', z_authors: [{ family: 'Kumar' }], best_oa_location: { url_for_pdf: 'https://example.com/blocked.pdf' } })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      if (url === 'https://example.com/blocked.pdf') return new Response('Just a moment', { status: 403 })
+      if (url === 'https://example.com/found.pdf') return new Response(pdf, { status: 200 })
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const searchWeb = vi.fn(async (q: string) => [{ url: 'https://example.com/found.pdf' }])
+    const result = await fetchOne({ ...runtime({ unpaywallEmail: 'you@example.com' }), searchWeb } as FetchRuntime, '10.1007/s11263-022-01611-x')
+    expect(result.success).toBe(true)
+    expect(result.source).toBe('web_search')
+    expect(result.pdfUrl).toBe('https://example.com/found.pdf')
+    expect(searchWeb).toHaveBeenCalledWith('Self-Paced Learning for Latent Variable Models pdf', 10, undefined)
+    expect(result.sourcesTried).toContain('web_search')
+  })
+
+  it('does not use the web fallback when no title is known', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const searchWeb = vi.fn(async () => [{ url: 'https://example.com/found.pdf' }])
+    const result = await fetchOne({ ...runtime(), searchWeb } as FetchRuntime, '10.1007/s11263-022-01611-x')
+    expect(result.success).toBe(false)
+    expect(result.error?.code).toBe('not_found')
+    expect(searchWeb).not.toHaveBeenCalled()
+  })
+})

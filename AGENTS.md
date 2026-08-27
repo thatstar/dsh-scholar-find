@@ -12,8 +12,11 @@ instructions:
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
    bioRxiv/medRxiv). We rely strictly on the OA sources' own return values: a
-   direct PDF is tested, then a CloakBrowser fallback, and if both fail we
-   report no PDF fetched. (No publisher-guess, Sci-Hub, or pirate fallback.)
+   direct PDF is tested, then a CloakBrowser fallback. If both fail, a **last
+   automatic fallback** web-searches the paper's full title (via the DSH `web`
+   service, the `web_search` backing) for a free PDF and tries to fetch it; if
+   that also fails we report no PDF fetched. (No publisher-guess, Sci-Hub, or
+   pirate fallback.)
 3. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
 

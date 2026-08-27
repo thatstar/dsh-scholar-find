@@ -14,12 +14,26 @@ import { makeError, type EnvelopeError, type FetchItemResult } from './envelope.
 import { isSafeUrl } from './safety.js'
 import { resolveProxyUrl } from './transport.js'
 
+export interface WebSearchHit {
+  url: string
+  title?: string
+  snippet?: string
+}
+
 export interface FetchRuntime {
   readonly settings: ScholarSettings
   readonly s2: ScholarClient
   readonly baseDir: string
   readonly signal?: AbortSignal
+  /** Optional DSH web search (`ctx.web.search`); unset disables the last-resort
+   * title-search fallback. */
+  readonly searchWeb?: (query: string, maxResults: number, signal?: AbortSignal) => Promise<WebSearchHit[]>
 }
+
+/** Last-resort web-search results to consider. */
+const WEB_SEARCH_MAX_RESULTS = 10
+/** How many candidate URLs the web fallback actually tries to download. */
+const WEB_FALLBACK_MAX_TRIES = 5
 
 /** Strip common DOI URL prefixes so users can paste bare links. */
 export function normalizeDoi(doi: string): string {
@@ -47,6 +61,59 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     timeoutMs: rt.settings.fetchTimeoutSec * 1000,
     signal: rt.signal,
   }
+}
+
+/** Candidate PDF URLs from a title web-search: direct `.pdf` links + arXiv `abs` → `pdf`. */
+function webCandidateUrls(hits: readonly WebSearchHit[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (u: string): void => {
+    const x = u.trim()
+    if (x && !seen.has(x)) {
+      seen.add(x)
+      out.push(x)
+    }
+  }
+  for (const hit of hits) {
+    const u = hit.url
+    if (!u) continue
+    if (/\.pdf(?:\?.*)?$/i.test(u)) push(u)
+    const arx = u.match(/arxiv\.org\/abs\/([^/?#]+)/)
+    if (arx) push(`https://arxiv.org/pdf/${arx[1]}`)
+  }
+  return out
+}
+
+/** Last-resort fallback: web-search the paper title for a free PDF and try to
+ * fetch it (direct -> CloakBrowser -> fail). Returns the winning URL or nothing. */
+async function tryWebSearch(
+  rt: FetchRuntime,
+  meta: { title?: string },
+  dest: string,
+  opts: DownloadOptions,
+): Promise<{ href: string; source: string } | undefined> {
+  if (!rt.searchWeb || !meta.title) return undefined
+  let hits: WebSearchHit[]
+  try {
+    hits = await rt.searchWeb(`${meta.title} pdf`, WEB_SEARCH_MAX_RESULTS, rt.signal)
+  } catch {
+    return undefined // web capability unavailable — skip the fallback
+  }
+  const urls = webCandidateUrls(hits).slice(0, WEB_FALLBACK_MAX_TRIES)
+  for (const href of urls) {
+    const gate = isSafeUrl(href)
+    if (!gate.ok) continue
+    const outcome = await downloadPdf(href, dest, {
+      timeoutMs: rt.settings.fetchTimeoutSec * 1000,
+      maxBytes: rt.settings.maxPdfSizeMb * 1024 * 1024,
+      signal: rt.signal,
+      checkDns: opts.checkDns,
+      cloakEnabled: rt.settings.cloakEnabled,
+      proxyUrl: resolveProxyUrl(rt.settings.proxyUrl),
+    })
+    if (outcome.ok) return { href, source: 'web_search' }
+  }
+  return undefined
 }
 
 /** Resolve one DOI to candidates (no download). */
@@ -142,10 +209,24 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
 
   const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
 
-  // No candidate source yielded a PDF URL. Report a clean not_found rather
-  // than falling through to the (empty) download loop and crashing on
-  // `failures[length-1]`.
+  const fname = buildFilename(chain.meta, normalized)
+  const dest = join(outDir, fname)
+
+  // No candidate source yielded a PDF URL. Last-resort automatic fallback: web-
+  // search the title for a free PDF; only then report a clean not_found.
   if (!chain.candidates.length) {
+    const hit = await tryWebSearch(rt, chain.meta, dest, opts)
+    if (hit) {
+      return {
+        doi: normalized,
+        success: true,
+        source: hit.source,
+        pdfUrl: hit.href,
+        file: dest,
+        meta: { ...chain.meta },
+        sourcesTried: [...chain.sourcesTried, 'web_search'],
+      }
+    }
     const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
     return {
       doi: normalized,
@@ -158,9 +239,6 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       error: err,
     }
   }
-
-  const fname = buildFilename(chain.meta, normalized)
-  const dest = join(outDir, fname)
 
   const exists = await fileExists(dest)
   if (exists && !opts.overwrite) {
@@ -204,6 +282,21 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       }
     }
     failures.push({ source: cand.source, reason: outcome.reason ?? 'download_network_error', detail: outcome.detail })
+  }
+
+  // Last-resort automatic fallback: if every OA candidate's download failed,
+  // web-search the title for a free PDF.
+  const hit = await tryWebSearch(rt, chain.meta, dest, opts)
+  if (hit) {
+    return {
+      doi: normalized,
+      success: true,
+      source: hit.source,
+      pdfUrl: hit.href,
+      file: dest,
+      meta: { ...chain.meta },
+      sourcesTried: [...chain.sourcesTried, 'web_search'],
+    }
   }
 
   if (failures.length === 0) {
