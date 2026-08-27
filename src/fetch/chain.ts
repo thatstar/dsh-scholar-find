@@ -191,18 +191,19 @@ export function arxivIdFromUrl(url: string): string | undefined {
 
 /** Standard HTML signals that point at an article's actual PDF. */
 const PDF_URL_SIGNALS = [
-  /<meta[^>]+name=["']citation_pdf_url["'][^>]+content=["']([^"']+)["']/i, // academic convention (arXiv, ChemRxiv, bioRxiv, PMC, …)
+  /<meta[^>]+name=["']citation_pdf_url["'][^>]+content=["']([^"']+)["']/i, // academic convention; VERIFIED live on arXiv + Springer only
   /<link[^>]+rel=["']alternate["'][^>]+type=["']application\/pdf["'][^>]+href=["']([^"']+)["']/i,
   /\shref=["']([^"']+\.pdf)["']/i, // first anchor with a .pdf href
 ] as const
 
 /**
- * Discover the actual PDF URL for an OA *landing page* (Unpaywall gives
- * `url_for_landing_page` when it has no stable direct PDF link). Site-agnostic:
- * reads `citation_pdf_url`, an `<link rel="alternate" application/pdf>`, or the
- * first `.pdf` anchor, and normalises it against the page URL. An arXiv
- * abs/pdf URL is resolved directly (no fetch) as a fast path. Best-effort —
- * returns undefined on any failure (JS-rendered landings are out of scope).
+ * Best-effort fallback: discover the actual PDF URL for an OA *landing page*
+ * (Unpaywall gives `url_for_landing_page` when it has no stable direct PDF
+ * link). Reads `citation_pdf_url`, an application/pdf alternate <link>, or the
+ * first .pdf anchor. This is ONLY verified on arXiv (resolved directly) and
+ * Springer. NOT reliable for PMC/bioRxiv/ChemRxiv (JS-rendered or no meta tag)
+ * — those are covered by the chain's dedicated resolvers (Europe PMC,
+ * bioRxiv API), not by this fallback. Returns undefined on any failure.
  */
 export async function landingPdfUrl(url: string, timeoutMs: number, signal?: AbortSignal, opts: { checkDns?: boolean } = {}): Promise<string | undefined> {
   const arxiv = arxivIdFromUrl(url)
