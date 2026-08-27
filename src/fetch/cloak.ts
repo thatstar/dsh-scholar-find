@@ -13,12 +13,15 @@
  * This module is lazy — `cloakbrowser` (and its Chromium binary) are only
  * touched when a cloaked download is actually attempted. The binary
  * auto-downloads (~200 MB, cached in `~/.cloakbrowser/`; override with
- * `CLOAKBROWSER_CACHE_DIR`).
+ * `CLOAKBROWSER_CACHE_DIR`). Its own downloader uses Node's global `fetch`,
+ * which ignores proxy environment vars — so when the operator configures a
+ * proxy we route that download through it too (see `cloakFetchPdf`).
  * @module dsh-scholar-find/cloak
  */
 
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 
@@ -88,11 +91,33 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
   }
 
   let browser: Awaited<ReturnType<typeof cloak.launch>>
+  // CloakBrowser's binary download (and its signed-manifest fetch) uses Node's
+  // global `fetch`, which ignores HTTP(S)_PROXY. Route it through the operator's
+  // proxy so a fresh download works behind a firewall/GFW. The browser's own
+  // networking is separately configured via the launch `proxy` option. The
+  // global dispatcher is swapped only for the duration of `launch()` (the binary
+  // download completes before it resolves) and restored afterwards.
+  const proxy = proxyUrl?.trim() ? normalizeProxy(proxyUrl) : undefined
+  let prevDispatcher: unknown
+  let downloadAgent: ProxyAgent | undefined
+  if (proxy) {
+    prevDispatcher = getGlobalDispatcher()
+    try {
+      downloadAgent = new ProxyAgent(proxy)
+      setGlobalDispatcher(downloadAgent)
+    } catch (e) {
+      return { ok: false, detail: `cloak proxy setup failed: ${(e as Error).message}` }
+    }
+  }
   try {
-    const proxy = proxyUrl?.trim() ? normalizeProxy(proxyUrl) : undefined
     browser = await cloak.launch({ headless: true, ...(proxy ? { proxy } : {}) })
   } catch (e) {
     return { ok: false, detail: `cloak launch failed: ${(e as Error).message}` }
+  } finally {
+    if (prevDispatcher !== undefined) {
+      setGlobalDispatcher(prevDispatcher as ReturnType<typeof getGlobalDispatcher>)
+      void downloadAgent?.close().catch(() => {})
+    }
   }
 
   try {
