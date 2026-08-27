@@ -13,10 +13,8 @@ export type ScholarLocaleKey =
   | 'unsaved' | 'expand' | 'collapse' | 'readOnly' | 'invalidNumber'
   | 'unpaywallEmail' | 'unpaywallEmailHint'
   | 's2ApiKeyRef' | 's2ApiKeyRefHint'
-  | 'scihubEnabled' | 'scihubEnabledHint'
   | 'institutionalEnabled' | 'institutionalEnabledHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
-  | 'scihubMirrors' | 'scihubMirrorsHint'
   | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
   | 'maxResultsPerSearch' | 'maxResultsPerSearchHint'
@@ -41,14 +39,10 @@ export const en: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
   s2ApiKeyRef: 'Semantic Scholar API key reference',
   s2ApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).',
-  scihubEnabled: 'Sci-Hub fallback',
-  scihubEnabledHint: 'Last-resort non-OA fallback. Off by default.',
   institutionalEnabled: 'Institutional (publisher-direct) mode',
   institutionalEnabledHint: 'Requires your own subscription access (on-campus/VPN).',
   cloakEnabled: 'CloakBrowser fallback',
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
-  scihubMirrors: 'Sci-Hub mirror override',
-  scihubMirrorsHint: 'Comma-separated hostnames; empty = built-in list.',
   proxyUrl: 'Outbound HTTP proxy',
   proxyUrlHint: 'e.g. http://127.0.0.1:10808. Empty = off / fall back to HTTPS_PROXY.',
   pdfOutputDir: 'PDF output directory',
@@ -80,14 +74,10 @@ export const zh: Record<ScholarLocaleKey, string> = {
   unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',
   s2ApiKeyRef: 'Semantic Scholar API 密钥引用',
   s2ApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。',
-  scihubEnabled: 'Sci-Hub 兜底',
-  scihubEnabledHint: '非开放获取的最后兜底来源。默认关闭。',
   institutionalEnabled: '机构模式（出版社直连）',
   institutionalEnabledHint: '需要您自己的订阅访问权限（校园网/VPN）。',
   cloakEnabled: 'CloakBrowser 兜底',
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
-  scihubMirrors: 'Sci-Hub 镜像覆盖',
-  scihubMirrorsHint: '逗号分隔的主机名；留空使用内置列表。',
   proxyUrl: '出站 HTTP 代理',
   proxyUrlHint: '例如 http://127.0.0.1:10808。留空 = 关闭 / 回退到 HTTPS_PROXY。',
   pdfOutputDir: 'PDF 输出目录',

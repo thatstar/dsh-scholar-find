@@ -23,10 +23,9 @@ function defaults(): ScholarSettings {
   return {
     unpaywallEmail: '',
     s2ApiKeyRef: '',
-    scihubEnabled: false,
     institutionalEnabled: false,
     cloakEnabled: false,
-    scihubMirrors: '',
+    proxyUrl: '',
     pdfOutputDir: 'scholar-pdfs',
     maxResultsPerSearch: 20,
     fetchTimeoutSec: 30,

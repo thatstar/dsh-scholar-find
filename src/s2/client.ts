@@ -21,6 +21,12 @@ const MAX_RETRIES = 5
 export const ANONYMOUS_GAP_MS = 5_000
 /** Default authenticated pacing, ms. */
 export const KEYED_GAP_MS = 1_100
+/** Default per-request timeout, ms. */
+const DEFAULT_TIMEOUT_MS = 30_000
+/** S2 Graph API returns at most this many results per page. */
+const S2_PAGE_MAX = 100
+/** S2 batch lookup accepts at most this many ids. */
+const S2_BATCH_MAX = 500
 
 /**
  * Shared pacing state, GLOBAL across every client instance in the process.
@@ -145,7 +151,7 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
       const controller = new AbortController()
       const onAbort = () => controller.abort(options.signal?.reason)
       options.signal?.addEventListener('abort', onAbort, { once: true })
-      const timer = setTimeout(() => controller.abort(new Error(`timeout after ${options.timeoutMs ?? 30_000}ms`)), options.timeoutMs ?? 30_000)
+      const timer = setTimeout(() => controller.abort(new Error(`timeout after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`)), options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       try {
         return await pluginFetch(url + query, { ...init, signal: controller.signal })
       } finally {
@@ -203,7 +209,7 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
     request,
     apiKey: currentKey,
     minGapMs: gapMs,
-    timeoutMs: options.timeoutMs ?? 30_000,
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     signal: options.signal,
   }
 }
@@ -296,7 +302,7 @@ const AUTHOR_FIELDS = 'name,affiliations,paperCount,citationCount,hIndex'
 // ---------------------------------------------------------------------------
 
 async function paginate(client: ScholarClient, url: string, params: Record<string, string | undefined>, maxResults: number): Promise<any[]> {
-  const next = { ...params, limit: String(Math.min(maxResults, 100)), offset: '0' }
+  const next = { ...params, limit: String(Math.min(maxResults, S2_PAGE_MAX)), offset: '0' }
   const out: any[] = []
   while (out.length < maxResults) {
     const r = await client.request('GET', url, next)
@@ -348,7 +354,7 @@ export async function searchRelevance(
     fields: options.fields ?? DEFAULT_PAPER_FIELDS,
     ...toQueryParams(options.filters),
   }
-  if (maxResults <= 100) {
+  if (maxResults <= S2_PAGE_MAX) {
     const r = await client.request('GET', `${GRAPH}/paper/search`, { ...params, limit: String(maxResults) })
     return (r.data ?? []).slice(0, maxResults)
   }
@@ -364,7 +370,7 @@ export async function searchSnippets(
   const params: Record<string, string | undefined> = {
     query,
     fields: 'snippet.text,snippet.snippetKind,snippet.section',
-    limit: String(Math.min(options.maxResults ?? 10, 100)),
+    limit: String(Math.min(options.maxResults ?? 10, S2_PAGE_MAX)),
     paperIds: options.paperIds,
     authors: options.authors,
     insertedBefore: options.insertedBefore,
@@ -440,7 +446,7 @@ export async function getAuthorPapers(client: ScholarClient, authorId: string, m
 
 /** Batch paper lookup (<=500 ids). */
 export async function batchPapers(client: ScholarClient, ids: readonly string[], fields?: string): Promise<any[]> {
-  const r = await client.request('POST', `${GRAPH}/paper/batch`, { fields: fields ?? DEFAULT_PAPER_FIELDS }, { ids: ids.slice(0, 500) })
+  const r = await client.request('POST', `${GRAPH}/paper/batch`, { fields: fields ?? DEFAULT_PAPER_FIELDS }, { ids: ids.slice(0, S2_BATCH_MAX) })
   return Array.isArray(r) ? r : []
 }
 

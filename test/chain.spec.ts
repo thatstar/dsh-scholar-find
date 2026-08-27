@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
 import type { ScholarClient } from '../src/s2/client.js'
-import { resolveChain, resolveTitle, extractScihubPdf, landingPdfUrl } from '../src/fetch/chain.js'
+import { resolveChain, resolveTitle, landingPdfUrl } from '../src/fetch/chain.js'
 import type { ChainContext } from '../src/fetch/chain.js'
-
-// Mock the browser-backed cloak module so no Chromium is launched in tests.
-vi.mock('../src/fetch/cloak.js', () => ({ cloakFetchHtml: vi.fn(), cloakFetchPdf: vi.fn() }))
 
 const fetchMock = vi.fn()
 
@@ -30,10 +27,6 @@ function baseCtx(overrides: Partial<ChainContext> = {}): ChainContext {
     email: 'you@example.com',
     s2,
     institutional: false,
-    scihubEnabled: false,
-    scihubMirrors: '',
-    cloakEnabled: false,
-    proxyUrl: undefined,
     timeoutMs: 5000,
     ...overrides,
   }
@@ -212,49 +205,3 @@ describe('resolveTitle', () => {
   })
 })
 
-describe('extractScihubPdf', () => {
-  it('extracts iframe srcs, relative against the mirror base', () => {
-    const html = '<html><iframe id="pdf" src="/downloads/abc123.pdf"></iframe></html>'
-    expect(extractScihubPdf(html, 'https://sci-hub.ru')).toBe('https://sci-hub.ru/downloads/abc123.pdf')
-  })
-
-  it('handles protocol-relative srcs', () => {
-    const html = '<embed src="//cdn.example.com/x.pdf">'
-    expect(extractScihubPdf(html, 'https://sci-hub.ru')).toBe('https://cdn.example.com/x.pdf')
-  })
-})
-
-describe('sci-hub cloak fallback', () => {
-  it('resolves an anti-bot-gated mirror through CloakBrowser when cloak is on', async () => {
-    const { cloakFetchHtml } = await import('../src/fetch/cloak.js')
-    ;(cloakFetchHtml as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({
-      ok: true, status: 200, html: '<html><iframe src="https://sci-hub.box/downloads/deadbeef.pdf"></iframe></html>',
-    })
-    stubFetch((url) => {
-      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse({ best_oa_location: null, oa_locations: [] })
-      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
-      if (url.startsWith('https://sci-hub.box/')) return new Response('DDoS-Guard challenge', { status: 403 })
-      throw new Error(`unexpected fetch ${url}`)
-    })
-    const res = await resolveChain(baseCtx({ doi: '10.1073/pnas.2419854122', scihubEnabled: true, cloakEnabled: true, scihubMirrors: 'sci-hub.box' }))
-    expect(cloakFetchHtml).toHaveBeenCalledWith('https://sci-hub.box/10.1073/pnas.2419854122', 5000, undefined)
-    const sc = res.candidates.find((c) => c.source === 'scihub')
-    expect(sc).toBeDefined()
-    expect(sc!.pdfUrl).toBe('https://sci-hub.box/downloads/deadbeef.pdf')
-    expect(sc!.detail).toMatchObject({ mirror: 'sci-hub.box' })
-  })
-
-  it('does not use CloakBrowser for sci-hub when cloak is off', async () => {
-    const { cloakFetchHtml } = await import('../src/fetch/cloak.js')
-    ;(cloakFetchHtml as unknown as { mockClear: () => void }).mockClear()
-    stubFetch((url) => {
-      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse({ best_oa_location: null, oa_locations: [] })
-      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
-      if (url.startsWith('https://sci-hub.box/')) return jsonResponse({}, 200)
-      throw new Error(`unexpected fetch ${url}`)
-    })
-    const res = await resolveChain(baseCtx({ doi: '10.1073/pnas.2419854122', scihubEnabled: true, cloakEnabled: false, scihubMirrors: 'sci-hub.box' }))
-    expect(cloakFetchHtml).not.toHaveBeenCalled()
-    expect(res.candidates.some((c) => c.source === 'scihub')).toBe(false)
-  })
-})

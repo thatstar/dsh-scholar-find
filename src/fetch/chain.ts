@@ -1,9 +1,10 @@
 /**
  * The paper_fetch source chain, reimplemented in TypeScript against the
  * public OA APIs: Unpaywall -> Semantic Scholar -> arXiv -> Europe PMC/PMC ->
- * bioRxiv/medRxiv -> publisher direct (institutional opt-in) -> Sci-Hub
- * (opt-in, off by decision). Each resolver returns PDF URL candidates plus
- * metadata; the download loop validates and writes.
+ * bioRxiv/medRxiv -> publisher direct (institutional opt-in). Each resolver
+ * returns PDF URL candidates plus metadata; the download loop validates and
+ * writes. We rely strictly on the OA sources' own return values — no
+ * last-resort/pirate fallback.
  * @module dsh-scholar-find/fetch-chain
  */
 
@@ -11,7 +12,6 @@ import type { ScholarClient } from '../s2/client.js'
 import { getPaper } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
 import { pluginFetch } from './transport.js'
-import { cloakFetchHtml } from './cloak.js'
 
 export interface PaperMeta {
   title?: string
@@ -29,7 +29,7 @@ export interface SourceResolution {
   meta: PaperMeta
   /** External ids learned along the way (ArXiv, PubMedCentral, DOI). */
   ext: Record<string, string>
-  /** Extra diagnostics for the envelope (e.g. Sci-Hub mirror). */
+  /** Extra diagnostics for the envelope (e.g. publisher-direct detail). */
   detail?: Record<string, string>
 }
 
@@ -38,15 +38,9 @@ export interface ChainContext {
   readonly email: string
   readonly s2: ScholarClient
   readonly institutional: boolean
-  readonly scihubEnabled: boolean
-  readonly scihubMirrors: string
-  readonly cloakEnabled: boolean
-  readonly proxyUrl?: string
   readonly timeoutMs: number
   readonly signal?: AbortSignal
 }
-
-const DEFAULT_SCIHUB_MIRRORS = ['sci-hub.ru', 'sci-hub.st', 'sci-hub.su', 'sci-hub.box', 'sci-hub.red', 'sci-hub.al', 'sci-hub.mk', 'sci-hub.ee']
 
 /**
  * Resolve one DOI to the ordered candidate list (URL + source + merged meta),
@@ -151,13 +145,6 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
     for (const [publisher, url] of publisherCandidates(ctx.doi, ctx.timeoutMs)) {
       add('publisher_direct', url, { detail: { publisher } })
     }
-  }
-
-  // 7. Sci-Hub (opt-in, off by default per decision)
-  if (ctx.scihubEnabled) {
-    sourcesTried.push('scihub')
-    const hit = await scihubResolve(ctx.doi, ctx.scihubMirrors, ctx.timeoutMs, ctx.signal, { enabled: ctx.cloakEnabled, proxyUrl: ctx.proxyUrl })
-    if (hit) add('scihub', hit.url, { detail: { mirror: hit.mirror } })
   }
 
   return { candidates, sourcesTried, meta, ext }
@@ -322,67 +309,6 @@ export function publisherCandidates(doi: string, timeoutMs: number): Array<[publ
     }
   }
   return out
-}
-
-const SCIHUB_NOT_FOUND = /(?:please try to search again using doi|article not found in .*database)/i
-
-interface ScihubCloak { enabled: boolean; proxyUrl?: string }
-
-/** Plain HTTP fetch of a Sci-Hub mirror's article page (browser-ish UA). */
-async function scihubPlainHtml(mirror: string, doi: string, timeoutMs: number, signal?: AbortSignal): Promise<string | undefined> {
-  const controller = new AbortController()
-  const onAbort = () => controller.abort(signal?.reason)
-  signal?.addEventListener('abort', onAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs)
-  try {
-    const r = await pluginFetch(`https://${mirror}/${doi}`, { signal: controller.signal, headers: SCIHUB_UA })
-    return await r.text()
-  } catch {
-    return undefined
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
-  }
-}
-
-const SCIHUB_UA = { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1' }
-
-/** Sci-Hub resolve: iframe/embed extraction from the mirror's HTML page. When the
- * mirror is behind an anti-bot gate (DDoS-Guard/captcha) that a plain fetch can't
- * clear, retry through CloakBrowser so the article page is fetched in a real,
- * challenge-solved browser. Falls back to the next mirror on failure. */
-async function scihubResolve(doi: string, mirrorsEnv: string, timeoutMs: number, signal?: AbortSignal, cloak?: ScihubCloak): Promise<{ url: string; mirror: string } | undefined> {
-  const mirrors = mirrorsEnv
-    ? mirrorsEnv.split(',').map((s) => s.trim()).filter(Boolean)
-    : DEFAULT_SCIHUB_MIRRORS
-  for (const mirror of mirrors) {
-    let html = await scihubPlainHtml(mirror, doi, timeoutMs, signal)
-    let pdf = html ? extractScihubPdf(html, `https://${mirror}`) : undefined
-    // Plain fetch gave nothing usable (anti-bot challenge / captcha) — try the
-    // mirror through CloakBrowser if the operator has opted in.
-    if (!pdf && cloak?.enabled) {
-      html = await cloakFetchHtml(`https://${mirror}/${doi}`, timeoutMs, cloak.proxyUrl).then((r) => (r.ok ? r.html : undefined))
-      pdf = html ? extractScihubPdf(html, `https://${mirror}`) : undefined
-    }
-    if (html && SCIHUB_NOT_FOUND.test(html)) return undefined // shared corpus: give up
-    if (pdf) return { url: pdf, mirror }
-  }
-  return undefined
-}
-
-/** Pull the PDF src out of a Sci-Hub page (iframe/embed). */
-export function extractScihubPdf(html: string, base: string): string | undefined {
-  const re = /<(?:iframe|embed)\b[^>]*\bsrc=["']([^"']+)["']/gi
-  let m: RegExpExecArray | null
-  let fallback: string | undefined
-  while ((m = re.exec(html)) !== null) {
-    const src = m[1]!
-    if (!src || src.startsWith('data:')) continue
-    const url = src.startsWith('//') ? `https:${src}` : src.startsWith('/') ? `${base}${src}` : src
-    if (/\.pdf/i.test(url)) return url
-    if (fallback === undefined) fallback = url
-  }
-  return fallback
 }
 
 // ---------------------------------------------------------------------------

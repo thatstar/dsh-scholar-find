@@ -4,17 +4,11 @@
  * CloakBrowser — a source-level-fingerprint-patched stealth Chromium that passes
  * the challenge (drop-in Playwright replacement, `cloakbrowser` npm package).
  *
- * Flow mirrors the reference tool: launch a headless browser, navigate to the
- * URL's origin (so the challenge cookie is set), then run an in-page `fetch()`
- * for the target (carries the real browser fingerprint + cookies) and return
- * the bytes. Re-validated by the caller (`%PDF` + size). Best-effort: fails
- * closed (`{ ok:false, detail }`).
- *
- * Two entry points share one browser flow:
- *  - `cloakFetchPdf` — fetch a PDF (used by the download fallback).
- *  - `cloakFetchHtml` — fetch an HTML page (used to resolve an anti-bot-gated
- *    landing/article page, e.g. a Sci-Hub mirror whose article page is behind
- *    DDoS-Guard/captcha).
+ * Flow: launch a headless browser, navigate to the URL's origin (so the
+ * challenge cookie is set), then run an in-page `fetch()` for the target
+ * (carries the real browser fingerprint + cookies) and return the bytes.
+ * Re-validated by the caller (`%PDF` + size). Best-effort: fails closed
+ * (`{ ok:false, detail }`).
  *
  * This module is lazy — `cloakbrowser` (and its Chromium binary) are only
  * touched when a cloaked fetch is actually attempted. The binary auto-downloads
@@ -29,6 +23,16 @@ import { homedir } from 'node:os'
 import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 
 const MAX_PDF_SIZE = 50 * 1024 * 1024
+/** Cap on how long the challenge-clear poll runs (mirrors the reference tool). */
+const CHALLENGE_CLEAR_MAX_MS = 40_000
+/** Delay between challenge-clear polls. */
+const CHALLENGE_POLL_MS = 1000
+/** `networkidle` wait after the challenge clears. */
+const CHALLENGE_NETWORKIDLE_MS = 10_000
+/** Delay before retrying an evaluate that a late navigation tore down. */
+const EVAL_RETRY_DELAY_MS = 2000
+/** Page titles that indicate the interstitial has NOT cleared yet. */
+const CHALLENGE_TITLE_MARKERS = /Just a moment|Loading|DDoS-Guard|Verification|robot/i
 
 /** In-page fetch: stream the body up to `cap` bytes, base64 back. */
 const FETCH_JS = /* @__PURE__ */ ((arg: unknown) => {
@@ -61,13 +65,6 @@ const FETCH_JS = /* @__PURE__ */ ((arg: unknown) => {
 export interface CloakResult {
   ok: boolean
   bytes?: Uint8Array
-  status?: number
-  detail?: string
-}
-
-export interface CloakHtmlResult {
-  ok: boolean
-  html?: string
   status?: number
   detail?: string
 }
@@ -147,15 +144,15 @@ async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string):
     // Poll until the Cloudflare/DataDome/DDoS-Guard interstitial clears: the
     // challenge shows "Just a moment…"/"DDoS-Guard"/"Loading" before the real
     // page. Treat those as not-ready. Deadline mirrors the reference tool.
-    const deadline = Date.now() + Math.min(timeoutMs, 40_000)
+    const deadline = Date.now() + Math.min(timeoutMs, CHALLENGE_CLEAR_MAX_MS)
     let title = ''
     while (Date.now() < deadline) {
       title = await page.title().catch(() => '')
-      if (title && !/Just a moment|Loading|DDoS-Guard|Verification|robot/i.test(title)) break
-      await sleep(1000)
+      if (title && !CHALLENGE_TITLE_MARKERS.test(title)) break
+      await sleep(CHALLENGE_POLL_MS)
     }
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {})
-    await sleep(1000) // settle late-loading JS / redirects
+    await page.waitForLoadState('networkidle', { timeout: CHALLENGE_NETWORKIDLE_MS }).catch(() => {})
+    await sleep(CHALLENGE_POLL_MS) // settle late-loading JS / redirects
     // In-page fetch from the cleared page so the request carries the browser's
     // real fingerprint + cleared cookie. Retry once if a late navigation tears
     // down the execution context mid-evaluate.
@@ -165,11 +162,11 @@ async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string):
         res = await page.evaluate(FETCH_JS, [url, MAX_PDF_SIZE])
         break
       } catch (e) {
-        if (attempt === 0) await sleep(2000)
+        if (attempt === 0) await sleep(EVAL_RETRY_DELAY_MS)
         else return { ok: false, status: undefined, detail: `cloak fetch failed: ${(e as Error).message}` }
       }
     }
-    if (!res || res.oversized) return { ok: false, detail: res?.oversized ? 'response exceeds 50 MB' : 'no result' }
+    if (!res || res.oversized) return { ok: false, detail: res?.oversized ? `response exceeds ${MAX_PDF_SIZE} bytes` : 'no result' }
     if (res.status !== 200 || !res.b64) return { ok: false, status: res.status, detail: `in-page fetch returned HTTP ${res.status}` }
     return { ok: true, status: res.status, bytes: base64ToBytes(res.b64) }
   } catch (e) {
@@ -187,19 +184,7 @@ export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: s
   return cloakFetchRaw(url, timeoutMs, proxyUrl)
 }
 
-/** Fetch an HTML page through CloakBrowser (decoded to a UTF-8 string). */
-export async function cloakFetchHtml(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakHtmlResult> {
-  const r = await cloakFetchRaw(url, timeoutMs, proxyUrl)
-  if (!r.ok || !r.bytes) return { ok: false, status: r.status, detail: r.detail ?? 'no result' }
-  return { ok: true, status: r.status, html: Buffer.from(r.bytes).toString('utf8') }
-}
-
 /** Promise-based setTimeout for the challenge-clear polling loop. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** Whether the operator has opted into the cloak fallback. */
-export function isCloakEnabled(enabled: boolean): boolean {
-  return Boolean(enabled)
 }

@@ -30,10 +30,8 @@ export const inject = ['slots', 'settingsScope', 'locale'] as const
 const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'unpaywallEmail', kind: 'text' },
   { key: 's2ApiKeyRef', kind: 'secret' },
-  { key: 'scihubEnabled', kind: 'boolean' },
   { key: 'institutionalEnabled', kind: 'boolean' },
   { key: 'cloakEnabled', kind: 'boolean' },
-  { key: 'scihubMirrors', kind: 'text' },
   { key: 'proxyUrl', kind: 'text' },
   { key: 'pdfOutputDir', kind: 'text' },
   { key: 'maxResultsPerSearch', kind: 'number' },

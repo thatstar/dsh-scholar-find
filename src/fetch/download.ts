@@ -58,6 +58,8 @@ export interface DownloadOptions {
 
 /** Retry on transient 429 with exponential backoff (bioRxiv/publishers burst-throttle). */
 const DOWNLOAD_RETRIES = 3
+/** Base delay for the 429 backoff; each retry doubles it (3 s, 6 s, 12 s…). */
+const RETRY_BACKOFF_BASE_MS = 3000
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -84,7 +86,7 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
   let lastStatus = 0
   let outcome: DownloadOutcome | undefined
   for (let attempt = 0; attempt < DOWNLOAD_RETRIES; attempt++) {
-    if (attempt > 0) await sleep(3000 * 2 ** (attempt - 1))
+    if (attempt > 0) await sleep(RETRY_BACKOFF_BASE_MS * 2 ** (attempt - 1))
     let r: Response
     try {
       r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8' } }, { checkDns: opts.checkDns })
@@ -123,7 +125,9 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
       if (cloak.bytes.length > opts.maxBytes) return { ok: false, reason: 'download_size_exceeded', detail: `cloak response exceeds ${opts.maxBytes} bytes` }
       return writePdf(dest, cloak.bytes)
     }
-    return { ok: false, reason: 'download_network_error', detail: `cloak failed: ${cloak.detail ?? 'unknown'}` }
+    // Direct fetch and CloakBrowser both failed — report clearly that no PDF
+    // could be obtained.
+    return { ok: false, reason: 'download_network_error', detail: `no PDF fetched (direct & CloakBrowser both failed): ${cloak.detail ?? 'unknown'}` }
   }
 
   return outcome ?? { ok: false, reason: 'download_network_error', detail: `HTTP ${lastStatus || 429}` }

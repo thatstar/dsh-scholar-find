@@ -45,10 +45,6 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     email: rt.settings.unpaywallEmail.trim(),
     s2: rt.s2,
     institutional: rt.settings.institutionalEnabled,
-    scihubEnabled: rt.settings.scihubEnabled,
-    scihubMirrors: rt.settings.scihubMirrors,
-    cloakEnabled: rt.settings.cloakEnabled,
-    proxyUrl: resolveProxyUrl(rt.settings.proxyUrl),
     timeoutMs: rt.settings.fetchTimeoutSec * 1000,
     signal: rt.signal,
   }
@@ -214,7 +210,7 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
         file: dest,
         meta: { ...chain.meta },
         sourcesTried: chain.sourcesTried,
-        ...(cand.detail ? { via: cand.detail.mirror ? 'scihub' : cand.detail.publisher ? 'publisher_direct' : undefined } : {}),
+        ...(cand.detail?.publisher ? { via: 'publisher_direct' } : {}),
       }
     }
     failures.push({ source: cand.source, reason: outcome.reason ?? 'download_network_error', detail: outcome.detail })
@@ -319,10 +315,4 @@ export async function listLibrary(rt: FetchRuntime): Promise<Array<{ file: strin
 export async function resolveTitleToDoi(rt: FetchRuntime, title: string): Promise<{ doi: string | undefined; resolution: any }> {
   const { doi, resolution } = await resolveTitle(title, { email: rt.settings.unpaywallEmail.trim(), s2: rt.s2, timeoutMs: rt.settings.fetchTimeoutSec * 1000, signal: rt.signal })
   return { doi, resolution }
-}
-
-/** Check whether a candidate URL is usable for previewing (safety gate only). */
-export function previewCandidate(c: SourceResolution): { source: string; pdfUrl: string; safe: boolean; reason?: string } {
-  const gate = isSafeUrl(c.pdfUrl)
-  return { source: c.source, pdfUrl: c.pdfUrl, safe: gate.ok, reason: gate.reason }
 }

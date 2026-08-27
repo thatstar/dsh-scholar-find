@@ -11,13 +11,15 @@ instructions:
    authors, BibTeX export.
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
-   bioRxiv/medRxiv → publisher direct (opt-in) → Sci-Hub (opt-in)), with
-   download, batch, and dry-run resolution.
+   bioRxiv/medRxiv → publisher direct (opt-in)). We rely strictly on the OA
+   sources' own return values: a direct PDF is tested, then a CloakBrowser
+   fallback, and if both fail we report no PDF fetched. (No Sci-Hub / pirate
+   fallback.)
 3. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
 
-The user configures plugin parameters (Unpaywall email, S2 API key, Sci-Hub
-toggle, output directory, …) in the **DSH Web UI: Settings → 插件 (Plugins) →
+The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
+toggle, proxy, output directory, …) in the **DSH Web UI: Settings → 插件 (Plugins) →
 插件配置 (Plugin Config)**; values persist to `$DSH_HOME/settings.yaml`.
 
 ## Implementation rules (mandatory)
@@ -89,8 +91,9 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
 | `s2ApiKeyRef` | Optional S2 key as a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials` — same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |
-| `scihubEnabled` | Enable the Sci-Hub last-resort fallback. **Decided: off.** |
 | `institutionalEnabled` | Opt-in publisher-direct fallback (user's own subscription access). |
+| `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
+| `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
