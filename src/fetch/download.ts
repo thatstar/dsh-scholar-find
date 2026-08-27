@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fetchWithRedirects, looksLikePdf, readBodyCapped } from './safety.js'
+import { cloakFetchPdf } from './cloak.js'
 import type { PaperMeta } from './chain.js'
 
 /** Deterministic filename: {first_author}_{year}_{journal_abbrev}_{title_slug}.pdf */
@@ -49,6 +50,8 @@ export interface DownloadOptions {
   readonly maxBytes: number
   readonly signal?: AbortSignal
   readonly checkDns?: boolean
+  /** Operator-opted-in CloakBrowser fallback for Cloudflare/WAF-blocked PDFs. */
+  readonly cloakEnabled?: boolean
 }
 
 /** Retry on transient 429 with exponential backoff (bioRxiv/publishers burst-throttle). */
@@ -58,13 +61,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+async function writePdf(dest: string, bytes: Uint8Array): Promise<DownloadOutcome> {
+  try {
+    await mkdir(dirname(dest), { recursive: true })
+    await writeFile(dest, bytes)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: 'download_io_error', detail: (e as Error).message }
+  }
+}
+
 /**
  * Download `url` to `dest` with the full safety gate, retrying a transient 429
- * with backoff. Returns an outcome: `ok: false` means the caller may try the
- * next candidate source. The browser UA is applied by the shared transport.
+ * with backoff. When the operator has opted in (`cloakEnabled`) and the direct
+ * route is Cloudflare/WAF-blocked (403/429 or a non-PDF interstitial), fall back
+ * to a CloakBrowser in-page fetch. Returns an outcome: `ok: false` means the
+ * caller may try the next candidate source.
  */
 export async function downloadPdf(url: string, dest: string, opts: DownloadOptions): Promise<DownloadOutcome> {
   let lastStatus = 0
+  let outcome: DownloadOutcome | undefined
   for (let attempt = 0; attempt < DOWNLOAD_RETRIES; attempt++) {
     if (attempt > 0) await sleep(3000 * 2 ** (attempt - 1))
     let r: Response
@@ -73,25 +89,42 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
     } catch (e) {
       const code = (e as Error & { code?: string }).code
       if (code === 'host_not_allowed') return { ok: false, reason: 'download_host_not_allowed', detail: (e as Error).message }
+      // Transport error — not a Cloudflare block; cloak won't help.
       return { ok: false, reason: 'download_network_error', detail: (e as Error).message }
     }
+    // Transient rate-limit: retry with backoff.
     if (r.status === 429 && attempt < DOWNLOAD_RETRIES - 1) {
       lastStatus = r.status
       continue
     }
-    if (!r.ok) return { ok: false, reason: 'download_network_error', detail: `HTTP ${r.status}` }
-    const bytes = await readBodyCapped(r, opts.maxBytes, opts.signal)
-    if (bytes === null) return { ok: false, reason: 'download_size_exceeded', detail: `response exceeds ${opts.maxBytes} bytes` }
-    if (!looksLikePdf(bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'response is not a PDF (HTML landing page?)' }
-    try {
-      await mkdir(dirname(dest), { recursive: true })
-      await writeFile(dest, bytes)
-    } catch (e) {
-      return { ok: false, reason: 'download_io_error', detail: (e as Error).message }
+    if (!r.ok) {
+      lastStatus = r.status
+      outcome = { ok: false, reason: 'download_network_error', detail: `HTTP ${r.status}` }
+      break // blocked (e.g. 403 Cloudflare) — go to cloak fallback, no more retries
     }
-    return { ok: true }
+    const bytes = await readBodyCapped(r, opts.maxBytes, opts.signal)
+    if (bytes === null) {
+      outcome = { ok: false, reason: 'download_size_exceeded', detail: `response exceeds ${opts.maxBytes} bytes` }
+      break
+    }
+    if (looksLikePdf(bytes)) return writePdf(dest, bytes)
+    // Non-PDF (HTML interstitial / landing) — cloak fallback below.
+    outcome = { ok: false, reason: 'download_not_a_pdf', detail: 'response is not a PDF (HTML landing page?)' }
+    break
   }
-  return { ok: false, reason: 'download_network_error', detail: `HTTP ${lastStatus || 429}` }
+
+  // Operator-opted-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs.
+  if (opts.cloakEnabled) {
+    const cloak = await cloakFetchPdf(url, opts.timeoutMs)
+    if (cloak.ok && cloak.bytes) {
+      if (!looksLikePdf(cloak.bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'cloak returned non-PDF' }
+      if (cloak.bytes.length > opts.maxBytes) return { ok: false, reason: 'download_size_exceeded', detail: `cloak response exceeds ${opts.maxBytes} bytes` }
+      return writePdf(dest, cloak.bytes)
+    }
+    return { ok: false, reason: 'download_network_error', detail: `cloak failed: ${cloak.detail ?? 'unknown'}` }
+  }
+
+  return outcome ?? { ok: false, reason: 'download_network_error', detail: `HTTP ${lastStatus || 429}` }
 }
 
 // ---------------------------------------------------------------------------

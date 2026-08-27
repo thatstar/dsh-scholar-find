@@ -24,6 +24,7 @@ export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   s2ApiKeyRef: '',
   scihubEnabled: false,
   institutionalEnabled: false,
+  cloakEnabled: false,
   scihubMirrors: '',
   proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',

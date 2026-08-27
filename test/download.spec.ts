@@ -1,3 +1,8 @@
+import type { PaperMeta } from '../src/fetch/chain.js'
+
+// Mock the browser-backed cloak module so no Chromium is launched in tests.
+vi.mock('../src/fetch/cloak.js', () => ({ cloakFetchPdf: vi.fn() }))
+
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -94,5 +99,30 @@ describe('idempotency sidecar', () => {
     await idemStore(tmp, 'weekly-review', envelope)
     expect(await idemLoad(tmp, 'weekly-review')).toEqual(envelope)
     expect(await idemLoad(tmp, 'other-key')).toBeUndefined()
+  })
+})
+
+describe('downloadPdf cloak fallback', () => {
+  it('falls back to CloakBrowser when a Cloudflare 403 blocks the direct fetch', async () => {
+    const { cloakFetchPdf } = await import('../src/fetch/cloak.js')
+    ;(cloakFetchPdf as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({ ok: true, bytes: PDF_BYTES })
+    // Direct route returns 403 every time; the cloak fallback supplies the PDF.
+    fetchMock.mockResolvedValue(new Response('Just a moment', { status: 403 }))
+    vi.stubGlobal('fetch', fetchMock)
+    tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
+    const out = await downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 4000, maxBytes: 1024, checkDns: false, cloakEnabled: true })
+    expect(out.ok).toBe(true)
+    expect(cloakFetchPdf).toHaveBeenCalledWith('https://example.com/a.pdf', 4000)
+  })
+
+  it('does not use CloakBrowser unless the operator opted in', async () => {
+    const { cloakFetchPdf } = await import('../src/fetch/cloak.js')
+    ;(cloakFetchPdf as unknown as { mockClear: () => void }).mockClear()
+    fetchMock.mockResolvedValue(new Response('Just a moment', { status: 403 }))
+    vi.stubGlobal('fetch', fetchMock)
+    tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
+    const out = await downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 4000, maxBytes: 1024, checkDns: false, cloakEnabled: false })
+    expect(out.ok).toBe(false)
+    expect(cloakFetchPdf).not.toHaveBeenCalled()
   })
 })

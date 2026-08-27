@@ -25,6 +25,7 @@ function defaults(): ScholarSettings {
     s2ApiKeyRef: '',
     scihubEnabled: false,
     institutionalEnabled: false,
+    cloakEnabled: false,
     scihubMirrors: '',
     pdfOutputDir: 'scholar-pdfs',
     maxResultsPerSearch: 20,

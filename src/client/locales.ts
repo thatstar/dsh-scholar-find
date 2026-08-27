@@ -15,6 +15,7 @@ export type ScholarLocaleKey =
   | 's2ApiKeyRef' | 's2ApiKeyRefHint'
   | 'scihubEnabled' | 'scihubEnabledHint'
   | 'institutionalEnabled' | 'institutionalEnabledHint'
+  | 'cloakEnabled' | 'cloakEnabledHint'
   | 'scihubMirrors' | 'scihubMirrorsHint'
   | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
@@ -44,6 +45,8 @@ export const en: Record<ScholarLocaleKey, string> = {
   scihubEnabledHint: 'Last-resort non-OA fallback. Off by default.',
   institutionalEnabled: 'Institutional (publisher-direct) mode',
   institutionalEnabledHint: 'Requires your own subscription access (on-campus/VPN).',
+  cloakEnabled: 'CloakBrowser fallback',
+  cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
   scihubMirrors: 'Sci-Hub mirror override',
   scihubMirrorsHint: 'Comma-separated hostnames; empty = built-in list.',
   proxyUrl: 'Outbound HTTP proxy',
@@ -81,6 +84,8 @@ export const zh: Record<ScholarLocaleKey, string> = {
   scihubEnabledHint: '非开放获取的最后兜底来源。默认关闭。',
   institutionalEnabled: '机构模式（出版社直连）',
   institutionalEnabledHint: '需要您自己的订阅访问权限（校园网/VPN）。',
+  cloakEnabled: 'CloakBrowser 兜底',
+  cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
   scihubMirrors: 'Sci-Hub 镜像覆盖',
   scihubMirrorsHint: '逗号分隔的主机名；留空使用内置列表。',
   proxyUrl: '出站 HTTP 代理',

@@ -18,6 +18,7 @@ export interface ScholarSettings {
   s2ApiKeyRef: string
   scihubEnabled: boolean
   institutionalEnabled: boolean
+  cloakEnabled: boolean
   scihubMirrors: string
   proxyUrl: string
   pdfOutputDir: string
@@ -42,6 +43,8 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   scihubEnabled: z.boolean().default(false),
   /** Publisher-direct fallback (requires the user's own subscription access). */
   institutionalEnabled: z.boolean().default(false),
+  /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
+  cloakEnabled: z.boolean().default(false),
   /** Optional comma-separated Sci-Hub mirror override. */
   scihubMirrors: z.string().default(''),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */

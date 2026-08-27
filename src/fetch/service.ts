@@ -199,6 +199,7 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       maxBytes: rt.settings.maxPdfSizeMb * 1024 * 1024,
       signal: rt.signal,
       checkDns: opts.checkDns,
+      cloakEnabled: rt.settings.cloakEnabled,
     })
     if (outcome.ok) {
       return {

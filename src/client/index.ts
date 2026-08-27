@@ -32,6 +32,7 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 's2ApiKeyRef', kind: 'secret' },
   { key: 'scihubEnabled', kind: 'boolean' },
   { key: 'institutionalEnabled', kind: 'boolean' },
+  { key: 'cloakEnabled', kind: 'boolean' },
   { key: 'scihubMirrors', kind: 'text' },
   { key: 'proxyUrl', kind: 'text' },
   { key: 'pdfOutputDir', kind: 'text' },
