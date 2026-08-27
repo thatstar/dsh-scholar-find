@@ -102,15 +102,16 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 ## Code policy
 
-Implementation (Phase 3) is **done** and Phase 4 is **in progress**:
-The repository root is the pure-TypeScript DSH plugin (15 tools, settings
-section, companion instructions, **client-half settings card**), 31 passing
-unit tests, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed into the live profile**
-(`dsh plugin --profile web add .` — bundle reconciled,
-host row mounts cleanly, live API smoke passed). The missing settings card
-was a client-half gap: the Plugins tab only renders cards registered through
-the `settings.plugin.item` slot, so the fix ships a self-contained client
-bundle (`lib/client.js`, `__ModuleLoader__` format). Remaining: **one more
-deployment restart**, user sets `unpaywallEmail` in Settings → 插件 → 插件配置,
-in-session end-to-end verification. Future changes must keep the plugin
-TypeScript-only, clean-room, and test-covered.
+Implementation is **complete** and committed:
+The repository root is the pure-TypeScript DSH plugin (**16 tools**: `scholar_search_*`
+incl. `scholar_get_paper_content` via the Ai2 Asta MCP server, and `paper_fetch_*`),
+settings section, companion instructions, client-half settings card. **55 passing
+unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
+The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
+direct → CloakBrowser fallback → last-resort title web-search fallback → report
+no PDF. No Sci-Hub / publisher-guess / institutional fallback.
+
+Remaining: **deployment restart** to load the current `lib/`, an Asta key for
+`scholar_get_paper_content`, and **in-session end-to-end verification**. Keep
+everything TypeScript-only, clean-room, and test-covered.
