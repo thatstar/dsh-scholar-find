@@ -48,7 +48,7 @@ export interface AstaSnippet {
 
 /**
  * Parse a JSON-RPC envelope from an SSE (`event: message\ndata: {...}`) or a
- * plain JSON response body.
+ * plain JSON response body. CRLF-tolerant (`.trim()` drops a trailing `\r`).
  */
 function parseEnvelope(body: string): JSONRpcResponse | undefined {
   // SSE: every `data:` line is a JSON payload; return the first that parses.
@@ -56,7 +56,7 @@ function parseEnvelope(body: string): JSONRpcResponse | undefined {
   if (dataLines) {
     for (const line of dataLines) {
       try {
-        const parsed = JSON.parse(line.replace(/^data:\s*/, '')) as JSONRpcResponse
+        const parsed = JSON.parse(line.replace(/^data:\s*/, '').trim()) as JSONRpcResponse
         if (parsed) return parsed
       } catch {
         // not JSON — skip to the next data line
@@ -64,7 +64,7 @@ function parseEnvelope(body: string): JSONRpcResponse | undefined {
     }
   }
   try {
-    return JSON.parse(body) as JSONRpcResponse
+    return JSON.parse(body.trim()) as JSONRpcResponse
   } catch {
     return undefined
   }
@@ -74,7 +74,8 @@ function parseEnvelope(body: string): JSONRpcResponse | undefined {
  * Read a JSON-RPC envelope from a response. For `text/event-stream` the server
  * keeps the SSE stream open after sending the result, so we read incrementally
  * and resolve on the FIRST `result`/`error` event (then cancel the stream). For
- * plain JSON we read the whole body and parse it.
+ * plain JSON we read the whole body and parse it. Line-based and CRLF-tolerant
+ * (the server sometimes frames the SSE without the blank-line event separator).
  */
 async function readEnvelope(res: Response): Promise<JSONRpcResponse | undefined> {
   const contentType = res.headers.get('content-type') || ''
@@ -85,12 +86,11 @@ async function readEnvelope(res: Response): Promise<JSONRpcResponse | undefined>
   if (!reader) return undefined
   const decoder = new TextDecoder()
   let buf = ''
-  const tryParse = async (eventBlock: string): Promise<JSONRpcResponse | undefined> => {
-    const dataLine = eventBlock.split('\n').find((l) => l.startsWith('data:'))
-    if (!dataLine) return undefined
+  const tryDataLine = async (line: string): Promise<JSONRpcResponse | undefined> => {
+    if (!line.startsWith('data:')) return undefined
     try {
-      const parsed = JSON.parse(dataLine.slice(5).trim()) as JSONRpcResponse
-      if (parsed?.result !== undefined || parsed?.error) {
+      const parsed = JSON.parse(line.slice(5).trim()) as JSONRpcResponse
+      if (parsed?.jsonrpc === '2.0' && (parsed?.result !== undefined || parsed?.error)) {
         await reader.cancel().catch(() => {})
         return parsed
       }
@@ -104,11 +104,13 @@ async function readEnvelope(res: Response): Promise<JSONRpcResponse | undefined>
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
-      // Events are blank-line delimited; process the complete ones, keep the tail.
-      const events = buf.split('\n\n')
-      buf = events.pop() ?? ''
-      for (const evt of events) {
-        const parsed = await tryParse(evt)
+      // Line-based: process every complete line in the buffer (CRLF-tolerant),
+      // keep any trailing partial line for the next chunk.
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const raw of lines) {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+        const parsed = await tryDataLine(line.trim())
         if (parsed) return parsed
       }
     }
