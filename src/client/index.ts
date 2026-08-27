@@ -18,7 +18,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ScholarCard } from './ScholarCard.js'
-import { ScholarCardController, type ScholarFieldSpec, type ScholarScopeLike } from './controller.js'
+import { ScholarCardController, type ScholarCredentialsApi, type ScholarFieldSpec, type ScholarScopeLike } from './controller.js'
 import { NS, en, zh } from './locales.js'
 
 export const name = 'dsh-scholar-find-client'
@@ -26,11 +26,18 @@ export const name = 'dsh-scholar-find-client'
 /** Required client services (cordis fiber inject). */
 export const inject = ['slots', 'settingsScope', 'locale'] as const
 
-/** Fields the card edits — kept in sync with the host-side settings schema. */
+/**
+ * Fields the card edits — kept in sync with the host-side settings schema. The
+ * two `secret`-kind entries are write-only key controls written to the DSH
+ * credentials domain; their matching `*KeyRef` text fields are the credential
+ * record names the settings section carries.
+ */
 const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'unpaywallEmail', kind: 'text' },
-  { key: 's2ApiKeyRef', kind: 'secret' },
-  { key: 'astaApiKeyRef', kind: 'secret' },
+  { key: 's2ApiKey', kind: 'secret' },
+  { key: 's2ApiKeyRef', kind: 'text' },
+  { key: 'astaApiKey', kind: 'secret' },
+  { key: 'astaApiKeyRef', kind: 'text' },
   { key: 'cloakEnabled', kind: 'boolean' },
   { key: 'proxyUrl', kind: 'text' },
   { key: 'pdfOutputDir', kind: 'text' },
@@ -42,7 +49,9 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
 
 /**
  * Mount the card. `settingsScope` is provided by the settings domain bundle
- * (the same service the shipped plugin cards bind).
+ * (the same service the shipped plugin cards bind). The credentials domain
+ * (`api.credentials`) drives the two write-only key controls, so a key change
+ * goes to DSH key management rather than the settings section.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -50,7 +59,14 @@ export function apply(ctx: ClientContext): void {
 
   const t = ctx.locale.bind(NS)
   const scope = ctx.settingsScope.bind({ namespace: NS }) as unknown as ScholarScopeLike
-  const controller = new ScholarCardController(scope, FIELD_SPECS, (key: string) => t(key as never))
+  const connection = ctx.get('connection') as { api?: { credentials: ScholarCredentialsApi } } | undefined
+  const credentials = connection?.api?.credentials
+  const controller = new ScholarCardController(
+    scope,
+    FIELD_SPECS,
+    (key: string) => t(key as never),
+    credentials ? { credentials } : undefined,
+  )
 
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
     name: 'settings.plugin.item',

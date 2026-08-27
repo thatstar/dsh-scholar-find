@@ -36,9 +36,9 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   /** Unpaywall contact email; also sent as Crossref `mailto`. Empty -> Unpaywall skipped. */
   unpaywallEmail: z.string().default(''),
   /** DSH credential reference (record name in ~/.dsh/.credentials.yaml, e.g. `S2_API_KEY`). Empty -> anonymous. */
-  s2ApiKeyRef: z.string().default(''),
-  /** DSH credential reference for the Ai2 Asta corpus MCP key (e.g. `ASTA_API_KEY`). Empty -> the Asta content tool reports it's unconfigured. */
-  astaApiKeyRef: z.string().default(''),
+  s2ApiKeyRef: z.string().role('credential-ref').default('S2_API_KEY'),
+  /** DSH credential reference for the Ai2 Asta corpus MCP key (e.g. `ASTA_API_KEY`). */
+  astaApiKeyRef: z.string().role('credential-ref').default('ASTA_API_KEY'),
   /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
   cloakEnabled: z.boolean().default(false),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */

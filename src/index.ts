@@ -21,8 +21,8 @@ import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 /** Schema defaults (the composition base layer of the settings section). */
 export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   unpaywallEmail: '',
-  s2ApiKeyRef: '',
-  astaApiKeyRef: '',
+  s2ApiKeyRef: 'S2_API_KEY',
+  astaApiKeyRef: 'ASTA_API_KEY',
   cloakEnabled: false,
   proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',
@@ -57,25 +57,24 @@ export function apply(ctx: Context): void {
     applyScholarTools(ctx, {
       settings: () => source(),
       resolveApiKey: async () => {
-        const refName = source().s2ApiKeyRef.trim()
-        if (!refName) return undefined
+        // The key never lives in the settings section: the section carries a
+        // credential reference (record name), and the value is resolved from
+        // the DSH credentials domain.
+        const refName = source().s2ApiKeyRef.trim() || 'S2_API_KEY'
         try {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined
-          const resolved = await credentials.resolve(credentialRef(refName))
-          return resolved?.value
+          return (await credentials.resolve(credentialRef(refName)))?.value
         } catch {
           return undefined
         }
       },
       resolveAstaKey: async () => {
-        const refName = source().astaApiKeyRef.trim()
-        if (!refName) return undefined
+        const refName = source().astaApiKeyRef.trim() || 'ASTA_API_KEY'
         try {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined
-          const resolved = await credentials.resolve(credentialRef(refName))
-          return resolved?.value
+          return (await credentials.resolve(credentialRef(refName)))?.value
         } catch {
           return undefined
         }

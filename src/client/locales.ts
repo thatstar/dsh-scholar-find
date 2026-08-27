@@ -11,8 +11,11 @@ export type ScholarLocaleKey =
   | 'title' | 'description'
   | 'save' | 'saving' | 'discard' | 'overridden' | 'reset'
   | 'unsaved' | 'expand' | 'collapse' | 'readOnly' | 'invalidNumber'
+  | 'configured' | 'notConfigured'
   | 'unpaywallEmail' | 'unpaywallEmailHint'
+  | 's2ApiKey' | 's2ApiKeyHint'
   | 's2ApiKeyRef' | 's2ApiKeyRefHint'
+  | 'astaApiKey' | 'astaApiKeyHint'
   | 'astaApiKeyRef' | 'astaApiKeyRefHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
   | 'proxyUrl' | 'proxyUrlHint'
@@ -35,11 +38,17 @@ export const en: Record<ScholarLocaleKey, string> = {
   collapse: 'Hide settings',
   readOnly: 'This deployment stores settings read-only.',
   invalidNumber: 'Enter a number, or leave blank to use the default.',
+  configured: 'Key set',
+  notConfigured: 'No key set',
   unpaywallEmail: 'Unpaywall contact email',
   unpaywallEmailHint: 'Enables the Unpaywall source (also Crossref politeness). Empty means Unpaywall is skipped.',
-  s2ApiKeyRef: 'Semantic Scholar API key reference',
+  s2ApiKey: 'Semantic Scholar API key',
+  s2ApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
+  s2ApiKeyRef: 'Semantic Scholar key record',
   s2ApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. S2_API_KEY). Empty = anonymous (5 s pacing).',
-  astaApiKeyRef: 'Ai2 Asta corpus key reference',
+  astaApiKey: 'Ai2 Asta API key',
+  astaApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
+  astaApiKeyRef: 'Ai2 Asta key record',
   astaApiKeyRefHint: 'Credential record name in ~/.dsh/.credentials.yaml (e.g. ASTA_API_KEY). Enables the ~500-word paper content tool.',
   cloakEnabled: 'CloakBrowser fallback',
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
@@ -70,11 +79,17 @@ export const zh: Record<ScholarLocaleKey, string> = {
   collapse: '收起设置',
   readOnly: '当前部署以只读方式存储设置。',
   invalidNumber: '请填数字；留空表示使用默认值。',
+  configured: '已设置密钥',
+  notConfigured: '未设置密钥',
   unpaywallEmail: 'Unpaywall 联系邮箱',
   unpaywallEmailHint: '启用 Unpaywall 来源（同时用作 Crossref 礼貌池邮箱）。留空则跳过 Unpaywall。',
-  s2ApiKeyRef: 'Semantic Scholar API 密钥引用',
+  s2ApiKey: 'Semantic Scholar API 密钥',
+  s2ApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
+  s2ApiKeyRef: 'Semantic Scholar 密钥记录',
   s2ApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 S2_API_KEY）。留空 = 匿名模式（5 秒间隔）。',
-  astaApiKeyRef: 'Ai2 Asta 语料库密钥引用',
+  astaApiKey: 'Ai2 Asta API 密钥',
+  astaApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
+  astaApiKeyRef: 'Ai2 Asta 密钥记录',
   astaApiKeyRefHint: '~/.dsh/.credentials.yaml 中的凭据记录名（如 ASTA_API_KEY）。启用约 500 词的论文内容工具。',
   cloakEnabled: 'CloakBrowser 兜底',
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',

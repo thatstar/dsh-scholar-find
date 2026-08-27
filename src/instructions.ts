@@ -49,5 +49,7 @@ Usage rules:
 7. Offer exports (\`scholar_export_bibtex\`) when the user collects references,
    and point to the exact PDF file paths returned by the fetch tools.
 8. \`scholar_get_paper_content\` requires the Asta API key: if it reports it is
-   unconfigured, tell the user to set \`astaApiKeyRef\` in Settings -> Plugins ->
-   Plugin configuration (store the key via DSH key management).`
+   unconfigured, tell the user to set the key on the plugin's settings card
+   (Settings -> Plugins -> Plugin configuration → "Ai2 Asta API key"), which
+   stores it in DSH key management; the "Ai2 Asta key record" field names the
+   credential record used.`

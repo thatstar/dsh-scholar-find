@@ -158,6 +158,9 @@ function Field(props: {
   onReset: () => void
 }) {
   const { field, t, disabled } = props
+  // A write-only key control is additionally gated by whether the credentials
+  // domain accepts a write for it; it never seeds a draft from a stored value.
+  const secretDisabled = field.kind === 'secret' ? disabled || field.writable === false : disabled
   return (
     <div style={css.field}>
       <div style={css.fieldHead}>
@@ -166,6 +169,11 @@ function Field(props: {
           <span style={css.badges}>
             <span style={css.badge}>{t('overridden')}</span>
             <button type="button" style={css.reset} disabled={disabled} onClick={props.onReset}>{t('reset')}</button>
+          </span>
+        )}
+        {field.kind === 'secret' && (
+          <span style={css.badges}>
+            <span style={css.badge}>{field.configured ? t('configured') : t('notConfigured')}</span>
           </span>
         )}
       </div>
@@ -184,7 +192,7 @@ function Field(props: {
           <input
             type={field.kind === 'secret' ? 'password' : 'text'}
             value={field.raw}
-            disabled={disabled}
+            disabled={secretDisabled}
             placeholder={field.resolvedRaw || undefined}
             aria-label={field.label}
             style={field.invalid ? { ...css.control, ...css.controlInvalid } : css.control}

@@ -31,6 +31,10 @@ export interface ScholarFieldState {
   overridden: boolean
   /** Localized invalid message; undefined when the staged value parses. */
   invalid?: string
+  /** Write-only secret controls only: whether the credential is configured. */
+  configured?: boolean
+  /** Write-only secret controls only: whether the credentials domain accepts a write. */
+  writable?: boolean
 }
 
 /** Card snapshot handed to the component. */
@@ -65,6 +69,23 @@ export interface ScholarScopeLike {
   subscribe(fn: () => void): () => void
   set(field: string, value: unknown): Promise<void>
   unset(field: string): Promise<void>
+}
+
+/** Minimal structural view of the wire credentials domain (native key management). */
+export interface ScholarCredentialsApi {
+  describe(req: { refs: readonly string[] }): Promise<{ result: { ok: boolean; value: { credentials: Record<string, { configured?: boolean; writable?: boolean }> } } }>
+  set(req: { ref: string; value: string }): Promise<unknown>
+}
+
+/**
+ * Each write-only key control (a `secret`-kind field) addresses a credential
+ * reference: the field named by `refField` in the section (a `credential-ref`
+ * record name), or `defaultRef` when the section names none. The key literal is
+ * written to the credentials domain, never stored in the settings section.
+ */
+const SECRET_REFS: Record<string, { refField: string; defaultRef: string }> = {
+  s2ApiKey: { refField: 's2ApiKeyRef', defaultRef: 'S2_API_KEY' },
+  astaApiKey: { refField: 'astaApiKeyRef', defaultRef: 'ASTA_API_KEY' },
 }
 
 /** Minimal observable snapshot store (no external store dependency). */
@@ -107,6 +128,9 @@ export class ScholarCardController {
   /** State machine for the write latch: a save cannot overlap itself. */
   private writing = Promise.resolve()
 
+  /** Per write-only key control: what the credentials domain reports. */
+  private credentialState: Record<string, { configured: boolean; writable: boolean }> = {}
+
   private readonly store = new SnapshotStoreImpl<ScholarCardSnapshot>({
     status: 'loading',
     writable: false,
@@ -120,6 +144,7 @@ export class ScholarCardController {
     private readonly scope: ScholarScopeLike,
     private readonly specs: readonly ScholarFieldSpec[],
     private readonly t: (key: string) => string,
+    private readonly api?: { credentials: ScholarCredentialsApi },
   ) {
     scope.subscribe(() => this.rebase())
     this.rebase()
@@ -151,6 +176,19 @@ export class ScholarCardController {
     }
   }
 
+  /** Whether a field is a write-only key control written to the credentials domain. */
+  private isSecret(field: string): boolean {
+    return Object.prototype.hasOwnProperty.call(SECRET_REFS, field)
+  }
+
+  /** The credential reference a key control addresses. */
+  private refOf(field: string): string {
+    const spec = SECRET_REFS[field]
+    if (!spec) return ''
+    const declared = this.view().value[spec.refField]
+    return typeof declared === 'string' && declared.trim() ? declared.trim() : spec.defaultRef
+  }
+
   private rebase(): void {
     const status = this.scope.getSnapshot().status
     if (status === 'loading') return
@@ -166,6 +204,25 @@ export class ScholarCardController {
       draft.writable = writable
       for (const spec of this.specs) {
         const current = draft.fields[spec.key]
+        if (this.isSecret(spec.key)) {
+          // Write-only: the literal never seeds a draft; the card shows only
+          // whether the credential is configured and writable.
+          const cred = this.credentialState[spec.key]
+          draft.fields[spec.key] = {
+            key: spec.key,
+            kind: spec.kind,
+            label: this.t(spec.key),
+            hint: this.t(`${spec.key}Hint`),
+            raw: current?.raw ?? '',
+            resolvedRaw: '',
+            overridden: false,
+            invalid: undefined,
+            configured: cred?.configured ?? false,
+            writable: cred?.writable ?? true,
+          }
+          void this.readCredential(spec.key)
+          continue
+        }
         draft.fields[spec.key] = {
           key: spec.key,
           kind: spec.kind,
@@ -186,6 +243,7 @@ export class ScholarCardController {
     for (const spec of this.specs) {
       const field = draft.fields[spec.key]
       if (!field) continue
+      if (this.isSecret(spec.key)) continue
       if (spec.kind === 'number' && field.raw !== '') {
         field.invalid = Number.isFinite(Number(field.raw)) ? undefined : this.t('invalidNumber')
       }
@@ -194,9 +252,34 @@ export class ScholarCardController {
     const { value, base } = this.view()
     draft.dirty = this.specs.some((spec) => {
       const field = draft.fields[spec.key]
-      return Boolean(field && field.raw !== textOf(value[spec.key] ?? base[spec.key]))
+      if (!field) return false
+      if (this.isSecret(spec.key)) return field.raw !== ''
+      return Boolean(field.raw !== textOf(value[spec.key] ?? base[spec.key]))
     })
     draft.invalid = anyInvalid
+  }
+
+  /** Ask the credentials domain about a key control's reference and re-publish. */
+  private async readCredential(field: string): Promise<void> {
+    const ref = this.refOf(field)
+    const api = this.api?.credentials
+    if (!api || !ref) return
+    try {
+      const response = await api.describe({ refs: [ref] })
+      if (!response.result.ok || ref !== this.refOf(field)) return
+      const view = response.result.value.credentials[ref]
+      const next = { configured: view?.configured ?? false, writable: view?.writable ?? true }
+      const prev = this.credentialState[field]
+      if (prev && prev.configured === next.configured && prev.writable === next.writable) return
+      this.credentialState[field] = next
+      const spec = this.specs.find((s) => s.key === field)
+      if (spec) this.store.update((draft) => {
+        const f = draft.fields[field]
+        if (f) { f.configured = next.configured; f.writable = next.writable }
+      })
+    } catch {
+      // A read failure leaves the control usable with its last-known state.
+    }
   }
 
   edit(field: string, raw: string): void {
@@ -215,6 +298,12 @@ export class ScholarCardController {
   }
 
   resetField(field: string): void {
+    // A write-only key control has no settings field to unset; reset clears the
+    // typed draft (a blank draft writes nothing).
+    if (this.isSecret(field)) {
+      this.edit(field, '')
+      return
+    }
     void this.scope.unset(field)
   }
 
@@ -224,10 +313,24 @@ export class ScholarCardController {
     this.store.update((draft) => { draft.saving = true })
     this.writing = this.writing.then(async () => {
       const { value, base } = this.view()
+      const apiWrites: Promise<unknown>[] = []
       const writes: Promise<void>[] = []
+      const secretFields: string[] = []
       for (const spec of this.specs) {
         const field = this.store.getSnapshot().fields[spec.key]
-        if (!field || field.raw === textOf(value[spec.key] ?? base[spec.key])) continue
+        if (!field) continue
+        if (this.isSecret(spec.key)) {
+          if (field.raw !== '') {
+            secretFields.push(spec.key)
+            const ref = this.refOf(spec.key)
+            const api = this.api?.credentials
+            if (api && ref) {
+              apiWrites.push(api.set({ ref, value: field.raw }).catch(() => undefined))
+            }
+          }
+          continue
+        }
+        if (field.raw === textOf(value[spec.key] ?? base[spec.key])) continue
         if (field.raw === '') {
           writes.push(this.scope.unset(spec.key))
           continue
@@ -235,8 +338,15 @@ export class ScholarCardController {
         const parsed = spec.kind === 'number' ? Number(field.raw) : spec.kind === 'boolean' ? field.raw === 'true' : field.raw
         writes.push(this.scope.set(spec.key, parsed))
       }
-      await Promise.all(writes)
-      this.store.update((draft) => { draft.saving = false })
+      await Promise.all([...writes, ...apiWrites])
+      this.store.update((draft) => {
+        for (const field of secretFields) {
+          const f = draft.fields[field]
+          if (f) f.raw = ''
+        }
+        draft.saving = false
+      })
+      for (const field of secretFields) await this.readCredential(field)
     })
     return this.writing
   }

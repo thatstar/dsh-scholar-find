@@ -93,8 +93,8 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | Setting (namespace `dsh-scholar-find`) | Purpose |
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
-| `s2ApiKeyRef` | Optional S2 key — a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials`; same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |
-| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials`). Enables `scholar_get_paper_content` (~500-word full text). |
+| `s2ApiKeyRef` | Optional S2 key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Semantic Scholar API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`) — never stored in the settings section. **Decided: anonymous mode** (empty ref → 5 s pacing). |
+| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Ai2 Asta API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`). Enables `scholar_get_paper_content` (~500-word full text). |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
@@ -105,13 +105,20 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 Implementation is **complete** and committed:
 The repository root is the pure-TypeScript DSH plugin (**16 tools**: `scholar_search_*`
 incl. `scholar_get_paper_content` via the Ai2 Asta MCP server, and `paper_fetch_*`),
-settings section, companion instructions, client-half settings card. **55 passing
+settings section, companion instructions, client-half settings card. **59 passing
 unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
 no PDF. No Sci-Hub / publisher-guess / institutional fallback.
 
-Remaining: **deployment restart** to load the current `lib/`, an Asta key for
-`scholar_get_paper_content`, and **in-session end-to-end verification**. Keep
-everything TypeScript-only, clean-room, and test-covered.
+The two API keys (`s2ApiKeyRef`, `astaApiKeyRef`) use the **native DSH
+credentials-domain pattern**: the settings section carries only the credential
+**reference** (record name), the card's write-only key controls write the literal
+to the **DSH credentials domain** (`api.credentials.set`), and the keys are
+resolved at runtime via `ctx.credentials.resolve(credentialRef(...))` — never
+stored in the settings section/repo.
+
+Remaining: **deployment restart** to load the current `lib/`, set the Asta key via
+the card (writes to DSH key management), and **in-session end-to-end
+verification**. Keep everything TypeScript-only, clean-room, and test-covered.
