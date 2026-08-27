@@ -69,9 +69,22 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     // is messy, so every tool output goes through the sanitizer before it is
     // snapshotted.
     const execute = tool.execute.bind(tool)
+    // A tool's `render` MUST return ContentBlock[]; a bare string makes the
+    // model-run pipeline fail with "content.some is not a function". Normalise
+    // it so a mistaken return can never reach the runner.
+    const render = tool.output.render.bind(tool.output)
     disposers.push(tools.register({
       ...tool,
       execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
+      output: {
+        ...tool.output,
+        render: (args: unknown, value: unknown) => {
+          const rendered = render(args as never, value as never)
+          if (Array.isArray(rendered)) return rendered
+          if (typeof rendered === 'string') return [{ type: 'text', text: rendered }]
+          return [{ type: 'text', text: `Result (${String(value != null ? (value as { total?: unknown }).total ?? '' : '')})` }]
+        },
+      },
     }))
   }
 
@@ -188,7 +201,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { matched: { type: 'boolean' }, markdown: { type: 'string' }, paper: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text('No match.')
+        return text(value.markdown ?? 'No match.')
       },
     },
     async execute(args, exec) {
@@ -212,7 +225,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { paperId: { type: 'string' }, markdown: { type: 'string' }, paper: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`Paper ${value.paperId ?? 'unknown'}.`)
+        return text(value.markdown ?? `Paper ${value.paperId ?? 'unknown'}.`)
       },
     },
     async execute(args, exec) {
@@ -236,7 +249,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, citations: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} citing papers.`)
+        return text(value.markdown ?? `${value.total ?? 0} citing papers.`)
       },
     },
     async execute(args, exec) {
@@ -264,7 +277,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, references: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} references.`)
+        return text(value.markdown ?? `${value.total ?? 0} references.`)
       },
     },
     async execute(args, exec) {
@@ -291,7 +304,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, papers: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} recommendations.`)
+        return text(value.markdown ?? `${value.total ?? 0} recommendations.`)
       },
     },
     async execute(args, exec) {
@@ -312,7 +325,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, authors: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} authors.`)
+        return text(value.markdown ?? `${value.total ?? 0} authors.`)
       },
     },
     async execute(args, exec) {
@@ -331,7 +344,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { authorId: { type: 'string' }, markdown: { type: 'string' }, author: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`Author ${value.authorId ?? 'unknown'}.`)
+        return text(value.markdown ?? `Author ${value.authorId ?? 'unknown'}.`)
       },
     },
     async execute(args, exec) {
@@ -351,7 +364,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, papers: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} papers.`)
+        return text(value.markdown ?? `${value.total ?? 0} papers.`)
       },
     },
     async execute(args, exec) {
@@ -399,7 +412,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { doi: { type: 'string' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`Resolved ${value.doi ?? '?'}.`)
+        return text(value.markdown ?? `Resolved ${value.doi ?? '?'}.`)
       },
     },
     async execute(args, exec) {
@@ -439,7 +452,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { ok: { type: 'boolean' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`Fetch finished (ok=${String(value.ok)}).`)
+        return text(value.markdown ?? `Fetch finished (ok=${String(value.ok)}).`)
       },
     },
     async execute(args, exec) {
@@ -483,7 +496,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { ok: { type: 'boolean' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`Batch finished (ok=${String(value.ok)}).`)
+        return text(value.markdown ?? `Batch finished (ok=${String(value.ok)}).`)
       },
     },
     async execute(args, exec) {
@@ -517,7 +530,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, files: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.markdown ?? text(`${value.total ?? 0} PDFs in the library.`)
+        return text(value.markdown ?? `${value.total ?? 0} PDFs in the library.`)
       },
     },
     async execute(_args, exec) {
