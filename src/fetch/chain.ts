@@ -108,6 +108,15 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
 
   // 3. arXiv
   if (ext.ArXiv) {
+    // Backfill sparse metadata from arXiv's own export API (Atom feed) — once.
+    // A DOI synthesized as 10.48550/arXiv.<id>, or an S2 externalId ArXiv, often
+    // maps to a paper S2 has no (or a sparse) record for, so fill title / first
+    // author / published year from the primary arXiv source when they are still
+    // empty. Merge only complements existing values (mergeMeta).
+    if (!meta.title || !meta.author || meta.year === undefined) {
+      const am = await arxivMetaEnrich(ext.ArXiv, ctx.timeoutMs, ctx.signal)
+      if (am) mergeMeta(am)
+    }
     sourcesTried.push('arxiv')
     add('arxiv', `https://arxiv.org/pdf/${ext.ArXiv}.pdf`)
   }
@@ -223,6 +232,66 @@ export async function landingPdfUrl(url: string, timeoutMs: number, signal?: Abo
     }
   }
   return undefined
+}
+
+/** Decode common XML entities in an arXiv Atom feed text node. `&amp;` decodes
+ * last so `&amp;lt;` becomes `&lt;` (a literal string) rather than `<`. */
+function decodeFeedEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+/**
+ * Extract (title, first author, published year) from the first `<entry>` of an
+ * arXiv Atom feed. Scoped to the entry so the feed-level `<title>` never
+ * shadows the paper title. Returns undefined when nothing useful is found.
+ */
+export function parseArxivFeed(xml: string): PaperMeta | undefined {
+  const entry = /<entry[^>]*>([\s\S]*?)<\/entry>/i.exec(xml)?.[1]
+  if (!entry) return undefined
+  const meta: PaperMeta = {}
+
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(entry)?.[1]
+  if (title) meta.title = decodeFeedEntities(title.replace(/\s+/g, ' ').trim())
+
+  const author = /<author[^>]*>[\s\S]*?<name[^>]*>([\s\S]*?)<\/name>/i.exec(entry)?.[1]
+  if (author) meta.author = decodeFeedEntities(author.replace(/\s+/g, ' ').trim())
+
+  const published = /<published>(\d{4})-.+?<\/published>/i.exec(entry)?.[1]
+  if (published) meta.year = Number(published)
+
+  if (meta.title === undefined && meta.author === undefined && meta.year === undefined) return undefined
+  return meta
+}
+
+/**
+ * Backfill metadata for a known arXiv id from arXiv's export API (Atom feed).
+ * Invoked once per chain when a source produced an arXiv id but
+ * meta.title/author/year are still sparse — e.g. a DOI synthesized as
+ * 10.48550/arXiv.<id> (S2 has no record for some arXiv-only preprints) or an
+ * S2 externalId ArXiv with a sparse record. Returns the discovered fields, or
+ * undefined on any transport / parse failure (callers treat it as optional).
+ */
+export async function arxivMetaEnrich(arxivId: string, timeoutMs: number, signal?: AbortSignal): Promise<PaperMeta | undefined> {
+  const url = `http://export.arxiv.org/api/query?id_list=${encodeURIComponent(arxivId)}`
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', onAbort, { once: true })
+  const timer = setTimeout(() => controller.abort(new Error(`arxiv meta timeout after ${timeoutMs}ms`)), timeoutMs)
+  try {
+    const r = await pluginFetch(url, { headers: { Accept: 'application/atom+xml,application/xml,text/xml' }, signal: controller.signal })
+    if (!r.ok) return undefined
+    return parseArxivFeed(await r.text())
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 /** Unpaywall v2: collect OA PDF candidates from every OA location. */

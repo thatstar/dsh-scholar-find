@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
 import type { ScholarClient } from '../src/s2/client.js'
-import { resolveChain, resolveTitle, landingPdfUrl } from '../src/fetch/chain.js'
+import { resolveChain, resolveTitle, landingPdfUrl, parseArxivFeed, arxivMetaEnrich } from '../src/fetch/chain.js'
 import type { ChainContext } from '../src/fetch/chain.js'
 
 const fetchMock = vi.fn()
@@ -147,6 +147,89 @@ describe('resolveChain', () => {
     })
     const { candidates } = await resolveChain(baseCtx())
     expect(candidates).toHaveLength(0)
+  })
+
+  it('backfills title/author/year from the arXiv export API when S2 is sparse', async () => {
+    // S2 returns an externalId ArXiv but no title/author/year (sparse record);
+    // the chain should enrich them from the arXiv Atom feed.
+    const s2Body = { openAccessPdf: {}, externalIds: { ArXiv: '1706.03762' } }
+    const atom = `<?xml version="1.0" encoding="UTF-8"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title type="html">ArXiv Query: id_list=1706.03762</title>
+        <entry>
+          <id>http://arxiv.org/abs/1706.03762v1</id>
+          <updated>2017-06-12T20:00:00Z</updated>
+          <published>2017-06-12T20:00:00Z</published>
+          <title>Attention Is All You Need</title>
+          <author><name>Vaswani</name></author>
+        </entry>
+      </feed>`
+    stubFetch((url) => {
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse(s2Body)
+      if (url.startsWith('http://export.arxiv.org/api/query')) return new Response(atom, { status: 200, headers: { 'Content-Type': 'application/atom+xml' } })
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { candidates, sourcesTried, meta } = await resolveChain(baseCtx({ email: '', doi: '10.48550/arXiv.1706.03762' }))
+    expect(sourcesTried).toContain('arxiv')
+    expect(candidates.map((c) => c.source)).toEqual(['arxiv'])
+    expect(candidates[0]!.pdfUrl).toBe('https://arxiv.org/pdf/1706.03762.pdf')
+    expect(meta.title).toBe('Attention Is All You Need')
+    expect(meta.author).toBe('Vaswani')
+    expect(meta.year).toBe(2017)
+  })
+
+  it('does not call the arXiv export API when metadata is already complete', async () => {
+    const s2Body = {
+      title: 'Attention Is All You Need',
+      year: 2017,
+      venue: 'NeurIPS',
+      authors: [{ name: 'Vaswani' }],
+      openAccessPdf: {},
+      externalIds: { ArXiv: '1706.03762' },
+    }
+    const calls: string[] = []
+    stubFetch((url) => {
+      calls.push(url)
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse(s2Body)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    await resolveChain(baseCtx({ email: '', doi: '10.48550/arXiv.1706.03762' }))
+    expect(calls.some((u) => u.startsWith('http://export.arxiv.org/api/query'))).toBe(false)
+  })
+})
+
+describe('parseArxivFeed / arxivMetaEnrich', () => {
+  it('extracts title, first author, and published year from an Atom feed', () => {
+    const xml = `<feed xmlns="http://www.w3.org/2005/Atom">
+      <title type="html">ArXiv Query: id_list=1706.03762</title>
+      <entry>
+        <id>http://arxiv.org/abs/1706.03762v1</id>
+        <updated>2017-06-12T20:00:00Z</updated>
+        <published>2017-06-12T20:00:00Z</published>
+        <title>Attention Is All You Need</title>
+        <author><name>Vaswani</name></author>
+        <author><name>Shibsankar</name></author>
+      </entry>
+    </feed>`
+    expect(parseArxivFeed(xml)).toEqual({ title: 'Attention Is All You Need', author: 'Vaswani', year: 2017 })
+  })
+
+  it('decodes XML entities and collapses whitespace in the title', () => {
+    const xml = `<entry><title>Curiosity &amp; Reproducibility: An
+      &quot;Empirical&quot; Study</title><published>2021-06-29T17:57:50Z</published></entry>`
+    expect(parseArxivFeed(xml)).toEqual({ title: 'Curiosity & Reproducibility: An "Empirical" Study', year: 2021 })
+  })
+
+  it('returns undefined when the feed has no entry', () => {
+    expect(parseArxivFeed('<feed><title>nothing</title></feed>')).toBeUndefined()
+  })
+
+  it('surfaces a non-OK response as undefined (caller treats as optional)', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('http://export.arxiv.org/api/query')) return jsonResponse({ error: 'bad request' }, 400)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    await expect(arxivMetaEnrich('1706.03762', 5000)).resolves.toBeUndefined()
   })
 })
 
