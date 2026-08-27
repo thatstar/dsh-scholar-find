@@ -514,7 +514,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         resolution = r.resolution
       }
       if (!doi) {
-        return { doi: null, markdown: `Could not resolve "${args.title ?? args.doi ?? ''}" to a DOI. Use a longer/cleaner title or pass the DOI directly.`, data: { ok: false, resolution } } as any
+        return { markdown: `Could not resolve "${args.title ?? args.doi ?? ''}" to a DOI. Use a longer/cleaner title or pass the DOI directly.`, data: { ok: false, resolution } } as any
       }
       const result = await fetchSvc.resolveOne(rt, doi)
       const sourceLine = result.success
@@ -554,7 +554,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         resolution = r.resolution
       }
       if (!doi) {
-        return { ok: false, markdown: `Could not resolve "${args.title ?? ''}" to a DOI.`, data: { ok: false, resolution } } as any
+        return { ok: false, markdown: `Could not resolve "${args.title ?? ''}" to a DOI. Provide the DOI directly (title→DOI matching can fail or pick a different paper).`, data: { ok: false, resolution } } as any
       }
       const result = await fetchSvc.fetchOne(rt, doi, { overwrite: args.overwrite })
       const err = result.error as { code?: string; message?: string; retry_after_hours?: number } | undefined
