@@ -8,7 +8,8 @@ instructions:
 
 1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
    relevance / snippets), paper lookup, citations, references, recommendations,
-   authors, BibTeX export.
+   authors, BibTeX export, and `scholar_get_paper_content` (~500-word full-text
+   content via the Ai2 Asta MCP server, not exposed by the public S2 API).
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
    bioRxiv/medRxiv). We rely strictly on the OA sources' own return values: a
@@ -93,6 +94,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
 | `s2ApiKeyRef` | Optional S2 key as a **DSH credential reference** (record name in `~/.dsh/.credentials.yaml`, resolved via `ctx.credentials` — same pattern as `llm-pi-ai` model keys). **Decided: anonymous mode** (empty → 5 s pacing). |
+| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key as a **DSH credential reference** (e.g. `ASTA_API_KEY`); enables `scholar_get_paper_content` (~500-word full text). |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |

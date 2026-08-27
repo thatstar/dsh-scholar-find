@@ -14,6 +14,7 @@ import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
+import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
 
 /** Minimal view over the agent a tool call runs for. */
@@ -26,10 +27,29 @@ export interface ScholarToolEnv {
   readonly settings: () => ScholarSettings
   /** Resolve the S2 api key through the DSH credentials seam. */
   readonly resolveApiKey: () => Promise<string | undefined>
+  /** Resolve the Ai2 Asta corpus MCP key through the DSH credentials seam. */
+  readonly resolveAstaKey: () => Promise<string | undefined>
 }
 
 function text(content: string): ContentBlock[] {
   return [{ type: 'text', text: content }]
+}
+
+/** Human-readable rendering of Asta snippet results (paper + ~500-word content). */
+function fmtAsta(snippets: AstaSnippet[]): string {
+  if (!snippets.length) return 'No content snippets found.'
+  return snippets
+    .map((s, i) => {
+      const p = s.paper ?? {}
+      const head = [`**Snippet ${i + 1}**`, p.title ? `*${p.title}*` : '', p.corpusId ? `(CorpusId:${p.corpusId})` : ''].filter(Boolean).join(' ')
+      const sub = [
+        p.authors?.length ? p.authors.slice(0, 5).join(', ') : '',
+        p.openAccessInfo?.license ? `License: ${p.openAccessInfo.license}` : '',
+      ].filter(Boolean).join(' · ')
+      const kind = s.snippet?.snippetKind ? `\n> kind: ${s.snippet.snippetKind}` : ''
+      return `### ${head}\n${sub ? `${sub}\n` : ''}${s.snippet?.text ?? ''}${kind}`
+    })
+    .join('\n\n')
 }
 
 function baseDirOf(exec: ToolRunContext): string {
@@ -257,6 +277,52 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { paperId: args.paperId, markdown: fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120)), paper: fmt.compactPapers([paper])[0] ?? null }
     },
     timeoutMs: 120_000,
+    isConcurrencySafe: () => false,
+  }))
+
+  register(defineTool({
+    name: 'scholar_get_paper_content',
+    description: `Retrieve ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API). Searches a paper's title/abstract/body text; pass \`paperIds\` to get content from specific papers.`,
+    parameters: {
+      query: { type: 'string', description: 'Text to find in the paper(s) — the topic, a phrase, or the paper title. Required.', required: true },
+      paperIds: { type: 'string', description: 'Restrict to these papers: comma-separated S2 IDs, CorpusId:<id>, DOI:<doi>, ARXIV:<id>, PMID:<id>, PMCID:<id>.' },
+      limit: { type: 'integer', description: `Max snippets to return (default ${ASTA_DEFAULT_LIMIT})` },
+      venues: { type: 'string', description: 'Restrict to venues (comma-separated), e.g. "Nature,N. Engl. J. Med."' },
+      insertedBefore: { type: 'string', description: 'YYYY-MM-DD: only snippets ingested before this date' },
+    },
+    output: {
+      schema: { type: 'object', properties: { markdown: { type: 'string' }, snippets: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
+      render(_args, value: any) {
+        return text(value.markdown ?? 'No content returned.')
+      },
+    },
+    async execute(args, exec) {
+      const apiKey = await env.resolveAstaKey()
+      if (!apiKey) {
+        return { markdown: 'Asta content tool is not configured. Add an `astaApiKeyRef` in the plugin settings (Settings -> Plugins -> Plugin configuration) to enable it.', snippets: [] }
+      }
+      const snippets = await astaSnippetSearch(apiKey, {
+        query: args.query,
+        paper_ids: args.paperIds,
+        limit: args.limit ?? ASTA_DEFAULT_LIMIT,
+        venues: args.venues,
+        inserted_before: args.insertedBefore,
+      }, ASTA_TIMEOUT_MS, exec.signal)
+      const jsonSnippets = snippets.map((s) => ({
+        score: s.score,
+        paper: {
+          corpusId: s.paper?.corpusId,
+          title: s.paper?.title,
+          authors: s.paper?.authors ?? [],
+          openAccessInfo: s.paper?.openAccessInfo ?? null,
+        },
+        snippet: { text: s.snippet?.text, snippetKind: s.snippet?.snippetKind ?? null, section: s.snippet?.section ?? null },
+      }))
+      // Data came from JSON.parse (lossless); cast through `any` so the tool's
+      // JsonValue output contract is satisfied, then the lossless guard applies.
+      return { markdown: fmtAsta(snippets), snippets: jsonSnippets as any }
+    },
+    timeoutMs: ASTA_TIMEOUT_MS + 10_000,
     isConcurrencySafe: () => false,
   }))
 

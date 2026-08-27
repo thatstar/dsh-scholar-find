@@ -22,6 +22,7 @@ import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   unpaywallEmail: '',
   s2ApiKeyRef: '',
+  astaApiKeyRef: '',
   cloakEnabled: false,
   proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',
@@ -57,6 +58,18 @@ export function apply(ctx: Context): void {
       settings: () => source(),
       resolveApiKey: async () => {
         const refName = source().s2ApiKeyRef.trim()
+        if (!refName) return undefined
+        try {
+          const credentials = ctx.get('credentials')
+          if (!credentials) return undefined
+          const resolved = await credentials.resolve(credentialRef(refName))
+          return resolved?.value
+        } catch {
+          return undefined
+        }
+      },
+      resolveAstaKey: async () => {
+        const refName = source().astaApiKeyRef.trim()
         if (!refName) return undefined
         try {
           const credentials = ctx.get('credentials')
