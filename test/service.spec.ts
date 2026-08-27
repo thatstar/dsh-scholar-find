@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
-import { fetchOne, type FetchRuntime } from '../src/fetch/service.js'
+import { fetchOne, resolveOne, type FetchRuntime } from '../src/fetch/service.js'
 import { ScholarSettings } from '../src/settings.js'
 
 const fetchMock = vi.fn()
@@ -106,5 +106,25 @@ describe('fetchOne web-search fallback', () => {
     expect(result.success).toBe(false)
     expect(result.error?.code).toBe('not_found')
     expect(searchWeb).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveOne web-search fallback', () => {
+  it('reports a free PDF URL found by title web-search (no download)', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title: 'Self-Paced Learning for Latent Variable Models', year: 2010, journal_name: 'NIPS', z_authors: [{ family: 'Kumar' }], best_oa_location: null, oa_locations: [] })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const searchWeb = vi.fn(async () => [{ url: 'http://example.com/paper.pdf' }])
+    const result = await resolveOne({ ...runtime({ unpaywallEmail: 'you@example.com' }), searchWeb } as FetchRuntime, '10.1007/s11263-022-01611-x')
+    expect(result.success).toBe(true)
+    expect(result.source).toBe('web_search')
+    expect(result.pdfUrl).toBe('http://example.com/paper.pdf')
+    expect(result.file).toBeNull()
+    expect(searchWeb).toHaveBeenCalledWith('Self-Paced Learning for Latent Variable Models pdf', 10, undefined)
+    expect(result.sourcesTried).toContain('web_search')
   })
 })

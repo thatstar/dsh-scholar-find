@@ -84,22 +84,28 @@ function webCandidateUrls(hits: readonly WebSearchHit[]): string[] {
   return out
 }
 
-/** Last-resort fallback: web-search the paper title for a free PDF and try to
- * fetch it (direct -> CloakBrowser -> fail). Returns the winning URL or nothing. */
+/** Search the paper title for candidate free-PDF URLs (no download). Empty on
+ * no title / no web capability / search error. */
+async function webCandidates(rt: FetchRuntime, meta: { title?: string }): Promise<string[]> {
+  if (!rt.searchWeb || !meta.title) return []
+  let hits: WebSearchHit[]
+  try {
+    hits = await rt.searchWeb(`${meta.title} pdf`, WEB_SEARCH_MAX_RESULTS, rt.signal)
+  } catch {
+    return [] // web capability unavailable — skip the fallback
+  }
+  return webCandidateUrls(hits)
+}
+
+/** Last-resort fallback: web-search the title for a free PDF and try to fetch it
+ * (direct -> CloakBrowser -> fail). Returns the winning URL or nothing. */
 async function tryWebSearch(
   rt: FetchRuntime,
   meta: { title?: string },
   dest: string,
   opts: DownloadOptions,
 ): Promise<{ href: string; source: string } | undefined> {
-  if (!rt.searchWeb || !meta.title) return undefined
-  let hits: WebSearchHit[]
-  try {
-    hits = await rt.searchWeb(`${meta.title} pdf`, WEB_SEARCH_MAX_RESULTS, rt.signal)
-  } catch {
-    return undefined // web capability unavailable — skip the fallback
-  }
-  const urls = webCandidateUrls(hits).slice(0, WEB_FALLBACK_MAX_TRIES)
+  const urls = (await webCandidates(rt, meta)).slice(0, WEB_FALLBACK_MAX_TRIES)
   for (const href of urls) {
     const gate = isSafeUrl(href)
     if (!gate.ok) continue
@@ -147,6 +153,20 @@ export async function resolveOne(rt: FetchRuntime, doi: string): Promise<FetchIt
     }
   }
   if (!chain.candidates.length) {
+    // Last-resort automatic fallback: web-search the title and report the first
+    // likely free-PDF URL (no download). Only then report a clean not_found.
+    const webUrl = (await webCandidates(rt, chain.meta))[0]
+    if (webUrl) {
+      return {
+        doi: normalized,
+        success: true,
+        source: 'web_search',
+        pdfUrl: webUrl,
+        file: null,
+        meta: { ...chain.meta },
+        sourcesTried: [...chain.sourcesTried, 'web_search'],
+      }
+    }
     const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
     return {
       doi: normalized,
