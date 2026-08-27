@@ -15,6 +15,10 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
+import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
+import { resolveOutDir } from '../fetch/download.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { sanitizeForOutput } from '../util/sanitize.js'
 
 /** Minimal view over the agent a tool call runs for. */
@@ -630,6 +634,38 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         : `No PDFs in ${rt.settings.pdfOutputDir} yet.`
       return { total: files.length, markdown, files }
     },
+    isConcurrencySafe: () => false,
+  }))
+
+  register(defineTool({
+    name: 'paper_pdf2md',
+    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB / ≤20 pages). Saves the .md into the configured library directory (default scholar-pdfs) and returns the path (+ a short excerpt).`,
+    parameters: {
+      pdf: { type: 'string', description: 'PDF to convert: an https://...pdf URL or a local file path.', required: true },
+      timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)})` },
+    },
+    output: {
+      schema: { type: 'object', properties: { path: { type: 'string' }, excerpt: { type: 'string' }, pdf: { type: 'string' } }, additionalProperties: true },
+      render(_args, value: any) {
+        return text(value.path ? `**Markdown saved:** \`${value.path}\`\n${value.excerpt ?? ''}` : 'No Markdown produced.')
+      },
+    },
+    async execute(args, exec) {
+      const rt = runtimeOf(ctx, env, exec).fetch
+      const timeoutMs = (args.timeoutSec === undefined ? Math.floor(MINERU_TIMEOUT_MS / 1000) : args.timeoutSec) * 1000
+      const isUrl = /^https?:\/\//i.test(args.pdf)
+      const { markdown } = isUrl
+        ? await mineruParseUrl(args.pdf, { timeoutMs, signal: exec.signal })
+        : await mineruParseFile(args.pdf, { timeoutMs, signal: exec.signal })
+      // Deterministic .md filename from the source basename (strip .pdf).
+      const base = (isUrl ? new URL(args.pdf).pathname : args.pdf).split(/[\\/]/).pop() || 'paper'
+      const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+      const dest = join(outDir, base.replace(/\.pdf$/i, '') + '.md')
+      await mkdir(outDir, { recursive: true })
+      await writeFile(dest, markdown, 'utf8')
+      return { path: dest, excerpt: markdown.slice(0, 400), pdf: args.pdf }
+    },
+    timeoutMs: MINERU_TIMEOUT_MS + 20_000,
     isConcurrencySafe: () => false,
   }))
 

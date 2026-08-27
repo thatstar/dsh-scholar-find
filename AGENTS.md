@@ -17,7 +17,9 @@ instructions:
    automatic fallback** web-searches the paper's full title (via the DSH `web`
    service, the `web_search` backing) for a free PDF and tries to fetch it; if
    that also fails we report no PDF fetched. (No publisher-guess, Sci-Hub, or
-   pirate fallback.)
+   pirate fallback.) `paper_pdf2md` converts a single PDF (URL or local file) to
+   Markdown full text via the MinerU lightweight parse API (no key; ≤10 MB / ≤20
+   pages; uses the proxy) and saves the .md into the library directory.
 3. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
 
@@ -103,10 +105,9 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 ## Code policy
 
 Implementation is **complete** and committed:
-The repository root is the pure-TypeScript DSH plugin (**16 tools**: `scholar_search_*`
+The repository root is the pure-TypeScript DSH plugin **17 tools**: `scholar_search_*`
 incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, and `paper_fetch_*`),
-settings section, companion instructions, client-half settings card. **59 passing
-unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **65 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

@@ -19,7 +19,9 @@ Two tool families are available for academic paper research:
   open-access PDF URL for a DOI or title WITHOUT writing files;
   \`paper_fetch_download\` resolves and saves the PDF into the configured
   library directory; \`paper_fetch_batch\` downloads many DOIs with a
-  resumable envelope.
+  resumable envelope; \`paper_pdf2md\` converts a single PDF (an https:// PDF
+  URL or a local file path) to Markdown full text via the MinerU lightweight
+  parse API and saves the .md into the library directory.
 
 Usage rules:
 
@@ -54,5 +56,8 @@ Usage rules:
 8. \`scholar_get_paper_snippets\` requires the Asta API key: if it reports it is
    unconfigured, tell the user to set the key on the plugin's settings card
    (Settings -> Plugins -> Plugin configuration → "Ai2 Asta API key"), which
-   stores it in DSH key management; the "Ai2 Asta key record" field names the
-   credential record used.`
+   stores it in DSH key management.
+9. \`paper_pdf2md\` converts a single PDF to Markdown via MinerU (no API key; IP
+   rate-limited; ≤10 MB / ≤20 pages; uses the proxy). Give either an
+   \`https://…pdf\` URL or a local file path; it saves the .md into the library
+   directory and returns the path + a short excerpt.`
