@@ -6,16 +6,12 @@ open-access PDFs, and convert PDFs to Markdown — all from the chat.
 
 ## What you get
 
-**`scholar_search_*`** — find and inspect papers on Semantic Scholar:
-search with filters and boolean queries, match a title, look up papers,
-citations, references, recommendations, authors, BibTeX export, and
-full-text snippets.
+**`scholar_search_*`** — search the literature: papers, citations,
+authors, recommendations, and full-text snippets.
 
-**`paper_fetch_*`** — get the PDFs:
-`resolve` finds the best open-access PDF link, `download` saves it,
-`batch` downloads many DOIs at once, `library` lists what's saved, and
-`pdf2md` turns a PDF into Markdown. Only open-access sources are used —
-no Sci-Hub, no paywall guessing.
+**`paper_fetch_*`** — get the papers: find and download open-access PDFs
+(individually or in bulk), and convert them to Markdown. Open-access
+sources only — no paywall workarounds.
 
 ## Install
 
