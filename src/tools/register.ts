@@ -21,6 +21,26 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sanitizeForOutput } from '../util/sanitize.js'
 
+/**
+ * Tool-level wall-clock caps. These bound the WHOLE tool run (including model-
+ * side queueing); the per-request HTTP layer inside is governed separately by
+ * the `fetchTimeoutSec` setting (S2 client) or the client timeout constants
+ * (Asta / MinerU). Kept as named constants so the two layers are visibly
+ * distinct and adjust in one place.
+ */
+/** scholar_search_* runs (S2 HTTP timeout is fetchTimeoutSec inside). */
+const SCHOLAR_TOOL_TIMEOUT_MS = 120_000
+/** Margin on top of the Asta request timeout for the full scholar_get_paper_snippets run. */
+const ASTA_TOOL_TIMEOUT_MARGIN_MS = 10_000
+/** paper_fetch_resolve run cap (chain + web fallback). */
+const FETCH_RESOLVE_TIMEOUT_MS = 180_000
+/** paper_fetch_download run cap (chain + every candidate + web fallback). */
+const FETCH_DOWNLOAD_TIMEOUT_MS = 300_000
+/** paper_fetch_batch run cap (many DOIs, resumable). */
+const FETCH_BATCH_TIMEOUT_MS = 600_000
+/** Margin on top of the MinerU parse timeout for the full paper_pdf2md run. */
+const MINERU_TOOL_TIMEOUT_MARGIN_MS = 20_000
+
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
   session?: { header?: { cwd?: string } }
@@ -206,7 +226,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         results: fmt.compactPapers(deduped),
       }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -237,7 +257,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       })
       return { query: args.query, total: snippets.length, snippets }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -258,7 +278,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       if (!paper) return { matched: false, markdown: `No Semantic Scholar match for "${args.title}".` } as any
       return { matched: true, markdown: fmt.formatResults([paper], args.title), paper: fmt.compactPapers([paper])[0] } as any
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -280,7 +300,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const paper = await s2.getPaper(client, args.paperId, args.includeAbstract ? undefined : 'title,year,citationCount,authors,venue,externalIds,tldr,openAccessPdf')
       return { paperId: args.paperId, markdown: fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120)), paper: fmt.compactPapers([paper])[0] ?? null }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -326,7 +346,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       // JsonValue output contract is satisfied, then the lossless guard applies.
       return { markdown: fmtAsta(snippets), snippets: jsonSnippets as any }
     },
-    timeoutMs: ASTA_TIMEOUT_MS + 10_000,
+    timeoutMs: ASTA_TIMEOUT_MS + ASTA_TOOL_TIMEOUT_MARGIN_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -359,7 +379,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         citations,
       }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -382,7 +402,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         references: refs,
       }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -407,7 +427,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         : await s2.recommend(client, { positiveIds: args.positiveIds, negativeIds: args.negativeIds, limit: args.limit ?? 10 })
       return { total: papers.length, markdown: fmt.formatResults(papers, 'Recommendations'), papers }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -426,7 +446,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const authors = await s2.searchAuthors(client, args.query, args.maxResults ?? 20)
       return { total: authors.length, markdown: fmt.formatAuthors(authors), authors }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -446,7 +466,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const p = { ...author, affiliations: author.affiliations ?? [], paperCount: author.paperCount ?? 0 }
       return { authorId: args.authorId, markdown: fmt.formatAuthors([p]), author }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -465,7 +485,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const papers = await s2.getAuthorPapers(client, args.authorId, args.maxResults ?? 100)
       return { total: papers.length, markdown: fmt.formatResults(papers, 'Author papers'), papers: fmt.compactPapers(papers) }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -485,7 +505,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const bibtex = fmt.exportBibtex(papers)
       return { count: papers.length, bibtex }
     },
-    timeoutMs: 120_000,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -530,7 +550,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         data: { ok: result.success, ...(resolution ? { titleResolution: resolution } : {}), result },
       } as any
     },
-    timeoutMs: 180_000,
+    timeoutMs: FETCH_RESOLVE_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -573,7 +593,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         data: { ...(resolution ? { titleResolution: resolution } : {}), result },
       } as any
     },
-    timeoutMs: 300_000,
+    timeoutMs: FETCH_DOWNLOAD_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -612,7 +632,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const markdown = `## Batch fetch: ${summary.succeeded}/${summary.total} succeeded\n\n${lines.join('\n')}${next.length ? `\n\n**Retry hints:**\n\`\`\`\n${next.join('\n')}\n\`\`\`` : ''}`
       return { ok: envelope.ok, markdown, data: envelope as any }
     },
-    timeoutMs: 600_000,
+    timeoutMs: FETCH_BATCH_TIMEOUT_MS,
     isConcurrencySafe: () => false,
   }))
 
@@ -665,7 +685,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       await writeFile(dest, markdown, 'utf8')
       return { path: dest, excerpt: markdown.slice(0, 400), pdf: args.pdf }
     },
-    timeoutMs: MINERU_TIMEOUT_MS + 20_000,
+    timeoutMs: MINERU_TIMEOUT_MS + MINERU_TOOL_TIMEOUT_MARGIN_MS,
     isConcurrencySafe: () => false,
   }))
 

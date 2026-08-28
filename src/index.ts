@@ -13,24 +13,11 @@ import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-tools'
-import { assertServiceableScholarSettings, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
+import { assertServiceableScholarSettings, DEFAULT_SCHOLAR_SETTINGS, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
+import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 import { applyScholarTools } from './tools/register.js'
 import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
 import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
-
-/** Schema defaults (the composition base layer of the settings section). */
-export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
-  unpaywallEmail: '',
-  s2ApiKeyRef: 'S2_API_KEY',
-  astaApiKeyRef: 'ASTA_API_KEY',
-  cloakEnabled: false,
-  proxyUrl: '',
-  pdfOutputDir: 'scholar-pdfs',
-  maxResultsPerSearch: 20,
-  fetchTimeoutSec: 30,
-  maxPdfSizeMb: 50,
-  s2RequestGapMs: 0,
-}
 
 export const name = 'dsh-scholar-find'
 
@@ -60,7 +47,7 @@ export function apply(ctx: Context): void {
         // The key never lives in the settings section: the section carries a
         // credential reference (record name), and the value is resolved from
         // the DSH credentials domain.
-        const refName = source().s2ApiKeyRef.trim() || 'S2_API_KEY'
+        const refName = source().s2ApiKeyRef.trim() || DEFAULT_S2_KEY_REF
         try {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined
@@ -70,7 +57,7 @@ export function apply(ctx: Context): void {
         }
       },
       resolveAstaKey: async () => {
-        const refName = source().astaApiKeyRef.trim() || 'ASTA_API_KEY'
+        const refName = source().astaApiKeyRef.trim() || DEFAULT_ASTA_KEY_REF
         try {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined

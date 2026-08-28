@@ -117,7 +117,7 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
 
   // Operator-opted-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs.
   if (opts.cloakEnabled) {
-    const cloak = await cloakFetchPdf(url, opts.timeoutMs, opts.proxyUrl)
+    const cloak = await cloakFetchPdf(url, opts.timeoutMs, opts.maxBytes, opts.proxyUrl)
     if (cloak.ok && cloak.bytes) {
       if (!looksLikePdf(cloak.bytes)) return { ok: false, reason: 'download_not_a_pdf', detail: 'cloak returned non-PDF' }
       if (cloak.bytes.length > opts.maxBytes) return { ok: false, reason: 'download_size_exceeded', detail: `cloak response exceeds ${opts.maxBytes} bytes` }

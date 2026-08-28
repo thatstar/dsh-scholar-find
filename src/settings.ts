@@ -8,6 +8,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 
 /** Settings namespace of this plugin. */
 export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
@@ -27,6 +28,24 @@ export interface ScholarSettings {
 }
 
 /**
+ * Canonical plugin defaults — the single source used by the schema's field
+ * defaults and, via index.ts, as the boot-time composition base of the settings
+ * section. Changing a default here is the only place to change it.
+ */
+export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
+  unpaywallEmail: '',
+  s2ApiKeyRef: DEFAULT_S2_KEY_REF,
+  astaApiKeyRef: DEFAULT_ASTA_KEY_REF,
+  cloakEnabled: false,
+  proxyUrl: '',
+  pdfOutputDir: 'scholar-pdfs',
+  maxResultsPerSearch: 20,
+  fetchTimeoutSec: 30,
+  maxPdfSizeMb: 50,
+  s2RequestGapMs: 0,
+}
+
+/**
  * Schema of the resolved section, typed against {@link ScholarSettings}. All
  * fields carry defaults so the plugin is usable before the user touches the
  * settings page; `unpaywallEmail` is the only field the user really must
@@ -34,25 +53,25 @@ export interface ScholarSettings {
  */
 export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   /** Unpaywall contact email; also sent as Crossref `mailto`. Empty -> Unpaywall skipped. */
-  unpaywallEmail: z.string().default(''),
+  unpaywallEmail: z.string().default(DEFAULT_SCHOLAR_SETTINGS.unpaywallEmail),
   /** DSH credential reference (record name in ~/.dsh/.credentials.yaml, e.g. `S2_API_KEY`). Empty -> anonymous. */
-  s2ApiKeyRef: z.string().role('credential-ref').default('S2_API_KEY'),
+  s2ApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.s2ApiKeyRef),
   /** DSH credential reference for the Ai2 Asta corpus MCP key (e.g. `ASTA_API_KEY`). */
-  astaApiKeyRef: z.string().role('credential-ref').default('ASTA_API_KEY'),
+  astaApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.astaApiKeyRef),
   /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
-  cloakEnabled: z.boolean().default(false),
+  cloakEnabled: z.boolean().default(DEFAULT_SCHOLAR_SETTINGS.cloakEnabled),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */
-  proxyUrl: z.string().default(''),
+  proxyUrl: z.string().default(DEFAULT_SCHOLAR_SETTINGS.proxyUrl),
   /** Download directory; relative values resolve against the session workspace. */
-  pdfOutputDir: z.string().default('scholar-pdfs'),
+  pdfOutputDir: z.string().default(DEFAULT_SCHOLAR_SETTINGS.pdfOutputDir),
   /** Default result cap for scholar search tools (per-call ceiling is 100). */
-  maxResultsPerSearch: z.number().default(20),
+  maxResultsPerSearch: z.number().default(DEFAULT_SCHOLAR_SETTINGS.maxResultsPerSearch),
   /** Per-request HTTP timeout in seconds. */
-  fetchTimeoutSec: z.number().default(30),
+  fetchTimeoutSec: z.number().default(DEFAULT_SCHOLAR_SETTINGS.fetchTimeoutSec),
   /** Download size cap in megabytes. */
-  maxPdfSizeMb: z.number().default(50),
+  maxPdfSizeMb: z.number().default(DEFAULT_SCHOLAR_SETTINGS.maxPdfSizeMb),
   /** S2 pacing override in ms; 0 = auto (1100 ms with key, 5000 ms anonymous). */
-  s2RequestGapMs: z.number().default(0),
+  s2RequestGapMs: z.number().default(DEFAULT_SCHOLAR_SETTINGS.s2RequestGapMs),
 })
 
 /**

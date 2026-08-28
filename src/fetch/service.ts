@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import type { ScholarClient } from '../s2/client.js'
 import type { ScholarSettings } from '../settings.js'
-import { resolveChain, resolveTitle, type ChainContext } from './chain.js'
+import { arxivPdfUrl, resolveChain, resolveTitle, type ChainContext } from './chain.js'
 import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore, resolveOutDir } from './download.js'
 import { codeOf, makeError, type EnvelopeError, type FetchItemResult } from './envelope.js'
 import { isSafeUrl } from './safety.js'
@@ -172,7 +172,8 @@ function webCandidateUrls(hits: readonly WebSearchHit[]): string[] {
     if (!u) continue
     if (/\.pdf(?:\?.*)?$/i.test(u)) push(u)
     const arx = u.match(/arxiv\.org\/abs\/([^/?#]+)/)
-    if (arx) push(`https://arxiv.org/pdf/${arx[1]}`)
+    const arxId = arx?.[1]
+    if (arxId) push(arxivPdfUrl(arxId))
   }
   return out
 }

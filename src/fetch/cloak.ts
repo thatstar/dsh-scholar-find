@@ -23,7 +23,6 @@ import { homedir } from 'node:os'
 import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 import { sleep } from '../util/async.js'
 
-const MAX_PDF_SIZE = 50 * 1024 * 1024
 /** Cap on how long the challenge-clear poll runs (mirrors the reference tool). */
 const CHALLENGE_CLEAR_MAX_MS = 40_000
 /** Delay between challenge-clear polls. */
@@ -83,8 +82,10 @@ function normalizeProxy(value: string): string {
 
 /** Shared browser flow: launch (+ proxy dispatcher swap for the binary
  * download), clear the origin's bot challenge, then in-page `fetch()` `url` and
- * return the raw bytes. */
-async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
+ * return the raw bytes. The in-page fetch caps the body at `maxBytes` (the
+ * operator's configured PDF size limit — the same cap the direct path applies),
+ * so a cloak response can never exceed the configured size either. */
+async function cloakFetchRaw(url: string, timeoutMs: number, maxBytes: number, proxyUrl?: string): Promise<CloakResult> {
   // Default the browser cache to a real home dir; env override wins.
   process.env.CLOAKBROWSER_CACHE_DIR ||= join(homedir(), '.cloakbrowser')
 
@@ -160,14 +161,14 @@ async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string):
     let res: { status: number; b64?: string; oversized?: boolean } | null = null
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        res = await page.evaluate(FETCH_JS, [url, MAX_PDF_SIZE])
+        res = await page.evaluate(FETCH_JS, [url, maxBytes])
         break
       } catch (e) {
         if (attempt === 0) await sleep(EVAL_RETRY_DELAY_MS)
         else return { ok: false, status: undefined, detail: `cloak fetch failed: ${(e as Error).message}` }
       }
     }
-    if (!res || res.oversized) return { ok: false, detail: res?.oversized ? `response exceeds ${MAX_PDF_SIZE} bytes` : 'no result' }
+    if (!res || res.oversized) return { ok: false, detail: res?.oversized ? `response exceeds ${maxBytes} bytes` : 'no result' }
     if (res.status !== 200 || !res.b64) return { ok: false, status: res.status, detail: `in-page fetch returned HTTP ${res.status}` }
     return { ok: true, status: res.status, bytes: base64ToBytes(res.b64) }
   } catch (e) {
@@ -180,7 +181,9 @@ async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string):
 /**
  * Fetch a PDF through CloakBrowser. Fails closed (`{ ok:false, detail }`) if
  * unavailable or cannot launch; the caller re-validates `%PDF` + size.
+ * `maxBytes` is the operator-configured PDF size cap — a cloaked response over
+ * it is rejected here rather than buffered in the browser.
  */
-export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
-  return cloakFetchRaw(url, timeoutMs, proxyUrl)
+export async function cloakFetchPdf(url: string, timeoutMs: number, maxBytes: number, proxyUrl?: string): Promise<CloakResult> {
+  return cloakFetchRaw(url, timeoutMs, maxBytes, proxyUrl)
 }

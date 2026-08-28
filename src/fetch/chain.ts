@@ -14,6 +14,25 @@ import { getPaper } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
 import { timedFetch } from './transport.js'
 
+/** Registered arXiv DOI prefix. The probe lowercases the DOI; the synthesized
+ * DOI uses the canonical `arXiv.` casing (see {@link arxivDoi}). */
+const ARXIV_DOI_PREFIX = '10.48550/arxiv.'
+/** bioRxiv / medRxiv DOI prefix (only 10.1101 registers). */
+const BIORXIV_DOI_PREFIX = '10.1101/'
+/** DOI-landing-page URL shapes S2 sometimes reports as `openAccessPdf.url`,
+ * which are NOT direct PDFs (e.g. https://doi.org/…). */
+const DOI_LANDING_URL_RE = /^https?:\/\/(www\.|dx\.)?doi\.org\//i
+
+/** The canonical arXiv DOI for an arXiv id (10.48550/arXiv.<id>). */
+export function arxivDoi(arxivId: string): string {
+  return `10.48550/arXiv.${arxivId}`
+}
+
+/** Direct PDF download URL for an arXiv id. */
+export function arxivPdfUrl(arxivId: string): string {
+  return `https://arxiv.org/pdf/${arxivId}.pdf`
+}
+
 export interface PaperMeta {
   title?: string
   year?: number | string
@@ -98,14 +117,14 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
   // (e.g. https://doi.org/…), which is NOT a direct PDF. Skip those so we don't
   // burn a download attempt on a page that can only fail the %PDF gate — the
   // real OA copy is usually reachable via the Europe PMC / PMC / arXiv steps.
-  if (s2Pdf && !/^https?:\/\/(www\.|dx\.)?doi\.org\//i.test(s2Pdf)) {
+  if (s2Pdf && !DOI_LANDING_URL_RE.test(s2Pdf)) {
     sourcesTried.push('semantic_scholar')
     add('semantic_scholar', s2Pdf)
   }
 
   // Synthesized arXiv DOI form; S2 does not index it — recover from the DOI.
-  if (!ext.ArXiv && ctx.doi.toLowerCase().startsWith('10.48550/arxiv.')) {
-    ext.ArXiv = ctx.doi.slice('10.48550/arxiv.'.length)
+  if (!ext.ArXiv && ctx.doi.toLowerCase().startsWith(ARXIV_DOI_PREFIX)) {
+    ext.ArXiv = ctx.doi.slice(ARXIV_DOI_PREFIX.length)
   }
 
   // 3. arXiv
@@ -120,7 +139,7 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
       if (am) mergeMeta(am)
     }
     sourcesTried.push('arxiv')
-    add('arxiv', `https://arxiv.org/pdf/${ext.ArXiv}.pdf`)
+    add('arxiv', arxivPdfUrl(ext.ArXiv))
   }
 
   // PMCID may be in externalIds or recoverable from an S2 PDF url.
@@ -138,7 +157,7 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
   }
 
   // 5. bioRxiv / medRxiv (10.1101 only)
-  if (ctx.doi.startsWith('10.1101/')) {
+  if (ctx.doi.startsWith(BIORXIV_DOI_PREFIX)) {
     sourcesTried.push('biorxiv')
     try {
       const bx = await biorxivResolve(ctx.doi, ctx.timeoutMs, ctx.signal)
@@ -194,7 +213,7 @@ const PDF_URL_SIGNALS = [
  */
 export async function landingPdfUrl(url: string, timeoutMs: number, signal?: AbortSignal, opts: { checkDns?: boolean } = {}): Promise<string | undefined> {
   const arxiv = arxivIdFromUrl(url)
-  if (arxiv) return `https://arxiv.org/pdf/${arxiv}.pdf`
+  if (arxiv) return arxivPdfUrl(arxiv)
 
   if (!isSafeUrl(url).ok) return undefined
   let html = ''
@@ -324,7 +343,7 @@ async function biorxivResolve(doi: string, timeoutMs: number, signal?: AbortSign
       const coll = d.collection ?? []
       if (coll.length) {
         const latest = coll[coll.length - 1]
-        return `https://www.${server}.org/content/10.1101/${latest.doi.split('/').pop()}v${latest.version ?? 1}.full.pdf`
+        return `https://www.${server}.org/content/${BIORXIV_DOI_PREFIX}${latest.doi.split('/').pop()}v${latest.version ?? 1}.full.pdf`
       }
     } catch {
       // try the other server
@@ -447,7 +466,7 @@ export async function resolveTitle(
     if (top && titleSimilarity(q, top.title ?? '') >= TITLE_SIMILARITY_MIN) {
       const ext = top.externalIds ?? {}
       let doi = ext.DOI
-      if (!doi && ext.ArXiv) doi = `10.48550/arXiv.${ext.ArXiv}`
+      if (!doi && ext.ArXiv) doi = arxivDoi(ext.ArXiv)
       if (doi) {
         return {
           doi,
