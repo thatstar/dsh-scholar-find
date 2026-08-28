@@ -13,6 +13,8 @@ import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
+import { createSciverseClient } from '../sciverse/client.js'
+import type { SciverseClient } from '../sciverse/client.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
 import { resolveOutDir } from '../fetch/download.js'
@@ -39,6 +41,9 @@ const FETCH_DOWNLOAD_TIMEOUT_MS = 300_000
 const FETCH_BATCH_TIMEOUT_MS = 600_000
 /** Margin on top of the MinerU parse timeout for the full paper_pdf2md run. */
 const MINERU_TOOL_TIMEOUT_MARGIN_MS = 20_000
+/** Wall-clock cap per Sciverse API call (SDK accepts no AbortSignal; we bound
+ * the call with withTimeout). Generous: quality semantic search takes seconds. */
+const SCIVERSE_CLIENT_TIMEOUT_MS = 60_000
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
@@ -52,6 +57,8 @@ export interface ScholarToolEnv {
   readonly resolveApiKey: () => Promise<string | undefined>
   /** Resolve the Ai2 Asta corpus MCP key through the DSH credentials seam. */
   readonly resolveAstaKey: () => Promise<string | undefined>
+  /** Resolve the Sciverse Open Platform token through the DSH credentials seam. */
+  readonly resolveSciverseKey: () => Promise<string | undefined>
 }
 
 function text(content: string): ContentBlock[] {
@@ -159,6 +166,7 @@ async function resolveInputDoi(rt: FetchRuntime, input: { doi?: string; title?: 
 /** Register every scholar tool; returns a disposer that unregisters all. */
 export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void {
   const disposers: Array<() => void> = []
+  disposers.push(applySciverseTools(ctx, env))
 
   const register = (tool: ReturnType<typeof defineTool>): void => {
     const tools = ctx.get('tools')
@@ -699,4 +707,231 @@ function pickFilters(args: Record<string, unknown>): s2.ScholarFilters {
   if (typeof minC === 'number' && Number.isFinite(minC)) f.minCitationCount = minC
   if (args.openAccess === true) f.openAccess = true
   return f
+}
+// ---------------------------------------------------------------------------
+// sciverse_* — Sciverse Open Platform retrieval (structured search, semantic
+// RAG, full text, figures). Direct (no proxy — China-hosted service); token
+// via the DSH credentials seam; calls bounded by withTimeout.
+// ---------------------------------------------------------------------------
+
+/** Compact one-line-per-paper markdown for search results. */
+function fmtPapers(papers: readonly Record<string, unknown>[]): string {
+  return papers
+    .map((p) => {
+      const authors = Array.isArray(p.author) ? (p.author as Array<{ name?: string }>).map((a) => a.name ?? '').filter(Boolean).join(', ') : ''
+      const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), p.doi ? `DOI: ${p.doi}` : '', `\`${p.unique_id}\``].filter(Boolean).join('\n')
+      return line
+    })
+    .join('\n\n')
+}
+
+/** Compact markdown for semantic-search chunks. */
+function fmtChunks(hits: readonly Record<string, unknown>[]): string {
+  return hits
+    .map((h) => {
+      const text = String(h.chunk ?? h.abstract ?? '').slice(0, 240)
+      return `**${h.title ?? 'untitled'}** (score ${String(h.score ?? '?')})\n${text}${String(h.chunk ?? '').length > 240 ? '…' : ''}\n\`chunk_id: ${String(h.chunk_id ?? '')}\``
+    })
+    .join('\n\n')
+}
+
+/** Not-configured markdown shared by all sciverse_* tools. */
+function sciverseNotConfigured(): string {
+  return 'sciverse_* tools are not configured. Add a `sciverseApiKeyRef` credential (Settings -> Plugins -> Plugin configuration → "Sciverse API token") to enable them.'
+}
+
+/** Register the six sciverse_* tools; returns a disposer that unregisters all. */
+export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => void {
+  const disposers: Array<() => void> = []
+
+  const register = (tool: ReturnType<typeof defineTool>): void => {
+    const tools = ctx.get('tools')
+    if (!tools) return
+    const execute = tool.execute.bind(tool)
+    const render = tool.output.render.bind(tool.output)
+    disposers.push(tools.register({
+      ...tool,
+      execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
+      output: {
+        ...tool.output,
+        render: (args: unknown, value: unknown) => {
+          const rendered = render(args as never, value as never)
+          if (Array.isArray(rendered)) return rendered
+          if (typeof rendered === 'string') return [{ type: 'text', text: rendered }]
+          return [{ type: 'text', text: 'See result.' }]
+        },
+      },
+    }))
+  }
+
+  register(defineTool({
+    name: 'sciverse_list_catalog',
+    description: `Discover the search_papers field catalog for a Sciverse collection (papers/authors/sources): which fields exist, which support filtering/sorting, and sample enum values. Call this first when unsure which field to filter on.`,
+    parameters: {
+      collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection to inspect (default papers)' },
+      include_sample_values: { type: 'boolean', description: 'Also return sample enum values (server caches ~24h)' },
+      include_field_stats: { type: 'boolean', description: 'Also return per-field stats' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, collection: { type: 'string' }, fields: { type: 'array', items: { type: 'json' } } },
+      (value) => `Catalog for ${value.collection ?? 'papers'}: ${Array.isArray(value.fields) ? value.fields.length : 0} fields.`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, markdown: sciverseNotConfigured(), fields: [] } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string })) as any
+      const fields = Array.isArray(r?.fields) ? r.fields : []
+      return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${fields.map((f: any) => `- \`${f.field_name ?? f.name ?? f.field}\` — ${f.description ?? ''}`).join('\n')}` }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_search_papers',
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id + is_content_accessible (when full text exists). For natural-language questions use sciverse_semantic_search instead.`,
+    parameters: {
+      collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
+      query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
+      title_contains: { type: 'string', description: 'Word the title must contain' },
+      abstract_contains: { type: 'string', description: 'Word the abstract must contain' },
+      authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match)' },
+      year_from: { type: 'integer', description: 'Earliest publication year (inclusive)' },
+      year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
+      journals: { type: 'array', items: { type: 'string' }, description: 'Journal/venue names (any match)' },
+      subjects: { type: 'array', items: { type: 'string' }, description: 'Subject categories, e.g. "computer science"' },
+      filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Advanced filter escapes, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"},{"field":"publication_published_year","operator":"FILTER_OP_GTE","value":2023}]' },
+      sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto)' },
+      freshness_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Recency weighting for keyword queries (MILD=10y, STRONG=3y)' },
+      impact_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Citation-impact weighting for keyword queries' },
+      language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Prefer results in the query language' },
+      page: { type: 'integer', description: 'Page number (default 1)' },
+      page_size: { type: 'integer', description: 'Page size (default 10)' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, total: { type: 'integer' }, page: { type: 'integer' }, next_cursor: { type: 'string' }, results: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} papers (page ${value.page ?? 1}).`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, total: 0, results: [], markdown: sciverseNotConfigured() } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const r = (await sc.searchPapers(args as Record<string, unknown>)) as any
+      const results = Array.isArray(r?.results) ? r.results : []
+      const markdown = results.length
+        ? `**${r.total_count ?? results.length} papers** (page ${args.page ?? 1}${r.next_cursor ? ', deep pagination available via next_cursor' : ''})\n\n${fmtPapers(results)}\n\n> pass \`next_cursor\` back to fetch the next page when deep (>10000) pagination is needed`
+        : 'No papers found.'
+      return { ok: true, total: r.total_count ?? results.length, page: args.page ?? 1, next_cursor: r.next_cursor ?? '', results, markdown }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_semantic_search',
+    description: `Natural-language semantic retrieval over the Sciverse corpus (RAG): returns the most relevant passage chunks (title, chunk text, byte offset, score). Follow up with sciverse_read_content (doc_id + offset) to extend context, and sciverse_get_resource for figures/tables.`,
+    parameters: {
+      query: { type: 'string', description: 'Natural-language question, 1-200 chars is best', required: true },
+      top_k: { type: 'integer', description: 'Number of chunks to return — legal range 1-100 (default 10; ~3 chunks max per paper)' },
+      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'fast=keyword only (~200ms); balanced=hybrid (~600ms); quality=LLM-rewrite+hybrid (~2-4s)' },
+      source_types: { type: 'array', items: { type: 'string', enum: ['web', 'pdf'] }, description: 'Restrict chunk sources' },
+      filters: { type: 'json', description: 'Approximate structured filters during retrieval, e.g. {"author":["Hinton"],"publication_published_year":{"gte":2023}}' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, hits: { type: 'array', items: { type: 'json' } } },
+      (value) => `${Array.isArray(value.hits) ? value.hits.length : 0} passage chunks.`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, hits: [], markdown: sciverseNotConfigured() } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters })) as any
+      const hits = Array.isArray(r?.hits) ? r.hits : []
+      return { ok: true, hits, markdown: hits.length ? `**${hits.length} passage chunk(s)**\n\n${fmtChunks(hits)}` : 'No passages found.' }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_list_paper_relations',
+    description: `Paginate a paper's full citation relations (CITATIONS = who cites it; REFERENCES = what it cites; RELATED_WORKS). Deep pagination for very large lists: use the alternative references_unique_id filter in sciverse_search_papers (relations >10000 return 429 here).`,
+    parameters: {
+      unique_id: { type: 'string', description: 'The paper\'s unique_id from a sciverse search', required: true },
+      relation: { type: 'string', enum: ['CITATIONS', 'REFERENCES', 'RELATED_WORKS'], description: 'Which relation list to page', required: true },
+      page: { type: 'integer', description: 'Page number (default 1)' },
+      page_size: { type: 'integer', description: 'Page size (default 10)' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, unique_id: { type: 'string' }, relation: { type: 'string' }, total: { type: 'integer' }, items: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} ${value.relation ?? ''} entries.`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], markdown: sciverseNotConfigured() } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size })) as any
+      const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
+      const total = r.total_count ?? items.length
+      return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtPapers(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_read_content',
+    description: `Read a byte-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned + next_offset for continued reading.`,
+    parameters: {
+      doc_id: { type: 'string', description: 'Full-text artifact id (sha256) from a sciverse search/semantic hit', required: true },
+      offset: { type: 'integer', description: 'Byte offset to start reading from (default 0)' },
+      limit: { type: 'integer', description: 'Max bytes to read (server-enforced cap)' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' } },
+      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}.`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, doc_id: args.doc_id, bytes_returned: 0, next_offset: 0, text: '', markdown: sciverseNotConfigured() } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit })) as any
+      const text = String(r?.text ?? '')
+      return {
+        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text,
+        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : 'No content returned (document may not be content-accessible).',
+      }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_get_resource',
+    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown). Returns the raw image bytes (mimeType + base64 + data URL).`,
+    parameters: {
+      file_name: { type: 'string', description: 'Image file name from the markdown (relative path)', required: true },
+    },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, file_name: { type: 'string' }, mimeType: { type: 'string' }, bytes: { type: 'integer' }, base64: { type: 'string' }, dataUrl: { type: 'string' } }, additionalProperties: true },
+      render(_args: unknown, value: any) {
+        return text(value.ok && value.dataUrl ? `![${value.file_name}](${value.dataUrl})\n\n(${value.mimeType}, ${value.bytes} bytes)` : value.markdown ?? 'No image returned.')
+      },
+    },
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, file_name: args.file_name, markdown: sciverseNotConfigured() } as any
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const { bytes, mimeType } = await sc.getResource({ file_name: args.file_name })
+      const base64 = Buffer.from(bytes).toString('base64')
+      return { ok: true, file_name: args.file_name, mimeType, bytes: bytes.byteLength, base64, dataUrl: `data:${mimeType};base64,${base64}` }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  return () => {
+    for (const dispose of disposers) dispose()
+  }
 }

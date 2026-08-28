@@ -15,6 +15,7 @@ export type ScholarLocaleKey =
   | 'unpaywallEmail' | 'unpaywallEmailHint'
   | 's2ApiKey' | 's2ApiKeyHint'
   | 'astaApiKey' | 'astaApiKeyHint'
+  | 'sciverseApiKey' | 'sciverseApiKeyHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
   | 'proxyUrl' | 'proxyUrlHint'
   | 'pdfOutputDir' | 'pdfOutputDirHint'
@@ -44,6 +45,8 @@ export const en: Record<ScholarLocaleKey, string> = {
   s2ApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
   astaApiKey: 'Ai2 Asta API key',
   astaApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
+  sciverseApiKey: 'Sciverse API token',
+  sciverseApiKeyHint: 'Stored in DSH key management. Enter a value to set or replace it.',
   cloakEnabled: 'CloakBrowser fallback',
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
   proxyUrl: 'Outbound HTTP proxy',
@@ -81,6 +84,8 @@ export const zh: Record<ScholarLocaleKey, string> = {
   s2ApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
   astaApiKey: 'Ai2 Asta API 密钥',
   astaApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
+  sciverseApiKey: 'Sciverse API Token',
+  sciverseApiKeyHint: '存储于 DSH 密钥管理。输入数值以设置或替换。',
   cloakEnabled: 'CloakBrowser 兜底',
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
   proxyUrl: '出站 HTTP 代理',

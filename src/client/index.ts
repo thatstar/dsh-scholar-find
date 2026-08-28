@@ -38,6 +38,7 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'unpaywallEmail', kind: 'text' },
   { key: 's2ApiKey', kind: 'secret' },
   { key: 'astaApiKey', kind: 'secret' },
+  { key: 'sciverseApiKey', kind: 'secret' },
   { key: 'cloakEnabled', kind: 'boolean' },
   { key: 'proxyUrl', kind: 'text' },
   { key: 'pdfOutputDir', kind: 'text' },

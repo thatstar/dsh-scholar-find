@@ -39,8 +39,8 @@
     }
   },
   "scripts": {
-    "prepare": "tsc -p tsconfig.json && node scripts/build-client.mjs",
-    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "prepare": "tsc -p tsconfig.json && node scripts/build-client.mjs && node scripts/build-sciverse.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs && node scripts/build-sciverse.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
@@ -77,6 +77,7 @@
   "dependencies": {
     "cloakbrowser": "^0.5.9",
     "playwright-core": "^1.62.1",
+    "sciverse": "^0.14.0",
     "undici": "^7.29.0"
   }
 }

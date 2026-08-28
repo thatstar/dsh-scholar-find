@@ -8,7 +8,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
+import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 
 /** Settings namespace of this plugin. */
 export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
@@ -28,6 +28,7 @@ export interface ScholarSettings {
   unpaywallEmail: string
   s2ApiKeyRef: string
   astaApiKeyRef: string
+  sciverseApiKeyRef: string
   cloakEnabled: boolean
   proxyUrl: string
   pdfOutputDir: string
@@ -46,6 +47,7 @@ export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   unpaywallEmail: '',
   s2ApiKeyRef: DEFAULT_S2_KEY_REF,
   astaApiKeyRef: DEFAULT_ASTA_KEY_REF,
+  sciverseApiKeyRef: DEFAULT_SCIVERSE_KEY_REF,
   cloakEnabled: false,
   proxyUrl: '',
   pdfOutputDir: 'scholar-pdfs',
@@ -70,6 +72,10 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   /** DSH credential reference for the Ai2 Asta corpus MCP key (default
    * `DEFAULT_ASTA_KEY_REF` from refs.ts). */
   astaApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.astaApiKeyRef),
+  /** DSH credential reference for the Sciverse Open Platform token (default
+   * `DEFAULT_SCIVERSE_KEY_REF` from refs.ts). Empty -> sciverse_* tools report
+   * unconfigured. */
+  sciverseApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.sciverseApiKeyRef),
   /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
   cloakEnabled: z.boolean().default(DEFAULT_SCHOLAR_SETTINGS.cloakEnabled),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */

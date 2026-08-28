@@ -8,7 +8,7 @@
  */
 
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
-import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from '../refs.js'
+import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from '../refs.js'
 
 /** One editable field of the card. */
 export type ScholarFieldKind = 'text' | 'secret' | 'number' | 'boolean'
@@ -87,6 +87,7 @@ export interface ScholarCredentialsApi {
 const SECRET_REFS: Record<string, { refField: string; defaultRef: string }> = {
   s2ApiKey: { refField: 's2ApiKeyRef', defaultRef: DEFAULT_S2_KEY_REF },
   astaApiKey: { refField: 'astaApiKeyRef', defaultRef: DEFAULT_ASTA_KEY_REF },
+  sciverseApiKey: { refField: 'sciverseApiKeyRef', defaultRef: DEFAULT_SCIVERSE_KEY_REF },
 }
 
 /** Minimal observable snapshot store (no external store dependency). */

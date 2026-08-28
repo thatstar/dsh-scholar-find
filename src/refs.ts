@@ -11,3 +11,5 @@
 export const DEFAULT_S2_KEY_REF = 'S2_API_KEY'
 /** Default DSH credential record name for the Ai2 Asta corpus MCP key. */
 export const DEFAULT_ASTA_KEY_REF = 'ASTA_API_KEY'
+/** Default DSH credential record name for the Sciverse Open Platform token. */
+export const DEFAULT_SCIVERSE_KEY_REF = 'SCIVERSE_API_TOKEN'

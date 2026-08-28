@@ -8,8 +8,11 @@ open-access PDFs, and convert PDFs to Markdown — all from the chat.
 - **Search** — papers, citations, authors, recommendations, and full-text
   snippets (`scholar_search_*`).
 - **Fetch** — find and download open-access PDFs, individually or in bulk,
-  and convert PDFs to Markdown (`paper_fetch_*`). Open-access sources only —
+  and convert them to Markdown (`paper_fetch_*`). Open-access sources only —
   no paywall workarounds.
+- **Sciverse** — search and read papers from the Sciverse corpus: structured
+  and semantic (RAG) search, full-text slices, citation relations, and
+  figures (`sciverse_*`).
 
 ## Installation
 
@@ -26,9 +29,9 @@ Restart the deployment afterwards.
 - Give **DOIs** — they download straight away. Prefer DOIs over titles:
   a title can match the wrong paper.
 - Set it up in **Settings → Plugins → Plugin configuration**: your email
-  (`unpaywallEmail`), optional API keys, a `proxyUrl` if you are behind a
-  proxy, and a `pdfOutputDir` (default `scholar-pdfs`). Everything else has
-  safe defaults.
+  (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
+  `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
+  `pdfOutputDir` (default `scholar-pdfs`). Everything else has safe defaults.
 
 ## References
 
