@@ -9,6 +9,7 @@
 // node_modules patching.
 import { build } from 'esbuild'
 import { dirname, join } from 'node:path'
+import { unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -21,4 +22,10 @@ await build({
   outfile: join(root, 'lib', 'sciverse', 'sdk.bundle.js'),
   logLevel: 'info',
 })
+// Remove the tsc-compiled twin (lib/sciverse/sdk.js) that re-exports the bare
+// 'sciverse' package: it is never imported at runtime, and its presence would
+// make lib/ look like it needs the npm package at deploy time. The deployed
+// artifact is self-contained (only node builtins).
+unlinkSync(join(root, 'lib', 'sciverse', 'sdk.js'))
+unlinkSync(join(root, 'lib', 'sciverse', 'sdk.js.map'))
 console.log('built lib/sciverse/sdk.bundle.js')
