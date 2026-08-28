@@ -28,3 +28,18 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
+
+/**
+ * Run a best-effort operation: surface failures as `undefined` (fail-closed)
+ * but log one diagnostic line so silent drops never look like success. Used for
+ * the deliberately optional side effects (idempotency sidecar, credential
+ * resolution) where a failure must not crash the request but should be audible.
+ */
+export async function bestEffort<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn()
+  } catch (e) {
+    console.warn(`[dsh-scholar-find] ${label} failed (best-effort): ${(e as Error).message}`)
+    return undefined
+  }
+}

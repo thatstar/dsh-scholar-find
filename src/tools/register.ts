@@ -59,6 +59,9 @@ function text(content: string): ContentBlock[] {
   return [{ type: 'text', text: content }]
 }
 
+/** Every scholar tool is a bulk/IO operation: never join a parallel sibling group. */
+const NON_CONCURRENT = (): boolean => false
+
 /** Human-readable rendering of Asta snippet results (paper + ~500-word content). */
 function fmtAsta(snippets: AstaSnippet[]): string {
   if (!snippets.length) return 'No content snippets found.'
@@ -121,6 +124,16 @@ function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s
       searchWeb,
     },
   }
+}
+
+/** Resolve a paper_fetch tool's input to a DOI: use the passed DOI directly, or
+ * resolve a title via Crossref -> Semantic Scholar. Returns the DOI (undefined
+ * when no DOI was given/resolvable) plus the resolution diagnostics. */
+async function resolveInputDoi(rt: FetchRuntime, input: { doi?: string; title?: string }): Promise<{ doi: string | undefined; resolution?: unknown }> {
+  if (input.doi) return { doi: input.doi }
+  if (!input.title) return { doi: undefined }
+  const r = await fetchSvc.resolveTitleToDoi(rt, input.title)
+  return { doi: r.doi, resolution: r.resolution }
 }
 
 /** Register every scholar tool; returns a disposer that unregisters all. */
@@ -227,7 +240,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -250,7 +263,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const snippets = await s2.searchSnippets(client, args.query, {
-        maxResults: args.maxResults ?? 10,
+        maxResults: args.maxResults ?? s2.DEFAULT_SNIPPETS,
         paperIds: args.paperIds,
         authors: args.authors,
         insertedBefore: args.insertedBefore,
@@ -258,7 +271,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { query: args.query, total: snippets.length, snippets }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -279,7 +292,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { matched: true, markdown: fmt.formatResults([paper], args.title), paper: fmt.compactPapers([paper])[0] } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -301,7 +314,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { paperId: args.paperId, markdown: fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120)), paper: fmt.compactPapers([paper])[0] ?? null }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -347,7 +360,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { markdown: fmtAsta(snippets), snippets: jsonSnippets as any }
     },
     timeoutMs: ASTA_TIMEOUT_MS + ASTA_TOOL_TIMEOUT_MARGIN_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -367,7 +380,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const citations = await s2.getCitations(client, args.paperId, { maxResults: args.maxResults ?? 100, publicationDate: args.publicationDate, withIntents: args.withIntents })
+      const citations = await s2.getCitations(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS, publicationDate: args.publicationDate, withIntents: args.withIntents })
       const lines = citations.slice(0, 20).map((c, i) => {
         const p = c.citingPaper ?? {}
         const intents = args.withIntents ? [...new Set((c.contextsWithIntent ?? []).flatMap((e: any) => e.intents ?? []))].join(', ') : ''
@@ -380,7 +393,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -395,7 +408,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const refs = await s2.getReferences(client, args.paperId, { maxResults: args.maxResults ?? 100 })
+      const refs = await s2.getReferences(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS })
       return {
         total: refs.length,
         markdown: fmt.formatResults(refs.map((r) => r.citedPaper ?? r), 'References'),
@@ -403,7 +416,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -423,12 +436,12 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const papers = args.positiveIds.length === 1 && !args.negativeIds
-        ? await s2.findSimilar(client, args.positiveIds[0]!, { limit: args.limit ?? 10 })
-        : await s2.recommend(client, { positiveIds: args.positiveIds, negativeIds: args.negativeIds, limit: args.limit ?? 10 })
+        ? await s2.findSimilar(client, args.positiveIds[0]!, { limit: args.limit ?? s2.DEFAULT_RECS })
+        : await s2.recommend(client, { positiveIds: args.positiveIds, negativeIds: args.negativeIds, limit: args.limit ?? s2.DEFAULT_RECS })
       return { total: papers.length, markdown: fmt.formatResults(papers, 'Recommendations'), papers }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -443,11 +456,11 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const authors = await s2.searchAuthors(client, args.query, args.maxResults ?? 20)
+      const authors = await s2.searchAuthors(client, args.query, args.maxResults ?? s2.DEFAULT_AUTHORS)
       return { total: authors.length, markdown: fmt.formatAuthors(authors), authors }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -467,7 +480,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { authorId: args.authorId, markdown: fmt.formatAuthors([p]), author }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -482,11 +495,11 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const papers = await s2.getAuthorPapers(client, args.authorId, args.maxResults ?? 100)
+      const papers = await s2.getAuthorPapers(client, args.authorId, args.maxResults ?? s2.DEFAULT_CITATIONS)
       return { total: papers.length, markdown: fmt.formatResults(papers, 'Author papers'), papers: fmt.compactPapers(papers) }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -506,7 +519,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { count: papers.length, bibtex }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   // -------------------------------------------------------------------------
@@ -530,13 +543,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
-      let doi = args.doi as string | undefined
-      let resolution: any
-      if (!doi && args.title) {
-        const r = await fetchSvc.resolveTitleToDoi(rt, args.title)
-        doi = r.doi
-        resolution = r.resolution
-      }
+      const { doi, resolution } = await resolveInputDoi(rt, args as { doi?: string; title?: string })
       if (!doi) {
         return { markdown: `Could not resolve "${args.title ?? args.doi ?? ''}" to a DOI. Use a longer/cleaner title or pass the DOI directly.`, data: { ok: false, resolution } } as any
       }
@@ -551,7 +558,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       } as any
     },
     timeoutMs: FETCH_RESOLVE_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -570,13 +577,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
-      let doi = args.doi as string | undefined
-      let resolution: any
-      if (!doi && args.title) {
-        const r = await fetchSvc.resolveTitleToDoi(rt, args.title)
-        doi = r.doi
-        resolution = r.resolution
-      }
+      const { doi, resolution } = await resolveInputDoi(rt, args as { doi?: string; title?: string })
       if (!doi) {
         return { ok: false, markdown: `Could not resolve "${args.title ?? ''}" to a DOI. Provide the DOI directly (title→DOI matching can fail or pick a different paper).`, data: { ok: false, resolution } } as any
       }
@@ -594,7 +595,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       } as any
     },
     timeoutMs: FETCH_DOWNLOAD_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -633,7 +634,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { ok: envelope.ok, markdown, data: envelope as any }
     },
     timeoutMs: FETCH_BATCH_TIMEOUT_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -654,7 +655,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         : `No PDFs in ${rt.settings.pdfOutputDir} yet.`
       return { total: files.length, markdown, files }
     },
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   register(defineTool({
@@ -686,7 +687,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       return { path: dest, excerpt: markdown.slice(0, 400), pdf: args.pdf }
     },
     timeoutMs: MINERU_TIMEOUT_MS + MINERU_TOOL_TIMEOUT_MARGIN_MS,
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: NON_CONCURRENT,
   }))
 
   return () => {

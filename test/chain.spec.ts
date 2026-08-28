@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
 import type { ScholarClient } from '../src/s2/client.js'
-import { resolveChain, resolveTitle, landingPdfUrl, parseArxivFeed, arxivMetaEnrich } from '../src/fetch/chain.js'
+import { resolveChain, resolveTitle, landingPdfUrl, parseArxivFeed, arxivMetaEnrich, unpaywallResolve, biorxivResolve } from '../src/fetch/chain.js'
 import type { ChainContext } from '../src/fetch/chain.js'
 
 const fetchMock = vi.fn()
@@ -195,6 +195,46 @@ describe('resolveChain', () => {
     })
     await resolveChain(baseCtx({ email: '', doi: '10.48550/arXiv.1706.03762' }))
     expect(calls.some((u) => u.startsWith('http://export.arxiv.org/api/query'))).toBe(false)
+  })
+
+  it('marks a non-404 Semantic Scholar failure distinctly in sourcesTried', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) return jsonResponse({ best_oa_location: null })
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'boom' }, 500)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { sourcesTried } = await resolveChain(baseCtx({ email: 'you@example.com' }))
+    expect(sourcesTried).toContain('unpaywall')
+    expect(sourcesTried).toContain('semantic_scholar_error')
+  })
+})
+
+describe('unpaywallResolve / biorxivResolve (direct)', () => {
+  it('collects a direct PDF from every distinct OA location (pass 1)', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({
+          title: 'A Paper', year: 2020, journal_name: 'J', z_authors: [{ family: 'Smith' }],
+          best_oa_location: { url_for_pdf: 'https://a.example/x.pdf' },
+          oa_locations: [{ url_for_pdf: 'https://b.example/y.pdf' }, { url_for_pdf: 'https://a.example/x.pdf' }],
+        })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const up = await unpaywallResolve('10.9999/aa', 'you@example.com', 5000)
+    expect(up?.meta.title).toBe('A Paper')
+    expect(up?.meta.author).toBe('Smith')
+    expect(up?.candidates.map((c) => c.pdfUrl)).toEqual(['https://a.example/x.pdf', 'https://b.example/y.pdf'])
+  })
+
+  it('falls back from bioRxiv to medRxiv when the first server has no record', async () => {
+    stubFetch((url) => {
+      if (url === 'https://api.biorxiv.org/details/biorxiv/10.1101/2020.01.01.1') return jsonResponse({ collection: [] })
+      if (url === 'https://api.biorxiv.org/details/medrxiv/10.1101/2020.01.01.1') return jsonResponse({ collection: [{ doi: '10.1101/2020.01.01.1', version: 2 }] })
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const url = await biorxivResolve('10.1101/2020.01.01.1', 5000)
+    expect(url).toBe('https://www.medrxiv.org/content/10.1101/2020.01.01.1v2.full.pdf')
   })
 })
 

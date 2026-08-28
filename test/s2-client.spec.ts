@@ -94,6 +94,15 @@ describe('createScholarClient', () => {
     expect(fetchTimes).toHaveLength(2)
     expect(fetchTimes[1]! - fetchTimes[0]!).toBeGreaterThanOrEqual(100)
   })
+
+  it('uses an injected pacer instead of the global clock', async () => {
+    const before = vi.fn(async () => {})
+    stubFetch(() => jsonResponse({ data: [] }))
+    const client = createScholarClient({ minGapMs: 0, pacer: { before } })
+    await client.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search', { query: 'x' })
+    expect(before).toHaveBeenCalledTimes(1)
+    expect(before).toHaveBeenCalledWith(5000) // anonymous gap, minGapMs 0 -> auto
+  })
 })
 
 describe('searchBulk', () => {

@@ -29,6 +29,18 @@ const S2_PAGE_MAX = 100
 /** S2 batch lookup accepts at most this many ids. */
 const S2_BATCH_MAX = 500
 
+/** Default result counts for the S2 helper defaults (single source — the tool
+ * layer in register.ts mirrors these so a default changes in one place). */
+export const DEFAULT_SEARCH_RESULTS = 20
+export const DEFAULT_SNIPPETS = 10
+export const DEFAULT_CITATIONS = 100
+export const DEFAULT_RECS = 10
+export const DEFAULT_AUTHORS = 20
+/** Hard ceiling for the S2 author-search page (API rejects beyond 1000). */
+export const S2_AUTHOR_SEARCH_MAX = 1000
+/** Hard ceiling for a single recommendations call (documented as 'max 500'). */
+export const RECS_LIMIT_MAX = 500
+
 /**
  * Shared pacing state, GLOBAL across every client instance in the process.
  * Each tool call constructs a fresh client, so without a shared clock a burst
@@ -42,6 +54,24 @@ let pacingChain: Promise<void> = Promise.resolve()
 export function resetSharedPacing(): void {
   sharedLastRequestAt = 0
   pacingChain = Promise.resolve()
+}
+
+/**
+ * The default pacing implementation: serialize every request on a process-global
+ * chain so consecutive client instances (one per tool call) cannot burst the
+ * shared anonymous S2 pool. A rejected waiter must not strand later callers.
+ */
+function globalPace(gapMs: number, signal?: AbortSignal): Promise<void> {
+  const follow = pacingChain.then(async () => {
+    const elapsed = Date.now() - sharedLastRequestAt
+    const wait = gapMs - elapsed
+    if (wait > 0) {
+      await sleep(wait, signal)
+    }
+    sharedLastRequestAt = Date.now()
+  })
+  pacingChain = follow.catch(() => {})
+  return follow
 }
 
 /** A semantic-scholar HTTP error with the API message when available. */
@@ -81,6 +111,13 @@ export interface ScholarClientOptions {
   readonly signal?: AbortSignal
   /** Backoff override for tests (default: exponential 2s -> 60s). */
   readonly backoffMs?: (attempt: number) => number
+  /**
+   * Pacing hook replacing the process-global pacing clock (tests only): called
+   * with the effective gap before each request. Absent -> the shared global
+   * clock (serialized across ALL client instances, which is what protects the
+   * anonymous S2 pool).
+   */
+  readonly pacer?: { before: (gapMs: number) => Promise<void> }
 }
 
 export interface ScholarClient {
@@ -112,17 +149,11 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
 
   async function pace(keyed: boolean): Promise<void> {
     const gap = effectiveGap(keyed)
-    const follow = pacingChain.then(async () => {
-      const elapsed = Date.now() - sharedLastRequestAt
-      const wait = gap - elapsed
-      if (wait > 0) {
-        await sleep(wait, options.signal)
-      }
-      sharedLastRequestAt = Date.now()
-    })
-    // A rejected waiter must not strand later callers.
-    pacingChain = follow.catch(() => {})
-    return follow
+    if (options.pacer) {
+      await options.pacer.before(gap)
+      return
+    }
+    await globalPace(gap, options.signal)
   }
 
   async function request(
@@ -305,7 +336,7 @@ export async function searchBulk(
     sort: options.sort ?? 'citationCount:desc',
     ...toQueryParams(options.filters),
   }
-  return paginateBulk(client, `${GRAPH}/paper/search/bulk`, params, options.maxResults ?? 20)
+  return paginateBulk(client, `${GRAPH}/paper/search/bulk`, params, options.maxResults ?? DEFAULT_SEARCH_RESULTS)
 }
 
 /** Relevance-ranked search (supports tldr). */
@@ -314,7 +345,7 @@ export async function searchRelevance(
   query: string,
   options: { maxResults?: number; filters?: ScholarFilters; fields?: string } = {},
 ): Promise<any[]> {
-  const maxResults = options.maxResults ?? 20
+  const maxResults = options.maxResults ?? DEFAULT_SEARCH_RESULTS
   const params = {
     query,
     fields: options.fields ?? DEFAULT_PAPER_FIELDS,
@@ -336,13 +367,13 @@ export async function searchSnippets(
   const params: Record<string, string | undefined> = {
     query,
     fields: 'snippet.text,snippet.snippetKind,snippet.section',
-    limit: String(Math.min(options.maxResults ?? 10, S2_PAGE_MAX)),
+    limit: String(Math.min(options.maxResults ?? DEFAULT_SNIPPETS, S2_PAGE_MAX)),
     paperIds: options.paperIds,
     authors: options.authors,
     insertedBefore: options.insertedBefore,
   }
   const r = await client.request('GET', `${GRAPH}/snippet/search`, params)
-  return (r.data ?? []).slice(0, options.maxResults ?? 10)
+  return (r.data ?? []).slice(0, options.maxResults ?? DEFAULT_SNIPPETS)
 }
 
 /** Exact-title match (single best result envelope). */
@@ -363,7 +394,7 @@ export async function getCitations(
   paperId: PaperId,
   options: { maxResults?: number; publicationDate?: string; withIntents?: boolean } = {},
 ): Promise<any[]> {
-  const maxResults = options.maxResults ?? 100
+  const maxResults = options.maxResults ?? DEFAULT_CITATIONS
   const fields = options.withIntents
     ? 'title,year,citationCount,authors,venue,contextsWithIntent'
     : 'title,year,citationCount,authors,venue'
@@ -373,14 +404,14 @@ export async function getCitations(
 
 /** What a paper cites. */
 export async function getReferences(client: ScholarClient, paperId: PaperId, options: { maxResults?: number } = {}): Promise<any[]> {
-  return paginate(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: 'title,year,citationCount,authors,venue' }, options.maxResults ?? 100)
+  return paginate(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: 'title,year,citationCount,authors,venue' }, options.maxResults ?? DEFAULT_CITATIONS)
 }
 
 /** Single-seed recommendations. */
 export async function findSimilar(client: ScholarClient, paperId: PaperId, options: { limit?: number; pool?: 'recent' | 'all-cs' } = {}): Promise<any[]> {
   const r = await client.request('GET', `${RECS}/papers/forpaper/${encodeURIComponent(paperId)}`, {
     fields: 'title,year,citationCount,authors,venue',
-    limit: String(options.limit ?? 10),
+    limit: String(Math.min(options.limit ?? DEFAULT_RECS, RECS_LIMIT_MAX)),
     from: options.pool ?? 'recent',
   })
   return r.recommendedPapers ?? []
@@ -390,13 +421,13 @@ export async function findSimilar(client: ScholarClient, paperId: PaperId, optio
 export async function recommend(client: ScholarClient, options: { positiveIds: readonly string[]; negativeIds?: readonly string[]; limit?: number }): Promise<any[]> {
   const body: Record<string, unknown> = { positivePaperIds: options.positiveIds }
   if (options.negativeIds?.length) body.negativePaperIds = options.negativeIds
-  const r = await client.request('POST', `${RECS}/papers/`, { fields: 'title,year,citationCount,authors,venue', limit: String(options.limit ?? 10) }, body)
+  const r = await client.request('POST', `${RECS}/papers/`, { fields: 'title,year,citationCount,authors,venue', limit: String(Math.min(options.limit ?? DEFAULT_RECS, RECS_LIMIT_MAX)) }, body)
   return r.recommendedPapers ?? []
 }
 
 /** Search authors by name. */
-export async function searchAuthors(client: ScholarClient, query: string, maxResults = 20): Promise<any[]> {
-  const r = await client.request('GET', `${GRAPH}/author/search`, { query, fields: AUTHOR_FIELDS, limit: String(Math.min(maxResults, 1000)) })
+export async function searchAuthors(client: ScholarClient, query: string, maxResults = DEFAULT_AUTHORS): Promise<any[]> {
+  const r = await client.request('GET', `${GRAPH}/author/search`, { query, fields: AUTHOR_FIELDS, limit: String(Math.min(maxResults, S2_AUTHOR_SEARCH_MAX)) })
   return (r.data ?? []).slice(0, maxResults)
 }
 
@@ -406,7 +437,7 @@ export async function getAuthor(client: ScholarClient, authorId: string): Promis
 }
 
 /** Author publication list. */
-export async function getAuthorPapers(client: ScholarClient, authorId: string, maxResults = 100): Promise<any[]> {
+export async function getAuthorPapers(client: ScholarClient, authorId: string, maxResults = DEFAULT_CITATIONS): Promise<any[]> {
   return paginate(client, `${GRAPH}/author/${encodeURIComponent(authorId)}/papers`, { fields: DEFAULT_PAPER_FIELDS }, maxResults)
 }
 

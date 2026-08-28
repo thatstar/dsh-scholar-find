@@ -15,6 +15,7 @@ import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-tools'
 import { assertServiceableScholarSettings, DEFAULT_SCHOLAR_SETTINGS, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
 import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
+import { bestEffort } from './util/async.js'
 import { applyScholarTools } from './tools/register.js'
 import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
 import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
@@ -46,25 +47,22 @@ export function apply(ctx: Context): void {
       resolveApiKey: async () => {
         // The key never lives in the settings section: the section carries a
         // credential reference (record name), and the value is resolved from
-        // the DSH credentials domain.
+        // the DSH credentials domain. Fail-closed to anonymous, but logged so a
+        // mis-typed ref is audible (the card surfaces the same state).
         const refName = source().s2ApiKeyRef.trim() || DEFAULT_S2_KEY_REF
-        try {
+        return bestEffort('s2 api key resolve', async () => {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined
           return (await credentials.resolve(credentialRef(refName)))?.value
-        } catch {
-          return undefined
-        }
+        })
       },
       resolveAstaKey: async () => {
         const refName = source().astaApiKeyRef.trim() || DEFAULT_ASTA_KEY_REF
-        try {
+        return bestEffort('asta api key resolve', async () => {
           const credentials = ctx.get('credentials')
           if (!credentials) return undefined
           return (await credentials.resolve(credentialRef(refName)))?.value
-        } catch {
-          return undefined
-        }
+        })
       },
     })
   }

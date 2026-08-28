@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fetchWithRedirects, looksLikePdf, readBodyCapped } from './safety.js'
 import { cloakFetchPdf } from './cloak.js'
 import { timedFetch } from './transport.js'
-import { sleep } from '../util/async.js'
+import { bestEffort, sleep } from '../util/async.js'
 import type { PaperMeta } from './chain.js'
 
 /** Max length for the title portion of the canonical filename. */
@@ -149,12 +149,12 @@ export async function idemLoad(outDir: string, key: string): Promise<unknown | u
 }
 
 export async function idemStore(outDir: string, key: string, envelope: unknown): Promise<void> {
-  try {
+  // Best-effort sidecar: a write failure must not fail the batch (idempotency
+  // is a convenience), but it is now logged instead of silently dropped.
+  await bestEffort('idempotency sidecar write', async () => {
     await mkdir(dirname(idemPath(outDir, key)), { recursive: true })
     await writeFile(idemPath(outDir, key), JSON.stringify(envelope, null, 2), 'utf8')
-  } catch {
-    // best-effort only
-  }
+  })
 }
 
 /** Resolve the output directory: absolute as-is, relative against `base`. */

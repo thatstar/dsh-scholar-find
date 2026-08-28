@@ -10,7 +10,7 @@
  */
 
 import type { ScholarClient } from '../s2/client.js'
-import { getPaper } from '../s2/client.js'
+import { getPaper, ScholarHttpError } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
 import { timedFetch } from './transport.js'
 
@@ -62,112 +62,154 @@ export interface ChainContext {
 }
 
 /**
+ * Mutable state threaded through the chain steps. Steps run in a fixed order
+ * and each consumes what earlier steps produced: `ext` from the S2 step feeds
+ * the arXiv step, `s2Pdf` (the S2 openAccessPdf, only when it is a real PDF
+ * URL) feeds the PMC step, and `meta` accumulates from every source.
+ */
+interface ChainState {
+  meta: PaperMeta
+  ext: Record<string, string>
+  candidates: SourceResolution[]
+  sourcesTried: string[]
+  /** S2 `openAccessPdf.url` when it is a direct PDF (landing links excluded). */
+  s2Pdf?: string
+}
+
+function mergeMeta(state: ChainState, m: PaperMeta | undefined): void {
+  if (!m) return
+  if (m.title && !state.meta.title) state.meta.title = m.title
+  if (m.year !== undefined && m.year !== null && state.meta.year === undefined) state.meta.year = m.year
+  if (m.author && !state.meta.author) state.meta.author = m.author
+  if (m.journal && !state.meta.journal) state.meta.journal = m.journal
+}
+
+/** Is this a NORMAL miss (HTTP 404 / not-found), as opposed to a transport or
+ * resolver failure? A 404 from Unpaywall/S2/bioRxiv means "no (OA) record for
+ * this DOI" — expected for many papers, so it is not surfaced as an error. */
+function isNotFound(e: unknown): boolean {
+  if (e instanceof ScholarHttpError) return e.status === 404
+  const msg = (e as Error).message ?? ''
+  return msg.includes('404') || msg.includes('not found')
+}
+
+function addCandidate(state: ChainState, source: string, pdfUrl: string | undefined, extra?: Partial<SourceResolution>): void {
+  if (!pdfUrl) return
+  if (state.candidates.some((c) => c.pdfUrl === pdfUrl)) return
+  state.candidates.push({ source, pdfUrl, meta: { ...state.meta }, ext: { ...state.ext }, ...extra })
+}
+
+/**
  * Resolve one DOI to the ordered candidate list (URL + source + merged meta),
  * following the documented chain. Never downloads; the caller does that.
  */
 export async function resolveChain(ctx: ChainContext): Promise<{ candidates: SourceResolution[]; sourcesTried: readonly string[]; meta: PaperMeta; ext: Record<string, string> }> {
-  const sourcesTried: string[] = []
-  const candidates: SourceResolution[] = []
-  const meta: PaperMeta = {}
-  let ext: Record<string, string> = {}
+  const state: ChainState = { meta: {}, ext: {}, candidates: [], sourcesTried: [] }
+  await stepUnpaywall(ctx, state)
+  await stepSemanticScholar(ctx, state)
+  await stepArxiv(ctx, state)
+  await stepPmc(ctx, state)
+  await stepBiorxiv(ctx, state)
+  return { candidates: state.candidates, sourcesTried: state.sourcesTried, meta: state.meta, ext: state.ext }
+}
 
-  const mergeMeta = (m: PaperMeta | undefined): void => {
-    if (!m) return
-    if (m.title && !meta.title) meta.title = m.title
-    if (m.year !== undefined && m.year !== null && meta.year === undefined) meta.year = m.year
-    if (m.author && !meta.author) meta.author = m.author
-    if (m.journal && !meta.journal) meta.journal = m.journal
+// Each step is a named function over (ctx, state) so the ordering dependency is
+// explicit (the driver awaits them in sequence) and each source is testable in
+// isolation through the shared state.
+
+/** 1. Unpaywall (requires email). */
+async function stepUnpaywall(ctx: ChainContext, state: ChainState): Promise<void> {
+  if (!ctx.email) {
+    state.sourcesTried.push('unpaywall skipped (no email)')
+    return
   }
-
-  const add = (source: string, pdfUrl: string | undefined, extra?: Partial<SourceResolution>): void => {
-    if (!pdfUrl) return
-    if (candidates.some((c) => c.pdfUrl === pdfUrl)) return
-    candidates.push({ source, pdfUrl, meta: { ...meta }, ext: { ...ext }, ...extra })
-  }
-
-  // 1. Unpaywall (requires email)
-  if (ctx.email) {
-    sourcesTried.push('unpaywall')
-    try {
-      const up = await unpaywallResolve(ctx.doi, ctx.email, ctx.timeoutMs, ctx.signal)
-      if (up) {
-        mergeMeta(up.meta)
-        for (const c of up.candidates) add(c.source, c.pdfUrl)
-      }
-    } catch {
-      // transport failure — recorded implicitly by the caller via sourcesTried
+  state.sourcesTried.push('unpaywall')
+  try {
+    const up = await unpaywallResolve(ctx.doi, ctx.email, ctx.timeoutMs, ctx.signal)
+    if (up) {
+      mergeMeta(state, up.meta)
+      for (const c of up.candidates) addCandidate(state, c.source, c.pdfUrl)
     }
-  } else {
-    sourcesTried.push('unpaywall skipped (no email)')
+  } catch (e) {
+    // A 404 is a normal miss; anything else is a resolver/transport failure
+    // worth distinguishing from "skipped" in the envelope.
+    if (!isNotFound(e)) state.sourcesTried.push('unpaywall_error')
   }
+}
 
-  // 2. Semantic Scholar: pdf + externalIds + meta
+/** 2. Semantic Scholar: pdf + externalIds + meta. */
+async function stepSemanticScholar(ctx: ChainContext, state: ChainState): Promise<void> {
   let s2Pdf: string | undefined
   let s2Ext: Record<string, string> = {}
   try {
     const d = await getPaper(ctx.s2, `DOI:${ctx.doi}`, 'title,year,authors,openAccessPdf,externalIds,venue')
     s2Pdf = d.openAccessPdf?.url
     s2Ext = d.externalIds ?? {}
-    mergeMeta({ title: d.title, year: d.year, author: d.authors?.[0]?.name, journal: d.venue })
-  } catch {
-    // 404 / transport: continue with other sources
+    mergeMeta(state, { title: d.title, year: d.year, author: d.authors?.[0]?.name, journal: d.venue })
+  } catch (e) {
+    // 404 = no S2 record (common for arXiv-only preprints) — a normal miss.
+    // Any other failure is surfaced distinctly so the envelope shows the
+    // resolver errored rather than merely finding nothing.
+    if (!isNotFound(e)) state.sourcesTried.push('semantic_scholar_error')
   }
-  if (Object.keys(s2Ext).length) ext = { ...ext, ...s2Ext }
+  if (Object.keys(s2Ext).length) state.ext = { ...state.ext, ...s2Ext }
   // S2 sometimes reports a landing / DOI-resolver link as `openAccessPdf.url`
   // (e.g. https://doi.org/…), which is NOT a direct PDF. Skip those so we don't
   // burn a download attempt on a page that can only fail the %PDF gate — the
   // real OA copy is usually reachable via the Europe PMC / PMC / arXiv steps.
   if (s2Pdf && !DOI_LANDING_URL_RE.test(s2Pdf)) {
-    sourcesTried.push('semantic_scholar')
-    add('semantic_scholar', s2Pdf)
+    state.s2Pdf = s2Pdf
+    state.sourcesTried.push('semantic_scholar')
+    addCandidate(state, 'semantic_scholar', s2Pdf)
   }
+}
 
+/** 3. arXiv: metadata enrichment + candidate. Also recovers an arXiv id from a
+ * synthesized 10.48550/arXiv.<id> DOI (S2 does not index that form). */
+async function stepArxiv(ctx: ChainContext, state: ChainState): Promise<void> {
   // Synthesized arXiv DOI form; S2 does not index it — recover from the DOI.
-  if (!ext.ArXiv && ctx.doi.toLowerCase().startsWith(ARXIV_DOI_PREFIX)) {
-    ext.ArXiv = ctx.doi.slice(ARXIV_DOI_PREFIX.length)
+  if (!state.ext.ArXiv && ctx.doi.toLowerCase().startsWith(ARXIV_DOI_PREFIX)) {
+    state.ext.ArXiv = ctx.doi.slice(ARXIV_DOI_PREFIX.length)
   }
-
-  // 3. arXiv
-  if (ext.ArXiv) {
-    // Backfill sparse metadata from arXiv's own export API (Atom feed) — once.
-    // A DOI synthesized as 10.48550/arXiv.<id>, or an S2 externalId ArXiv, often
-    // maps to a paper S2 has no (or a sparse) record for, so fill title / first
-    // author / published year from the primary arXiv source when they are still
-    // empty. Merge only complements existing values (mergeMeta).
-    if (!meta.title || !meta.author || meta.year === undefined) {
-      const am = await arxivMetaEnrich(ext.ArXiv, ctx.timeoutMs, ctx.signal)
-      if (am) mergeMeta(am)
-    }
-    sourcesTried.push('arxiv')
-    add('arxiv', arxivPdfUrl(ext.ArXiv))
+  const arxivId = state.ext.ArXiv
+  if (!arxivId) return
+  // Backfill sparse metadata from arXiv's own export API (Atom feed) — once.
+  // A DOI synthesized as 10.48550/arXiv.<id>, or an S2 externalId ArXiv, often
+  // maps to a paper S2 has no (or a sparse) record for, so fill title / first
+  // author / published year from the primary arXiv source when they are still
+  // empty. Merge only complements existing values (mergeMeta).
+  if (!state.meta.title || !state.meta.author || state.meta.year === undefined) {
+    const am = await arxivMetaEnrich(arxivId, ctx.timeoutMs, ctx.signal)
+    if (am) mergeMeta(state, am)
   }
+  state.sourcesTried.push('arxiv')
+  addCandidate(state, 'arxiv', arxivPdfUrl(arxivId))
+}
 
+/** 4. Europe PMC first (bypasses NCBI's JS challenge), then PMC. */
+async function stepPmc(_ctx: ChainContext, state: ChainState): Promise<void> {
   // PMCID may be in externalIds or recoverable from an S2 PDF url.
-  let pmcid = ext.PubMedCentral
+  let pmcid = state.ext.PubMedCentral
   if (!pmcid) {
-    const m = /\/pmc\/articles\/(PMC\d+)/i.exec(s2Pdf ?? '')
+    const m = /\/pmc\/articles\/(PMC\d+)/i.exec(state.s2Pdf ?? '')
     if (m?.[1]) pmcid = m[1]
   }
+  if (!pmcid) return
+  state.sourcesTried.push('europe_pmc', 'pmc')
+  addCandidate(state, 'europe_pmc', `https://europepmc.org/articles/${pmcid}?pdf=render`)
+  addCandidate(state, 'pmc', `https://www.ncbi.nlm.nih.gov/pmc/articles/${pmcid}/pdf/`)
+}
 
-  // 4. Europe PMC first (bypasses NCBI's JS challenge), then PMC
-  if (pmcid) {
-    sourcesTried.push('europe_pmc', 'pmc')
-    add('europe_pmc', `https://europepmc.org/articles/${pmcid}?pdf=render`)
-    add('pmc', `https://www.ncbi.nlm.nih.gov/pmc/articles/${pmcid}/pdf/`)
+/** 5. bioRxiv / medRxiv (10.1101 only). */
+async function stepBiorxiv(ctx: ChainContext, state: ChainState): Promise<void> {
+  if (!ctx.doi.startsWith(BIORXIV_DOI_PREFIX)) return
+  state.sourcesTried.push('biorxiv')
+  try {
+    const bx = await biorxivResolve(ctx.doi, ctx.timeoutMs, ctx.signal)
+    if (bx) addCandidate(state, 'biorxiv', bx)
+  } catch (e) {
+    if (!isNotFound(e)) state.sourcesTried.push('biorxiv_error')
   }
-
-  // 5. bioRxiv / medRxiv (10.1101 only)
-  if (ctx.doi.startsWith(BIORXIV_DOI_PREFIX)) {
-    sourcesTried.push('biorxiv')
-    try {
-      const bx = await biorxivResolve(ctx.doi, ctx.timeoutMs, ctx.signal)
-      if (bx) add('biorxiv', bx)
-    } catch {
-      // ignore
-    }
-  }
-
-  return { candidates, sourcesTried, meta, ext }
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +343,7 @@ export async function arxivMetaEnrich(arxivId: string, timeoutMs: number, signal
 }
 
 /** Unpaywall v2: collect OA PDF candidates from every OA location. */
-async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ candidates: Array<{ source: 'unpaywall'; pdfUrl: string }>; meta: PaperMeta } | undefined> {
+export async function unpaywallResolve(doi: string, email: string, timeoutMs: number, signal?: AbortSignal): Promise<{ candidates: Array<{ source: 'unpaywall'; pdfUrl: string }>; meta: PaperMeta } | undefined> {
   const d = await jsonGet(`https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(email)}`, timeoutMs, signal)
   const meta: PaperMeta = {
     title: d.title,
@@ -336,7 +378,7 @@ async function unpaywallResolve(doi: string, email: string, timeoutMs: number, s
   return { candidates, meta }
 }
 
-async function biorxivResolve(doi: string, timeoutMs: number, signal?: AbortSignal): Promise<string | undefined> {
+export async function biorxivResolve(doi: string, timeoutMs: number, signal?: AbortSignal): Promise<string | undefined> {
   for (const server of ['biorxiv', 'medrxiv']) {
     try {
       const d = await jsonGet(`https://api.biorxiv.org/details/${server}/${doi}`, timeoutMs, signal)
@@ -375,10 +417,14 @@ const TITLE_GAP_MIN = 3
  * accept the match — Crossref's fuzzy title search can surface a different paper
  * that still clears TITLE_SCORE_MIN, so we also require the titles to look alike. */
 const TITLE_SIMILARITY_MIN = 0.5
+/** How many Crossref candidate rows to request for the gap/ambiguity check. */
+const CROSSREF_ROW_COUNT = 3
+/** Anything but alphanumerics/whitespace is a token boundary (title similarity). */
+const NON_TOKEN_RE = /[^a-z0-9\s]/g
 
 /** Normalized token set (lowercase, alphanumeric) for title similarity. */
 function titleTokens(s: string): Set<string> {
-  return new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean))
+  return new Set(s.toLowerCase().replace(NON_TOKEN_RE, ' ').split(/\s+/).filter(Boolean))
 }
 
 /** Jaccard similarity between two titles (0..1). Exact/close titles -> high. */
@@ -390,6 +436,44 @@ function titleSimilarity(a: string, b: string): number {
   for (const t of A) if (B.has(t)) inter++
   const union = A.size + B.size - inter
   return union ? inter / union : 0
+}
+
+/** Confidence verdict from Crossref's top-match evidence. */
+interface CrossrefConfidence {
+  lowConfidence: boolean
+  reason?: TitleResolution['lowConfidenceReason']
+}
+
+/** Decide the confidence flags from the Crossref top match. A `title_mismatch`
+ * means the top hit is a DIFFERENT paper, so it is always low-confidence and
+ * its DOI must never be handed back (see resolveTitle pass 3). */
+function confidenceFrom(e: { crScore?: number; crGap?: number; crSimilar: number; hasTop: boolean }): CrossrefConfidence {
+  if (!e.hasTop) return { lowConfidence: true, reason: 'no_match' }
+  if (e.crSimilar < TITLE_SIMILARITY_MIN) return { lowConfidence: true, reason: 'title_mismatch' }
+  if (e.crScore !== undefined && e.crScore < TITLE_SCORE_MIN) return { lowConfidence: true, reason: 'score_below_threshold' }
+  if (e.crGap !== undefined && e.crGap < TITLE_GAP_MIN) return { lowConfidence: true, reason: 'ambiguous_runner_up' }
+  return { lowConfidence: false }
+}
+
+/** Build one `TitleResolution` from a passing branch's evidence. */
+function mkResolution(
+  query: string,
+  resolver: TitleResolution['resolver'],
+  tried: readonly string[],
+  e: { doi: string; title?: string; score?: number; candidates: unknown[]; confidence: CrossrefConfidence },
+): TitleResolution {
+  const r: TitleResolution = {
+    query,
+    resolver,
+    resolversTried: tried,
+    resolvedDoi: e.doi,
+    resolvedTitle: e.title,
+    candidates: e.candidates,
+    lowConfidence: e.confidence.lowConfidence,
+  }
+  if (e.score !== undefined) r.matchScore = e.score
+  if (e.confidence.reason) r.lowConfidenceReason = e.confidence.reason
+  return r
 }
 
 /** Resolve a paper title to a DOI. Crossref primary, S2 match fallback. */
@@ -408,7 +492,7 @@ export async function resolveTitle(
   let crCandidates: any[] = []
   let crTop: any
   try {
-    const params = new URLSearchParams({ 'query.title': q, rows: '3', select: 'DOI,title,score,author,issued,container-title' })
+    const params = new URLSearchParams({ 'query.title': q, rows: String(CROSSREF_ROW_COUNT), select: 'DOI,title,score,author,issued,container-title' })
     if (ctx.email) params.set('mailto', ctx.email)
     const d = await jsonGet(`https://api.crossref.org/works?${params.toString()}`, ctx.timeoutMs, ctx.signal)
     crCandidates = ((d.message ?? {}).items ?? []).map((it: any) => {
@@ -432,29 +516,18 @@ export async function resolveTitle(
     ? crScore - crCandidates[1].score
     : undefined
   const crSimilar = crTop?.title ? titleSimilarity(q, crTop.title) : 0
-  const crLowReason: string | undefined = crTop?.doi
-    ? crSimilar < TITLE_SIMILARITY_MIN
-      ? 'title_mismatch'
-      : crScore !== undefined && crScore < TITLE_SCORE_MIN
-        ? 'score_below_threshold'
-        : crGap !== undefined && crGap < TITLE_GAP_MIN
-          ? 'ambiguous_runner_up'
-          : undefined
-    : 'no_match'
+  const confidence = confidenceFrom({ crScore, crGap, crSimilar, hasTop: Boolean(crTop?.doi) })
 
-  if (crTop?.doi && !crLowReason) {
+  if (crTop?.doi && !confidence.lowConfidence) {
     return {
       doi: crTop.doi,
-      resolution: {
-        query: q,
-        resolver: 'crossref',
-        resolversTried,
-        resolvedDoi: crTop.doi,
-        resolvedTitle: crTop.title,
-        matchScore: crScore,
+      resolution: mkResolution(q, 'crossref', resolversTried, {
+        doi: crTop.doi,
+        title: crTop.title,
+        score: crScore,
         candidates: crCandidates,
-        lowConfidence: false,
-      },
+        confidence,
+      }),
     }
   }
 
@@ -470,16 +543,15 @@ export async function resolveTitle(
       if (doi) {
         return {
           doi,
-          resolution: {
-            query: q,
-            resolver: 'semantic_scholar',
-            resolversTried,
-            resolvedDoi: doi,
-            resolvedTitle: top.title,
+          resolution: mkResolution(q, 'semantic_scholar', resolversTried, {
+            doi,
+            title: top.title,
             candidates: crCandidates.length ? crCandidates : [{ title: top.title, doi }],
-            lowConfidence: false,
-            ...(crTop?.doi ? { lowConfidenceReason: crLowReason } : {}),
-          } as TitleResolution,
+            // Preserve the original quirk: an S2 hit reports the Crossref
+            // low-confidence reason when a Crossref candidate existed, even
+            // though the S2 match itself is accepted (lowConfidence: false).
+            confidence: { lowConfidence: false, reason: crTop?.doi ? confidence.reason : undefined },
+          }),
         }
       }
     }
@@ -491,20 +563,16 @@ export async function resolveTitle(
   // title-matches: a `title_mismatch` is a DIFFERENT paper (Crossref's fuzzy
   // search can surface one), so never hand back its DOI — report it unresolved
   // so the caller can ask the user for a DOI instead.
-  if (crTop?.doi && crLowReason !== 'title_mismatch') {
+  if (crTop?.doi && confidence.reason !== 'title_mismatch') {
     return {
       doi: crTop.doi,
-      resolution: {
-        query: q,
-        resolver: 'crossref',
-        resolversTried,
-        resolvedDoi: crTop.doi,
-        resolvedTitle: crTop.title,
-        matchScore: crScore,
+      resolution: mkResolution(q, 'crossref', resolversTried, {
+        doi: crTop.doi,
+        title: crTop.title,
+        score: crScore,
         candidates: crCandidates,
-        lowConfidence: true,
-        lowConfidenceReason: crLowReason,
-      },
+        confidence,
+      }),
     }
   }
 
@@ -513,7 +581,7 @@ export async function resolveTitle(
     resolution: {
       ...empty,
       lowConfidence: true,
-      lowConfidenceReason: crTop?.doi ? crLowReason ?? 'no_match' : 'no_match',
+      lowConfidenceReason: crTop?.doi ? confidence.reason ?? 'no_match' : 'no_match',
     },
   }
 }
