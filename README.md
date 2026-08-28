@@ -1,8 +1,7 @@
 # dsh-scholar-find
 
-A plugin for **DeepSeek Harness (DSH)** that gives the model tools for
-academic paper research: search the literature, fetch open-access PDFs,
-and convert PDFs to Markdown — all from the chat.
+A plugin for **DeepSeek Harness (DSH)**: search academic literature, fetch
+open-access PDFs, and convert PDFs to Markdown — all from the chat.
 
 ## What you get
 
