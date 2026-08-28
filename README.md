@@ -3,40 +3,32 @@
 A plugin for **DeepSeek Harness (DSH)**: search academic literature, fetch
 open-access PDFs, and convert PDFs to Markdown — all from the chat.
 
-## What you get
+## Features
 
-**`scholar_search_*`** — search the literature: papers, citations,
-authors, recommendations, and full-text snippets.
+- **Search** — papers, citations, authors, recommendations, and full-text
+  snippets (`scholar_search_*`).
+- **Fetch** — find and download open-access PDFs, individually or in bulk,
+  and convert PDFs to Markdown (`paper_fetch_*`). Open-access sources only —
+  no paywall workarounds.
 
-**`paper_fetch_*`** — get the papers: find and download open-access PDFs
-(individually or in bulk), and convert them to Markdown. Open-access
-sources only — no paywall workarounds.
-
-## Install
+## Installation
 
 ```bash
 npm run build
 dsh plugin --profile web add .
 ```
 
-Then restart the deployment.
+Restart the deployment afterwards.
 
-## Use
+## Usage
 
-- Give the model a **topic** → it searches, then fetches the papers it finds.
-- Give it **DOIs** → it downloads them straight away.
-- **Prefer DOIs over titles** — resolving a title can match the wrong paper.
-
-## Configuration
-
-Open **Settings → Plugins → Plugin configuration** in the DSH Web UI:
-
-- `unpaywallEmail` — your email (recommended).
-- `s2ApiKeyRef` / `astaApiKeyRef` — optional API keys.
-- `proxyUrl` — set if you fetch behind a proxy (e.g. `http://127.0.0.1:10808`).
-- `pdfOutputDir` — where PDFs are saved (default `scholar-pdfs`).
-
-Everything else has safe defaults.
+- Name a **topic** — the assistant searches, then fetches what it finds.
+- Give **DOIs** — they download straight away. Prefer DOIs over titles:
+  a title can match the wrong paper.
+- Set it up in **Settings → Plugins → Plugin configuration**: your email
+  (`unpaywallEmail`), optional API keys, a `proxyUrl` if you are behind a
+  proxy, and a `pdfOutputDir` (default `scholar-pdfs`). Everything else has
+  safe defaults.
 
 ## References
 
