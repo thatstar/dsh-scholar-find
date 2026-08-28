@@ -42,28 +42,22 @@ export function apply(ctx: Context): void {
   // 2. Tools ----------------------------------------------------------------
   const tools = ctx.get('tools')
   if (tools) {
+    // The keys never live in the settings section: the section carries a
+    // credential reference (record name) and the value is resolved from the DSH
+    // credentials domain. Fail-closed to anonymous, but logged so a mis-typed
+    // ref is audible (the card surfaces the same state).
+    const resolveCredential = (field: 's2ApiKeyRef' | 'astaApiKeyRef', defaultRef: string, label: string) => async (): Promise<string | undefined> => {
+      const refName = source()[field].trim() || defaultRef
+      return bestEffort(`${label} api key resolve`, async () => {
+        const credentials = ctx.get('credentials')
+        if (!credentials) return undefined
+        return (await credentials.resolve(credentialRef(refName)))?.value
+      })
+    }
     applyScholarTools(ctx, {
       settings: () => source(),
-      resolveApiKey: async () => {
-        // The key never lives in the settings section: the section carries a
-        // credential reference (record name), and the value is resolved from
-        // the DSH credentials domain. Fail-closed to anonymous, but logged so a
-        // mis-typed ref is audible (the card surfaces the same state).
-        const refName = source().s2ApiKeyRef.trim() || DEFAULT_S2_KEY_REF
-        return bestEffort('s2 api key resolve', async () => {
-          const credentials = ctx.get('credentials')
-          if (!credentials) return undefined
-          return (await credentials.resolve(credentialRef(refName)))?.value
-        })
-      },
-      resolveAstaKey: async () => {
-        const refName = source().astaApiKeyRef.trim() || DEFAULT_ASTA_KEY_REF
-        return bestEffort('asta api key resolve', async () => {
-          const credentials = ctx.get('credentials')
-          if (!credentials) return undefined
-          return (await credentials.resolve(credentialRef(refName)))?.value
-        })
-      },
+      resolveApiKey: resolveCredential('s2ApiKeyRef', DEFAULT_S2_KEY_REF, 's2'),
+      resolveAstaKey: resolveCredential('astaApiKeyRef', DEFAULT_ASTA_KEY_REF, 'asta'),
     })
   }
 

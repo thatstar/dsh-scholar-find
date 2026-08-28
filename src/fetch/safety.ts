@@ -20,6 +20,9 @@ const BLOCKED_HOSTS = new Set([
   'metadata',
 ])
 
+/** Standard ports the SSRF gate allows (everything else is refused). */
+const SAFE_PORTS = new Set(['80', '443'])
+
 /** Reasons one URL was refused. */
 export type SafetyReason =
   | 'malformed_url'
@@ -43,7 +46,7 @@ export function isSafeUrl(url: string): { ok: boolean; reason?: SafetyReason } {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { ok: false, reason: 'scheme_not_allowed' }
   }
-  if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
+  if (parsed.port && !SAFE_PORTS.has(parsed.port)) {
     return { ok: false, reason: 'port_not_allowed' }
   }
   const host = parsed.hostname.toLowerCase()
@@ -143,9 +146,12 @@ export async function fetchWithRedirects(
   throw err
 }
 
+/** The `%PDF` magic bytes every PDF starts with. */
+const PDF_MAGIC: readonly number[] = [0x25, 0x50, 0x44, 0x46]
+
 /** True when the bytes start with the `%PDF` magic marker. */
 export function looksLikePdf(bytes: Uint8Array): boolean {
-  return bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46
+  return bytes.length >= PDF_MAGIC.length && PDF_MAGIC.every((b, i) => bytes[i] === b)
 }
 
 /** Read a response body up to `cap` bytes; null when it exceeds the cap. */

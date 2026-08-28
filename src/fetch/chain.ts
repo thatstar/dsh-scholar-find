@@ -24,7 +24,7 @@ const BIORXIV_DOI_PREFIX = '10.1101/'
 const DOI_LANDING_URL_RE = /^https?:\/\/(www\.|dx\.)?doi\.org\//i
 
 /** The canonical arXiv DOI for an arXiv id (10.48550/arXiv.<id>). */
-export function arxivDoi(arxivId: string): string {
+function arxivDoi(arxivId: string): string {
   return `10.48550/arXiv.${arxivId}`
 }
 
@@ -230,7 +230,7 @@ async function jsonGet(url: string, timeoutMs: number, signal?: AbortSignal, hea
 }
 
 /** Extract an arXiv id from an arXiv abs/pdf URL (tolerates a stray `arXiv:` token). */
-export function arxivIdFromUrl(url: string): string | undefined {
+function arxivIdFromUrl(url: string): string | undefined {
   const m = /arxiv\.org\/(?:abs|pdf)\/([^/?#]+)/i.exec(url)
   if (!m?.[1]) return undefined
   const id = m[1].replace(/^arXiv:/i, '')
@@ -580,6 +580,8 @@ export async function resolveTitle(
     doi: undefined,
     resolution: {
       ...empty,
+      // Snapshot: do not alias the (now-mutated) live resolversTried array.
+      resolversTried: [...resolversTried],
       lowConfidence: true,
       lowConfidenceReason: crTop?.doi ? confidence.reason ?? 'no_match' : 'no_match',
     },

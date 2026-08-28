@@ -8,8 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { ScholarSettings } from '../settings.js'
-import { createScholarClient, type ScholarClient } from '../s2/client.js'
+import { SEARCH_RESULT_CAP, type ScholarSettings } from '../settings.js'
 import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
@@ -92,9 +91,9 @@ interface WebServiceLike {
   search(req: { query: string; maxResults?: number }, signal?: AbortSignal): Promise<{ sources?: Array<{ url: string; title?: string; snippet?: string }> }>
 }
 
-function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s2: ScholarClient; fetch: FetchRuntime } {
+function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s2: s2.ScholarClient; fetch: FetchRuntime } {
   const settings = env.settings()
-  const s2Client = createScholarClient({
+  const s2Client = s2.createScholarClient({
     apiKey: env.resolveApiKey,
     minGapMs: settings.s2RequestGapMs,
     timeoutMs: settings.fetchTimeoutSec * 1000,
@@ -219,7 +218,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const { s2: client } = runtimeOf(ctx, env, exec)
       const query = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
       const strategy = args.includeTldr ? 'relevance' : 'bulk'
-      const maxResults = Math.min(args.maxResults ?? env.settings().maxResultsPerSearch, 100)
+      const maxResults = Math.min(args.maxResults ?? env.settings().maxResultsPerSearch, SEARCH_RESULT_CAP)
       const papers = args.includeTldr
         ? await s2.searchRelevance(client, query, {
             maxResults,
@@ -447,7 +446,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
   register(defineTool({
     name: 'scholar_search_authors',
     description: `Find researchers by name (affiliations, paper count, citations, h-index). Disambiguate common names by affiliation before using scholar_get_author.`,
-    parameters: { query: { type: 'string', description: 'Author name', required: true }, maxResults: { type: 'integer', description: 'Result cap (default 20)' } },
+    parameters: { query: { type: 'string', description: 'Author name', required: true }, maxResults: { type: 'integer', description: `Result cap (default ${s2.DEFAULT_AUTHORS}, max ${s2.S2_AUTHOR_SEARCH_MAX})` } },
     output: {
       schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, authors: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
       render(_args, value: any) {

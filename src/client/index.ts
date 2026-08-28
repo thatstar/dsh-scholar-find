@@ -30,8 +30,9 @@ export const inject = ['slots', 'settingsScope', 'locale'] as const
  * Fields the card edits — kept in sync with the host-side settings schema. The
  * two `secret`-kind entries are write-only key controls: they write the literal
  * to the **DSH credentials domain** (`api.credentials.set`) and clear the box.
- * The record name they write to is the schema-default `credential-ref` (e.g.
- * `S2_API_KEY` / `ASTA_API_KEY`), which is not exposed as a separate field.
+ * The record name they write to is the schema-default `credential-ref`
+ * (`DEFAULT_S2_KEY_REF` / `DEFAULT_ASTA_KEY_REF` from refs.ts), which is not
+ * exposed as a separate field.
  */
 const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'unpaywallEmail', kind: 'text' },

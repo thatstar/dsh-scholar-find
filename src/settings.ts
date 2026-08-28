@@ -13,6 +13,11 @@ import { DEFAULT_ASTA_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 /** Settings namespace of this plugin. */
 export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
 
+/** Hard ceiling for one search call (S2 returns at most 100 per page; the tool
+ * clamp and the settings validator share this so the two boundaries cannot
+ * drift). */
+export const SEARCH_RESULT_CAP = 100
+
 /** The resolved settings value (schema-applied defaults). */
 export interface ScholarSettings {
   unpaywallEmail: string
@@ -54,9 +59,11 @@ export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
 export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   /** Unpaywall contact email; also sent as Crossref `mailto`. Empty -> Unpaywall skipped. */
   unpaywallEmail: z.string().default(DEFAULT_SCHOLAR_SETTINGS.unpaywallEmail),
-  /** DSH credential reference (record name in ~/.dsh/.credentials.yaml, e.g. `S2_API_KEY`). Empty -> anonymous. */
+  /** DSH credential reference (record name in ~/.dsh/.credentials.yaml; default
+   * `DEFAULT_S2_KEY_REF` from refs.ts). Empty -> anonymous. */
   s2ApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.s2ApiKeyRef),
-  /** DSH credential reference for the Ai2 Asta corpus MCP key (e.g. `ASTA_API_KEY`). */
+  /** DSH credential reference for the Ai2 Asta corpus MCP key (default
+   * `DEFAULT_ASTA_KEY_REF` from refs.ts). */
   astaApiKeyRef: z.string().role('credential-ref').default(DEFAULT_SCHOLAR_SETTINGS.astaApiKeyRef),
   /** Operator opt-in for the CloakBrowser fallback (Cloudflare/WAF-gated PDFs). */
   cloakEnabled: z.boolean().default(DEFAULT_SCHOLAR_SETTINGS.cloakEnabled),
@@ -94,7 +101,7 @@ export function assertServiceableScholarSettings(config: ScholarSettings): void 
   if (!Number.isFinite(config.s2RequestGapMs) || config.s2RequestGapMs < 0) {
     throw new Error('dsh-scholar-find: s2RequestGapMs must be a non-negative finite number')
   }
-  if (config.maxResultsPerSearch > 100) {
-    throw new Error('dsh-scholar-find: maxResultsPerSearch must be no greater than 100 (the per-call cap)')
+  if (config.maxResultsPerSearch > SEARCH_RESULT_CAP) {
+    throw new Error(`dsh-scholar-find: maxResultsPerSearch must be no greater than ${SEARCH_RESULT_CAP} (the per-call cap)`)
   }
 }
