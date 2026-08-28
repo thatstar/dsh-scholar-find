@@ -1,7 +1,7 @@
 /**
  * Downloading and library bookkeeping: deterministic filenames,
  * skip-existing, `%PDF` + size validation through the safety gate, and the
- * idempotency sidecar (`<out>/.paper-fetch-idem/<sha256>.json`).
+ * idempotency sidecar (`<out>/.dsh-scholar-idem/<sha256>.json`).
  * @module dsh-scholar-find/fetch-download
  */
 
@@ -137,7 +137,7 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
 
 function idemPath(outDir: string, key: string): string {
   const safe = createHash('sha256').update(key).digest('hex')
-  return join(outDir, '.paper-fetch-idem', `${safe}.json`)
+  return join(outDir, '.dsh-scholar-idem', `${safe}.json`)
 }
 
 export async function idemLoad(outDir: string, key: string): Promise<unknown | undefined> {

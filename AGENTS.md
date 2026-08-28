@@ -49,6 +49,11 @@ toggle, proxy, output directory, …) in the **DSH Web UI: Settings → 插件 (
   | [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill) | S2 REST endpoint semantics, query/filter vocabulary, result presentation conventions |
   | [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Source-chain ordering, safety requirements (SSRF gate, `%PDF` check, size cap), agent-facing result envelope design |
 
+  Only the *patterns* are borrowed, not the implementation: this plugin ships
+  **no `paper-fetch` CLI binary** — its retry hints (`envelope.next`) name the
+  DSH tools (`paper_fetch_batch` / `paper_fetch_download`), and the idempotency
+  sidecar lives in `.dsh-scholar-idem/` (not the reference's `.paper-fetch-idem/`).
+
   Research clones may live in `.research-tmp/` (git-ignored) for consultation;
   they are disposable and never part of the shipped plugin.
 

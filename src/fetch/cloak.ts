@@ -23,7 +23,7 @@ import { homedir } from 'node:os'
 import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 import { sleep } from '../util/async.js'
 
-/** Cap on how long the challenge-clear poll runs (mirrors the reference tool). */
+/** Cap on how long the challenge-clear poll runs before giving up. */
 const CHALLENGE_CLEAR_MAX_MS = 40_000
 /** Delay between challenge-clear polls. */
 const CHALLENGE_POLL_MS = 1000
@@ -145,7 +145,7 @@ async function cloakFetchRaw(url: string, timeoutMs: number, maxBytes: number, p
     }
     // Poll until the Cloudflare/DataDome/DDoS-Guard interstitial clears: the
     // challenge shows "Just a moment…"/"DDoS-Guard"/"Loading" before the real
-    // page. Treat those as not-ready. Deadline mirrors the reference tool.
+    // page. Treat those as not-ready; the deadline caps the wait.
     const deadline = Date.now() + Math.min(timeoutMs, CHALLENGE_CLEAR_MAX_MS)
     let title = ''
     while (Date.now() < deadline) {
