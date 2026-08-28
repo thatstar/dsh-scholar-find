@@ -1,8 +1,8 @@
 # dsh-scholar-find
 
 A plugin for **DeepSeek Harness (DSH)** that gives the model tools for
-academic paper research. Search the literature with Semantic Scholar, fetch
-open-access PDFs, and convert PDFs to Markdown — all from the chat.
+academic paper research: search the literature, fetch open-access PDFs,
+and convert PDFs to Markdown — all from the chat.
 
 ## What you get
 
@@ -16,10 +16,11 @@ sources only — no paywall workarounds.
 ## Install
 
 ```bash
-npm run build                          # build lib/ once
-dsh plugin --profile web add .         # install into the web profile
-# then restart the deployment
+npm run build
+dsh plugin --profile web add .
 ```
+
+Then restart the deployment.
 
 ## Use
 
@@ -29,22 +30,16 @@ dsh plugin --profile web add .         # install into the web profile
 
 ## Configuration
 
-Open **Settings → Plugins → Plugin configuration** in the DSH Web UI
-(namespace `dsh-scholar-find`). The essentials:
+Open **Settings → Plugins → Plugin configuration** in the DSH Web UI:
 
-- `unpaywallEmail` — your email; enables the Unpaywall source (recommended).
-- `s2ApiKeyRef` / `astaApiKeyRef` — optional API keys, entered on the card
-  and stored in DSH key management.
-- `proxyUrl` — set it if you fetch behind a proxy (e.g. `http://127.0.0.1:10808`).
+- `unpaywallEmail` — your email (recommended).
+- `s2ApiKeyRef` / `astaApiKeyRef` — optional API keys.
+- `proxyUrl` — set if you fetch behind a proxy (e.g. `http://127.0.0.1:10808`).
 - `pdfOutputDir` — where PDFs are saved (default `scholar-pdfs`).
 
 Everything else has safe defaults.
 
 ## References
-
-This is an independent, clean-room TypeScript implementation built on the
-public HTTP APIs. Two projects were consulted for API semantics and UX
-conventions only (never vendored or copied):
 
 - [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill)
 - [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch)
