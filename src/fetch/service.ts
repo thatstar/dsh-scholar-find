@@ -341,13 +341,12 @@ export async function fetchBatch(rt: FetchRuntime, dois: readonly string[], opts
   const succeeded = results.filter((r) => r.success).length
   const ok: boolean | 'partial' = succeeded === results.length ? true : succeeded === 0 ? false : 'partial'
   const failed = results.filter((r) => !r.success)
-  // A pasteable re-run command. DOIs contain no spaces, so for several failures
-  // a single space-separated `--batch` command is shell-safe (no printf/\n
-  // escaping, which would print literal backslash-n when pasted).
+  // Model-actionable retry hint: there is NO `paper-fetch` CLI — the retry path
+  // is the `paper_fetch_batch` DSH tool (or paper_fetch_download for one DOI).
+  // A fresh idempotencyKey (or overwrite: true) is needed to actually re-download;
+  // reusing the batch's key would replay the cached (failed) envelope.
   const next = failed.length
-    ? failed.length === 1
-      ? [`paper-fetch ${failed[0]!.doi} --out ${outDir}`]
-      : [`paper-fetch --batch ${failed.map((r) => r.doi).join(' ')} --out ${outDir}`]
+    ? [`Retry with paper_fetch_batch (dois: ${failed.map((r) => r.doi).join(', ')}; use a new idempotencyKey or overwrite to re-download)`]
     : []
 
   const envelope = {
