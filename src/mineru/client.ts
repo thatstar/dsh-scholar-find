@@ -17,6 +17,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { pluginFetch } from '../fetch/transport.js'
+import { sleep } from '../util/async.js'
 
 const MINERU_BASE = 'https://mineru.net'
 const PARSE_URL = `${MINERU_BASE}/api/v1/agent/parse/url`
@@ -39,10 +40,6 @@ interface MineruEnvelope {
     err_msg?: string
     err_code?: number
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function json<T = MineruEnvelope>(res: Response): Promise<T> {
@@ -82,7 +79,7 @@ async function pollTask(taskId: string, timeoutMs: number, signal?: AbortSignal)
       return md
     }
     if (state === 'failed') throw new Error(`mineru: ${env.data?.err_msg ?? 'parse failed'}${env.data?.err_code ? ` (${env.data.err_code})` : ''}`)
-    await sleep(POLL_INTERVAL_MS)
+    await sleep(POLL_INTERVAL_MS, signal)
   }
   throw new Error('mineru: poll timeout')
 }

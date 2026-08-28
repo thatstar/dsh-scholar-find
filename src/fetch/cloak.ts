@@ -21,6 +21,7 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
+import { sleep } from '../util/async.js'
 
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 /** Cap on how long the challenge-clear poll runs (mirrors the reference tool). */
@@ -182,9 +183,4 @@ async function cloakFetchRaw(url: string, timeoutMs: number, proxyUrl?: string):
  */
 export async function cloakFetchPdf(url: string, timeoutMs: number, proxyUrl?: string): Promise<CloakResult> {
   return cloakFetchRaw(url, timeoutMs, proxyUrl)
-}
-
-/** Promise-based setTimeout for the challenge-clear polling loop. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }

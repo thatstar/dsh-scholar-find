@@ -10,6 +10,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fetchWithRedirects, looksLikePdf, readBodyCapped } from './safety.js'
 import { cloakFetchPdf } from './cloak.js'
+import { timedFetch } from './transport.js'
+import { sleep } from '../util/async.js'
 import type { PaperMeta } from './chain.js'
 
 /** Max length for the title portion of the canonical filename. */
@@ -54,10 +56,6 @@ const DOWNLOAD_RETRIES = 3
 /** Base delay for the 429 backoff; each retry doubles it (3 s, 6 s, 12 s…). */
 const RETRY_BACKOFF_BASE_MS = 3000
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 async function writePdf(dest: string, bytes: Uint8Array): Promise<DownloadOutcome> {
   try {
     await mkdir(dirname(dest), { recursive: true })
@@ -79,14 +77,22 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
   let lastStatus = 0
   let outcome: DownloadOutcome | undefined
   for (let attempt = 0; attempt < DOWNLOAD_RETRIES; attempt++) {
-    if (attempt > 0) await sleep(RETRY_BACKOFF_BASE_MS * 2 ** (attempt - 1))
+    if (attempt > 0) await sleep(RETRY_BACKOFF_BASE_MS * 2 ** (attempt - 1), opts.signal)
     let r: Response
     try {
-      r = await fetchWithRedirects(url, { headers: { Accept: 'application/pdf,*/*;q=0.8' } }, { checkDns: opts.checkDns })
+      // Bound connect + headers + body by the configured timeout, and honor the
+      // caller's AbortSignal — the download must not hang past `fetchTimeoutSec`
+      // on a stalled host. The redirect walk runs under the same inner signal.
+      r = await timedFetch(url, { headers: { Accept: 'application/pdf,*/*;q=0.8' } }, {
+        timeoutMs: opts.timeoutMs,
+        signal: opts.signal,
+        errorLabel: `download timeout after ${opts.timeoutMs}ms`,
+        fetchImpl: (u, i) => fetchWithRedirects(u, i, { checkDns: opts.checkDns }),
+      })
     } catch (e) {
       const code = (e as Error & { code?: string }).code
       if (code === 'host_not_allowed') return { ok: false, reason: 'download_host_not_allowed', detail: (e as Error).message }
-      // Transport error — not a Cloudflare block; cloak won't help.
+      // Transport error (incl. timeout / aborted) — not a Cloudflare block; cloak won't help.
       return { ok: false, reason: 'download_network_error', detail: (e as Error).message }
     }
     // Transient rate-limit: retry with backoff.

@@ -65,3 +65,49 @@ export async function pluginFetch(url: string, init: RequestInit = {}): Promise<
   }
   return fetch(url, requestInit)
 }
+
+export interface TimedFetchOptions {
+  /** Wall-clock cap for the request (connect + headers + body). */
+  readonly timeoutMs: number
+  /** Outer cancellation signal; its `reason` is forwarded to the inner abort. */
+  readonly signal?: AbortSignal
+  /** Full error message to throw on timeout (defaults to `timeout after Nms`). */
+  readonly errorLabel?: string
+  /** Underlying fetch to use instead of `pluginFetch` (e.g. the redirect walk). */
+  readonly fetchImpl?: (url: string, init: RequestInit) => Promise<Response>
+}
+
+/**
+ * One request bounded by `timeoutMs` and cancellable via `signal`: composes the
+ * outer signal with an inner timer-driven AbortController, runs the fetch
+ * (defaulting to `pluginFetch`), and guarantees the timer is cleared and the
+ * abort listener removed. On timeout the caller sees the (optional) `errorLabel`
+ * — regardless of how the underlying fetch surfaces an abort, so every call
+ * site gets one consistent timeout error. Any non-timeout failure (including an
+ * outer-signal abort) propagates unchanged.
+ */
+export async function timedFetch(url: string, init: RequestInit = {}, opts: TimedFetchOptions): Promise<Response> {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(opts.signal?.reason)
+  if (opts.signal?.aborted) {
+    controller.abort(opts.signal.reason)
+  } else {
+    opts.signal?.addEventListener('abort', onAbort, { once: true })
+  }
+  const reason = new Error(opts.errorLabel ?? `timeout after ${opts.timeoutMs}ms`)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort(reason)
+  }, opts.timeoutMs)
+  try {
+    const doFetch = opts.fetchImpl ?? pluginFetch
+    return await doFetch(url, { ...init, signal: controller.signal })
+  } catch (e) {
+    if (timedOut) throw reason
+    throw e
+  } finally {
+    clearTimeout(timer)
+    opts.signal?.removeEventListener('abort', onAbort)
+  }
+}

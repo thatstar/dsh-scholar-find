@@ -94,6 +94,48 @@ describe('downloadPdf', () => {
     expect(calls).toBe(3)
     vi.useRealTimers()
   })
+
+  it('times out a stalled host instead of hanging past the configured timeout', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
+    // A host that never responds; the request must still resolve within
+    // timeoutMs — the timeout now bounds connect+headers, not just the body read.
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const s = init?.signal
+      if (!s) return
+      if (s.aborted) {
+        reject(s.reason ?? new Error('aborted'))
+        return
+      }
+      s.addEventListener('abort', () => reject(s.reason ?? new Error('aborted')), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const out = await downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 150, maxBytes: 1024, checkDns: false })
+    expect(out.ok).toBe(false)
+    expect(out.reason).toBe('download_network_error')
+    expect(out.detail).toContain('timeout after 150ms')
+  })
+
+  it('honors an abort signal mid-download', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const s = init?.signal
+      if (!s) return
+      if (s.aborted) {
+        reject(s.reason ?? new Error('aborted'))
+        return
+      }
+      s.addEventListener('abort', () => reject(s.reason ?? new Error('aborted')), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const ac = new AbortController()
+    const p = downloadPdf('https://example.com/a.pdf', join(tmp, 'a.pdf'), { timeoutMs: 10_000, maxBytes: 1024, checkDns: false, signal: ac.signal })
+    await Promise.resolve() // let the request attach its listener
+    ac.abort(new Error('user cancel'))
+    const out = await p
+    expect(out.ok).toBe(false)
+    expect(out.reason).toBe('download_network_error')
+    expect(out.detail).toContain('user cancel')
+  })
 })
 
 describe('idempotency sidecar', () => {

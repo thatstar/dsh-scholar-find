@@ -14,7 +14,7 @@
  * @module dsh-scholar-find/asta
  */
 
-import { pluginFetch } from '../fetch/transport.js'
+import { timedFetch } from '../fetch/transport.js'
 
 /** Ai2 Asta MCP endpoint. */
 export const ASTA_ENDPOINT = 'https://asta-tools.allen.ai/mcp/v1'
@@ -128,12 +128,9 @@ async function astaCall(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const controller = new AbortController()
-  const onAbort = () => controller.abort(signal?.reason)
-  signal?.addEventListener('abort', onAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error('asta timeout')), timeoutMs)
-  try {
-    const res = await pluginFetch(ASTA_ENDPOINT, {
+  const res = await timedFetch(
+    ASTA_ENDPOINT,
+    {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -141,16 +138,13 @@ async function astaCall(
         'x-api-key': apiKey,
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: Date.now() % 0x7fffffff, method, params }),
-      signal: controller.signal,
-    })
-    const envelope = await readEnvelope(res)
-    if (!envelope) throw new Error(`asta: non-JSON-RPC response (HTTP ${res.status})`)
-    if (envelope.error) throw new Error(`asta: ${envelope.error.message}`)
-    return envelope.result
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
-  }
+    },
+    { timeoutMs, signal, errorLabel: 'asta timeout' },
+  )
+  const envelope = await readEnvelope(res)
+  if (!envelope) throw new Error(`asta: non-JSON-RPC response (HTTP ${res.status})`)
+  if (envelope.error) throw new Error(`asta: ${envelope.error.message}`)
+  return envelope.result
 }
 
 /**

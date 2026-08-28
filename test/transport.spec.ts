@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BROWSER_UA, configureProxy, normalizeProxyUrl, pluginFetch, resolveProxyUrl } from '../src/fetch/transport.js'
+import { BROWSER_UA, configureProxy, normalizeProxyUrl, pluginFetch, resolveProxyUrl, timedFetch } from '../src/fetch/transport.js'
 
 const fetchMock = vi.fn()
 afterEach(() => {
@@ -57,5 +57,54 @@ describe('pluginFetch', () => {
     await pluginFetch('https://example.com', { headers: { 'User-Agent': 'custom/1.0' } })
     const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit]
     expect((init.headers as Record<string, string>)['User-Agent']).toBe('custom/1.0')
+  })
+})
+
+/** A fetch stub that never settles on its own but rejects when its signal aborts
+ * (mirroring undici, which aborts in-flight requests on signal fire). */
+function abortAwaitingFetch(): void {
+  fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    const s = init?.signal
+    if (!s) return
+    if (s.aborted) {
+      reject(s.reason ?? new Error('aborted'))
+      return
+    }
+    s.addEventListener('abort', () => reject(s.reason ?? new Error('aborted')), { once: true })
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+}
+
+describe('timedFetch', () => {
+  it('returns the response when the fetch resolves in time', async () => {
+    stubFetch(new Response('ok'))
+    const r = await timedFetch('https://example.com', {}, { timeoutMs: 1000 })
+    expect(await r.text()).toBe('ok')
+  })
+
+  it('rejects with the default timeout error when the underlying fetch stalls', async () => {
+    abortAwaitingFetch()
+    await expect(timedFetch('https://example.com', {}, { timeoutMs: 50 })).rejects.toThrow('timeout after 50ms')
+  })
+
+  it('surfaces the errorLabel on timeout', async () => {
+    abortAwaitingFetch()
+    await expect(timedFetch('https://example.com', {}, { timeoutMs: 50, errorLabel: 'landing timeout' })).rejects.toThrow('landing timeout')
+  })
+
+  it('forwards an outer-signal abort with its reason', async () => {
+    abortAwaitingFetch()
+    const ac = new AbortController()
+    const p = timedFetch('https://example.com', {}, { timeoutMs: 10_000, signal: ac.signal })
+    await Promise.resolve() // let the fetch attach its listener
+    ac.abort(new Error('user cancel'))
+    await expect(p).rejects.toThrow('user cancel')
+  })
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    abortAwaitingFetch()
+    const ac = new AbortController()
+    ac.abort(new Error('cancelled before'))
+    await expect(timedFetch('https://example.com', {}, { timeoutMs: 10_000, signal: ac.signal })).rejects.toThrow('cancelled before')
   })
 })

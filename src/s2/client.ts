@@ -8,7 +8,8 @@
  * @module dsh-scholar-find/s2-client
  */
 
-import { pluginFetch } from '../fetch/transport.js'
+import { timedFetch } from '../fetch/transport.js'
+import { sleep } from '../util/async.js'
 
 const GRAPH = 'https://api.semanticscholar.org/graph/v1'
 const RECS = 'https://api.semanticscholar.org/recommendations/v1'
@@ -148,16 +149,7 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
         headers['Content-Type'] = 'application/json'
         init.body = JSON.stringify(json)
       }
-      const controller = new AbortController()
-      const onAbort = () => controller.abort(options.signal?.reason)
-      options.signal?.addEventListener('abort', onAbort, { once: true })
-      const timer = setTimeout(() => controller.abort(new Error(`timeout after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`)), options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-      try {
-        return await pluginFetch(url + query, { ...init, signal: controller.signal })
-      } finally {
-        clearTimeout(timer)
-        options.signal?.removeEventListener('abort', onAbort)
-      }
+      return timedFetch(url + query, init, { timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal: options.signal })
     }
 
     let lastError: unknown
@@ -224,24 +216,6 @@ function cleanParams(params: Record<string, string | undefined>): Record<string,
 
 function backoff(attempt: number): number {
   return Math.min(2 ** (attempt + 1) * 1_000, MAX_BACKOFF_MS)
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new Error('aborted'))
-      return
-    }
-    const t = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = () => {
-      clearTimeout(t)
-      reject(signal?.reason ?? new Error('aborted'))
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
 }
 
 /** Translate shared snake_case filters to the S2 camelCase query params. */

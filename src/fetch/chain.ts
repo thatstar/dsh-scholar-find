@@ -10,7 +10,7 @@
 import type { ScholarClient } from '../s2/client.js'
 import { getPaper } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
-import { pluginFetch } from './transport.js'
+import { timedFetch } from './transport.js'
 
 export interface PaperMeta {
   title?: string
@@ -154,25 +154,16 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
 // ---------------------------------------------------------------------------
 
 async function jsonGet(url: string, timeoutMs: number, signal?: AbortSignal, headers?: Record<string, string>): Promise<any> {
-  const controller = new AbortController()
-  const onAbort = () => controller.abort(signal?.reason)
-  signal?.addEventListener('abort', onAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs)
+  const r = await timedFetch(url, { headers: { Accept: 'application/json', ...headers } }, { timeoutMs, signal })
+  const text = await r.text()
+  let body: any
   try {
-    const r = await pluginFetch(url, { headers: { Accept: 'application/json', ...headers }, signal: controller.signal })
-    const text = await r.text()
-    let body: any
-    try {
-      body = text ? JSON.parse(text) : null
-    } catch {
-      body = null
-    }
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return body
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
+    body = text ? JSON.parse(text) : null
+  } catch {
+    body = null
   }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return body
 }
 
 /** Extract an arXiv id from an arXiv abs/pdf URL (tolerates a stray `arXiv:` token). */
@@ -204,21 +195,18 @@ export async function landingPdfUrl(url: string, timeoutMs: number, signal?: Abo
   if (arxiv) return `https://arxiv.org/pdf/${arxiv}.pdf`
 
   if (!isSafeUrl(url).ok) return undefined
-  const controller = new AbortController()
-  const onAbort = () => controller.abort(signal?.reason)
-  signal?.addEventListener('abort', onAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error('landing timeout')), timeoutMs)
   let html = ''
   try {
-    const r = await fetchWithRedirects(url, { headers: { Accept: 'text/html,application/xhtml+xml' }, signal: controller.signal }, { checkDns: opts.checkDns })
+    const r = await timedFetch(url, { headers: { Accept: 'text/html,application/xhtml+xml' } }, {
+      timeoutMs,
+      signal,
+      errorLabel: 'landing timeout',
+      fetchImpl: (u, i) => fetchWithRedirects(u, i, { checkDns: opts.checkDns }),
+    })
     if (!r.ok) return undefined
-    // PDFs can be big; a landing page rarely is. Cap the read.
     html = await r.text()
   } catch {
     return undefined
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
   }
 
   for (const re of PDF_URL_SIGNALS) {
@@ -278,19 +266,16 @@ export function parseArxivFeed(xml: string): PaperMeta | undefined {
  */
 export async function arxivMetaEnrich(arxivId: string, timeoutMs: number, signal?: AbortSignal): Promise<PaperMeta | undefined> {
   const url = `http://export.arxiv.org/api/query?id_list=${encodeURIComponent(arxivId)}`
-  const controller = new AbortController()
-  const onAbort = () => controller.abort(signal?.reason)
-  signal?.addEventListener('abort', onAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error(`arxiv meta timeout after ${timeoutMs}ms`)), timeoutMs)
   try {
-    const r = await pluginFetch(url, { headers: { Accept: 'application/atom+xml,application/xml,text/xml' }, signal: controller.signal })
+    const r = await timedFetch(url, { headers: { Accept: 'application/atom+xml,application/xml,text/xml' } }, {
+      timeoutMs,
+      signal,
+      errorLabel: `arxiv meta timeout after ${timeoutMs}ms`,
+    })
     if (!r.ok) return undefined
     return parseArxivFeed(await r.text())
   } catch {
     return undefined
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
   }
 }
 
