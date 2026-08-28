@@ -2,8 +2,10 @@
  * The paper_fetch source chain, reimplemented in TypeScript against the
  * public OA APIs: Unpaywall -> Semantic Scholar -> arXiv -> Europe PMC/PMC ->
  * bioRxiv/medRxiv. Each resolver returns PDF URL candidates plus metadata; the
- * download loop validates and writes. We rely strictly on the OA sources' own
- * return values — no last-resort/publisher-guess/pirate fallback.
+ * download loop validates and writes. The chain itself relies strictly on the
+ * OA sources' own return values — no publisher-guess/pirate fallback. (The
+ * caller in service.ts may additionally apply a last-resort title web-search
+ * fallback; that lives outside this module.)
  * @module dsh-scholar-find/fetch-chain
  */
 
@@ -80,7 +82,7 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
     sourcesTried.push('unpaywall skipped (no email)')
   }
 
-  // 2. Semantic Scholar: pdf + externalIds + meta (also lazy cache)
+  // 2. Semantic Scholar: pdf + externalIds + meta
   let s2Pdf: string | undefined
   let s2Ext: Record<string, string> = {}
   try {

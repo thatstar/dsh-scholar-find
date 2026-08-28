@@ -500,7 +500,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_resolve',
-    description: `Find the best open-access PDF URL for a paper WITHOUT downloading anything. Provide exactly one of doi or title. Reports the winning source (Unpaywall/Semantic Scholar/arXiv/Europe PMC/PMC/bioRxiv/publisher) and metadata.`,
+    description: `Find the best open-access PDF URL for a paper WITHOUT downloading anything. Provide exactly one of doi or title. Reports the winning source (Unpaywall/Semantic Scholar/arXiv/Europe PMC/PMC/bioRxiv/web_search) and metadata.`,
     parameters: resolveParams,
     output: {
       schema: { type: 'object', properties: { doi: { type: 'string' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
@@ -639,7 +639,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_pdf2md',
-    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB / ≤20 pages). Saves the .md into the configured library directory (default scholar-pdfs) and returns the path (+ a short excerpt).`,
+    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB file cap — the page limit is a server-side constraint). Saves the .md into the configured library directory (default scholar-pdfs) and returns the path (+ a short excerpt).`,
     parameters: {
       pdf: { type: 'string', description: 'PDF to convert: an https://...pdf URL or a local file path.', required: true },
       timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)})` },

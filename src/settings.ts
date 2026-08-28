@@ -45,7 +45,7 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   proxyUrl: z.string().default(''),
   /** Download directory; relative values resolve against the session workspace. */
   pdfOutputDir: z.string().default('scholar-pdfs'),
-  /** Default result cap for scholar search tools. */
+  /** Default result cap for scholar search tools (per-call ceiling is 100). */
   maxResultsPerSearch: z.number().default(20),
   /** Per-request HTTP timeout in seconds. */
   fetchTimeoutSec: z.number().default(30),
@@ -75,7 +75,7 @@ export function assertServiceableScholarSettings(config: ScholarSettings): void 
   if (!Number.isFinite(config.s2RequestGapMs) || config.s2RequestGapMs < 0) {
     throw new Error('dsh-scholar-find: s2RequestGapMs must be a non-negative finite number')
   }
-  if (config.maxResultsPerSearch > 1000) {
-    throw new Error('dsh-scholar-find: maxResultsPerSearch must be no greater than 1000')
+  if (config.maxResultsPerSearch > 100) {
+    throw new Error('dsh-scholar-find: maxResultsPerSearch must be no greater than 100 (the per-call cap)')
   }
 }

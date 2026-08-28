@@ -48,9 +48,10 @@ Usage rules:
 5. Re-running \`paper_fetch_batch\` with the same \`idempotencyKey\` replays
    the previous envelope without re-downloading; files already present are
    skipped unless \`overwrite\` is set.
-6. If \`unpaywallEmail\` is not configured in the plugin settings, an envelope
-   field \`unpaywallSkipped\` is set — tell the user to add their email in
-   Settings -> Plugins -> Plugin configuration for the best source coverage.
+6. If \`unpaywallEmail\` is not configured in the plugin settings, the
+   \`paper_fetch_batch\` envelope carries \`meta.unpaywallSkipped\` — tell the
+   user to add their email in Settings -> Plugins -> Plugin configuration for
+   the best source coverage.
 7. Offer exports (\`scholar_export_bibtex\`) when the user collects references,
    and point to the exact PDF file paths returned by the fetch tools.
 8. \`scholar_get_paper_snippets\` requires the Asta API key: if it reports it is
@@ -58,6 +59,7 @@ Usage rules:
    (Settings -> Plugins -> Plugin configuration → "Ai2 Asta API key"), which
    stores it in DSH key management.
 9. \`paper_pdf2md\` converts a single PDF to Markdown via MinerU (no API key; IP
-   rate-limited; ≤10 MB / ≤20 pages; uses the proxy). Give either an
+   rate-limited; ≤10 MB file cap — page limit is a server-side constraint; uses
+   the proxy). Give either an
    \`https://…pdf\` URL or a local file path; it saves the .md into the library
    directory and returns the path + a short excerpt.`
