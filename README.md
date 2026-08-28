@@ -1,103 +1,58 @@
 # dsh-scholar-find
 
-A **DeepSeek Harness (DSH) plugin** that gives the model a coherent set of
-academic-paper research tools — **tools to the LLM**, not a predefined work
-loop. Pure TypeScript, Node host, no Python, no external runtime.
+A plugin for **DeepSeek Harness (DSH)** that gives the model tools for
+academic paper research. Search the literature with Semantic Scholar, fetch
+open-access PDFs, and convert PDFs to Markdown — all from the chat.
 
-## Features
+## What you get
 
-Two tool families plus companion instructions:
+**`scholar_search_*`** — find and inspect papers on Semantic Scholar:
+search with filters and boolean queries, match a title, look up papers,
+citations, references, recommendations, authors, BibTeX export, and
+full-text snippets.
 
-- **`scholar_search_*`** — Semantic Scholar Graph API: ranked/bulk search with
-  boolean queries and filters, exact-title match, paper lookup, citations and
-  references (with intent labels), recommendations, author profiles, BibTeX
-  export, and `scholar_get_paper_snippets` (~500-word full-text content via the
-  Ai2 Asta MCP server, a corpus the public S2 API does not expose).
-- **`paper_fetch_*`** — open-access PDF acquisition: `resolve` (best OA PDF URL
-  without writing files), `download`, `batch` (resumable, idempotent), `library`
-  (list), and `pdf2md` (PDF → Markdown via the MinerU lightweight parse API).
-  The resolve chain is **OA-sources only** — Unpaywall → Semantic Scholar →
-  arXiv (with export-API metadata enrichment) → Europe PMC/PMC → bioRxiv/medRxiv
-  — then an opt-in CloakBrowser fallback, then a last-resort title web-search
-  fallback. **No Sci-Hub, no publisher-guess, no pirate sources.** Downloads are
-  validated by `%PDF` magic + a configurable size cap behind an SSRF gate; files
-  land in a configured library directory (default `scholar-pdfs`) with a
-  deterministic `{author}-{year}-{title}.pdf` name.
-- **Companion instructions** — a system-prompt section telling the model when
-  and how to use each tool (parameter hygiene, envelope interpretation, retry
-  policy).
+**`paper_fetch_*`** — get the PDFs:
+`resolve` finds the best open-access PDF link, `download` saves it,
+`batch` downloads many DOIs at once, `library` lists what's saved, and
+`pdf2md` turns a PDF into Markdown. Only open-access sources are used —
+no Sci-Hub, no paywall guessing.
 
-The two API keys (Semantic Scholar, Ai2 Asta) use the **native DSH credentials
-domain**: the settings section stores only a credential *reference* (record
-name); the key literals are entered on the settings card's write-only controls
-and live in DSH key management — never in the settings file or this repo.
-
-## Installation
-
-The plugin is an npm package whose `cordis.patch.yml` declares its rows:
+## Install
 
 ```bash
-npm run build        # tsc + client bundle (a local file:/link: install skips prepare)
-dsh plugin --profile web add .     # or: a git URL / registry name
-# then RESTART the deployment to load the plugin
+npm run build                          # build lib/ once
+dsh plugin --profile web add .         # install into the web profile
+# then restart the deployment
 ```
 
-## Usage
+## Use
 
-Compose the pipeline per the goal: **search first** when the user names a
-topic; **fetch directly when they already have DOIs**. Prefer DOIs over
-titles — title→DOI resolution (Crossref → Semantic Scholar) is fuzzy and can
-match a different paper. Read the error envelopes before retrying: `code`,
-`retryable`, `retry_after_hours` distinguish never-retryable (`validation_error`,
-`download_not_a_pdf`, `download_host_not_allowed`) from transient `*_network_error`
-from `not_found` (retry only after embargo/preprint availability changes).
+- Give the model a **topic** → it searches, then fetches the papers it finds.
+- Give it **DOIs** → it downloads them straight away.
+- **Prefer DOIs over titles** — resolving a title can match the wrong paper.
 
 ## Configuration
 
-Set via the DSH Web UI: **Settings → Plugins → Plugin configuration**
-(namespace `dsh-scholar-find`):
+Open **Settings → Plugins → Plugin configuration** in the DSH Web UI
+(namespace `dsh-scholar-find`). The essentials:
 
-| Setting | Purpose |
-| --- | --- |
-| `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
-| `s2ApiKeyRef` / `astaApiKeyRef` | DSH credential **references** (record names; defaults `S2_API_KEY` / `ASTA_API_KEY`). The key literals go on the card's write-only controls → DSH key management. |
-| `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs. |
-| `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`) for all OA fetches, the CloakBrowser, and its binary download. |
-| `pdfOutputDir` | Where PDFs (and `.md`) land; relative to the session workspace. |
-| `maxResultsPerSearch` | Default result cap for `scholar_search_*` (per-call ceiling 100). |
-| `fetchTimeoutSec`, `maxPdfSizeMb`, `s2RequestGapMs` | Request timeout, download size cap, and S2 pacing override. |
+- `unpaywallEmail` — your email; enables the Unpaywall source (recommended).
+- `s2ApiKeyRef` / `astaApiKeyRef` — optional API keys, entered on the card
+  and stored in DSH key management.
+- `proxyUrl` — set it if you fetch behind a proxy (e.g. `http://127.0.0.1:10808`).
+- `pdfOutputDir` — where PDFs are saved (default `scholar-pdfs`).
 
-## Architecture (brief)
-
-- `src/fetch/` — the resolve chain (`chain.ts`, split into named source steps
-  over a `ChainState`), orchestration/envelopes (`service.ts`, `envelope.ts`),
-  safety gate (`safety.ts`), transport (`transport.ts` with a shared
-  `timedFetch`/`sleep`), and the CloakBrowser fallback.
-- `src/s2|asta|mineru/` — independent HTTP clients for Semantic Scholar, the
-  Ai2 Asta MCP server, and MinerU's parse API. The S2 client paces requests
-  (shared clock across tool calls, configurable gap) and retries 429/504.
-- `src/settings.ts` + `src/client/` — the settings section (single-sourced
-  defaults, `SEARCH_RESULT_CAP`) and the Web settings card.
-- All outbound traffic funnels through `pluginFetch` (browser UA + proxy).
-
-This plugin ships **no CLI binary** — everything is exposed as DSH tools; the
-retry hints inside `paper_fetch_batch` envelopes (`next`) therefore name the
-DSH tools to re-call, and the idempotency sidecar lives in `.dsh-scholar-idem/`.
+Everything else has safe defaults.
 
 ## References
 
-This is an **independent, clean-room TypeScript implementation** written
-against the public HTTP APIs. Two external skill repos were consulted for
-**API semantics and UX conventions only** (never vendored, never copied; this
-is the only place they are cited):
+This is an independent, clean-room TypeScript implementation built on the
+public HTTP APIs. Two projects were consulted for API semantics and UX
+conventions only (never vendored or copied):
 
 - [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill)
-  — S2 REST endpoint semantics, query/filter vocabulary, result presentation
-  conventions.
-- [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch) —
-  source-chain ordering, safety requirements (SSRF gate, `%PDF` check, size
-  cap), agent-facing result envelope design.
+- [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch)
 
 ## License
 
-MIT. See `package.json`.
+MIT
