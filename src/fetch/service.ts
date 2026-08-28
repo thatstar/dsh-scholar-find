@@ -7,7 +7,7 @@
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import type { ScholarClient } from '../s2/client.js'
-import type { ScholarSettings } from '../settings.js'
+import { maxBytesOf, timeoutMsOf, type ScholarSettings } from '../settings.js'
 import { arxivPdfUrl, resolveChain, resolveTitle, type ChainContext } from './chain.js'
 import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore, resolveOutDir } from './download.js'
 import { codeOf, makeError, type EnvelopeError, type FetchItemResult } from './envelope.js'
@@ -58,7 +58,7 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     doi,
     email: rt.settings.unpaywallEmail.trim(),
     s2: rt.s2,
-    timeoutMs: rt.settings.fetchTimeoutSec * 1000,
+    timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec),
     signal: rt.signal,
   }
 }
@@ -156,6 +156,20 @@ function downloadFailure(doi: string, source: string, reason: string, detail: st
   })
 }
 
+/** Guarded/unreachable failure (e.g. no candidate could be downloaded): same
+ * envelope shape via a builder so it cannot drift from the others. */
+function genericFailure(doi: string, meta: Record<string, unknown>, sourcesTried: readonly string[], message: string, reason?: string): FetchItemResult {
+  return item(doi, {
+    success: false,
+    source: null,
+    pdfUrl: null,
+    file: null,
+    meta,
+    sourcesTried,
+    error: makeError('not_found', message, reason),
+  })
+}
+
 /** Candidate PDF URLs from a title web-search: direct `.pdf` links + arXiv `abs` → `pdf`. */
 function webCandidateUrls(hits: readonly WebSearchHit[]): string[] {
   const out: string[] = []
@@ -204,8 +218,8 @@ async function tryWebSearch(
     const gate = isSafeUrl(href)
     if (!gate.ok) continue
     const outcome = await downloadPdf(href, dest, {
-      timeoutMs: rt.settings.fetchTimeoutSec * 1000,
-      maxBytes: rt.settings.maxPdfSizeMb * 1024 * 1024,
+      timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec),
+      maxBytes: maxBytesOf(rt.settings.maxPdfSizeMb),
       signal: rt.signal,
       checkDns: opts.checkDns,
       cloakEnabled: rt.settings.cloakEnabled,
@@ -284,8 +298,8 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       continue
     }
     const outcome = await downloadPdf(cand.pdfUrl, dest, {
-      timeoutMs: rt.settings.fetchTimeoutSec * 1000,
-      maxBytes: rt.settings.maxPdfSizeMb * 1024 * 1024,
+      timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec),
+      maxBytes: maxBytesOf(rt.settings.maxPdfSizeMb),
       signal: rt.signal,
       checkDns: opts.checkDns,
       cloakEnabled: rt.settings.cloakEnabled,
@@ -303,15 +317,7 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
   if (failures.length === 0) {
     // Defensive: should be unreachable (candidates was non-empty above), but
     // never index an empty list.
-    return item(normalized, {
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta,
-      sourcesTried: tried,
-      error: makeError('not_found', 'No candidate could be downloaded', 'All resolved URLs were unusable'),
-    })
+    return genericFailure(normalized, meta, tried, 'No candidate could be downloaded', 'All resolved URLs were unusable')
   }
 
   const last = failures[failures.length - 1]!
@@ -335,10 +341,13 @@ export async function fetchBatch(rt: FetchRuntime, dois: readonly string[], opts
   const succeeded = results.filter((r) => r.success).length
   const ok: boolean | 'partial' = succeeded === results.length ? true : succeeded === 0 ? false : 'partial'
   const failed = results.filter((r) => !r.success)
+  // A pasteable re-run command. DOIs contain no spaces, so for several failures
+  // a single space-separated `--batch` command is shell-safe (no printf/\n
+  // escaping, which would print literal backslash-n when pasted).
   const next = failed.length
     ? failed.length === 1
       ? [`paper-fetch ${failed[0]!.doi} --out ${outDir}`]
-      : [`printf %s ${JSON.stringify(failed.map((r) => r.doi).join('\n') + '\n')} | paper-fetch --batch - --out ${outDir}`]
+      : [`paper-fetch --batch ${failed.map((r) => r.doi).join(' ')} --out ${outDir}`]
     : []
 
   const envelope = {
@@ -377,6 +386,6 @@ export async function listLibrary(rt: FetchRuntime): Promise<Array<{ file: strin
 
 /** Resolve a title to a DOI (Crossref first, S2 fallback). */
 export async function resolveTitleToDoi(rt: FetchRuntime, title: string): Promise<{ doi: string | undefined; resolution: any }> {
-  const { doi, resolution } = await resolveTitle(title, { email: rt.settings.unpaywallEmail.trim(), s2: rt.s2, timeoutMs: rt.settings.fetchTimeoutSec * 1000, signal: rt.signal })
+  const { doi, resolution } = await resolveTitle(title, { email: rt.settings.unpaywallEmail.trim(), s2: rt.s2, timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec), signal: rt.signal })
   return { doi, resolution }
 }

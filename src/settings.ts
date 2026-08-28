@@ -18,6 +18,11 @@ export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
  * drift). */
 export const SEARCH_RESULT_CAP = 100
 
+/** Settings unit helpers — seconds -> ms and MB -> bytes. Used across the fetch
+ * service and the tool layer so the conversion arithmetic lives in one place. */
+export const timeoutMsOf = (sec: number): number => sec * 1000
+export const maxBytesOf = (mb: number): number => mb * 1024 * 1024
+
 /** The resolved settings value (schema-applied defaults). */
 export interface ScholarSettings {
   unpaywallEmail: string

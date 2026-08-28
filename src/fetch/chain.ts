@@ -117,24 +117,33 @@ export async function resolveChain(ctx: ChainContext): Promise<{ candidates: Sou
 // explicit (the driver awaits them in sequence) and each source is testable in
 // isolation through the shared state.
 
+/** Run a chain step's resolver: push the `<source>` label, run `fn`, and — on
+ * a non-404 failure — push `<source>_error` so a transport/resolver error is
+ * distinguishable from a normal miss ("skipped"). Used by the sources whose
+ * label is unconditional (Unpaywall, bioRxiv); stepSemanticScholar cannot use
+ * it because its label is only pushed when a real PDF candidate is added. */
+async function runSource(state: ChainState, source: string, fn: () => Promise<void>): Promise<void> {
+  state.sourcesTried.push(source)
+  try {
+    await fn()
+  } catch (e) {
+    if (!isNotFound(e)) state.sourcesTried.push(`${source}_error`)
+  }
+}
+
 /** 1. Unpaywall (requires email). */
 async function stepUnpaywall(ctx: ChainContext, state: ChainState): Promise<void> {
   if (!ctx.email) {
     state.sourcesTried.push('unpaywall skipped (no email)')
     return
   }
-  state.sourcesTried.push('unpaywall')
-  try {
+  await runSource(state, 'unpaywall', async () => {
     const up = await unpaywallResolve(ctx.doi, ctx.email, ctx.timeoutMs, ctx.signal)
     if (up) {
       mergeMeta(state, up.meta)
       for (const c of up.candidates) addCandidate(state, c.source, c.pdfUrl)
     }
-  } catch (e) {
-    // A 404 is a normal miss; anything else is a resolver/transport failure
-    // worth distinguishing from "skipped" in the envelope.
-    if (!isNotFound(e)) state.sourcesTried.push('unpaywall_error')
-  }
+  })
 }
 
 /** 2. Semantic Scholar: pdf + externalIds + meta. */
@@ -203,13 +212,10 @@ async function stepPmc(_ctx: ChainContext, state: ChainState): Promise<void> {
 /** 5. bioRxiv / medRxiv (10.1101 only). */
 async function stepBiorxiv(ctx: ChainContext, state: ChainState): Promise<void> {
   if (!ctx.doi.startsWith(BIORXIV_DOI_PREFIX)) return
-  state.sourcesTried.push('biorxiv')
-  try {
+  await runSource(state, 'biorxiv', async () => {
     const bx = await biorxivResolve(ctx.doi, ctx.timeoutMs, ctx.signal)
     if (bx) addCandidate(state, 'biorxiv', bx)
-  } catch (e) {
-    if (!isNotFound(e)) state.sourcesTried.push('biorxiv_error')
-  }
+  })
 }
 
 // ---------------------------------------------------------------------------

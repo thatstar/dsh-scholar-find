@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { SEARCH_RESULT_CAP, type ScholarSettings } from '../settings.js'
+import { SEARCH_RESULT_CAP, timeoutMsOf, type ScholarSettings } from '../settings.js'
 import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
@@ -58,8 +58,29 @@ function text(content: string): ContentBlock[] {
   return [{ type: 'text', text: content }]
 }
 
+
 /** Every scholar tool is a bulk/IO operation: never join a parallel sibling group. */
 const NON_CONCURRENT = (): boolean => false
+
+/**
+ * Standard tool output for the scholar tools: an object schema that always
+ * carries `markdown` plus the tool's extra properties, with a renderer that
+ * shows the markdown (or the per-tool fallback). Collapses the ~14 repeated
+ * `output.schema {markdown}` / `render` blocks in this file.
+ */
+function markdownOutput<const P extends Record<string, unknown>>(extra: P, fallback: (value: any) => string): {
+  schema: {
+    type: 'object'
+    properties: { markdown: { type: 'string' } } & P
+    additionalProperties: true
+  }
+  render: (args: unknown, value: any) => ContentBlock[]
+} {
+  return {
+    schema: { type: 'object', properties: { markdown: { type: 'string' }, ...extra }, additionalProperties: true },
+    render: (_args: unknown, value: any) => text(value.markdown ?? fallback(value)),
+  }
+}
 
 /** Human-readable rendering of Asta snippet results (paper + ~500-word content). */
 function fmtAsta(snippets: AstaSnippet[]): string {
@@ -96,7 +117,7 @@ function runtimeOf(ctx: Context, env: ScholarToolEnv, exec: ToolRunContext): { s
   const s2Client = s2.createScholarClient({
     apiKey: env.resolveApiKey,
     minGapMs: settings.s2RequestGapMs,
-    timeoutMs: settings.fetchTimeoutSec * 1000,
+    timeoutMs: timeoutMsOf(settings.fetchTimeoutSec),
     signal: exec.signal,
   })
   // Last-resort title-search fallback via the DSH web service (same provider as
@@ -277,12 +298,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'scholar_match_title',
     description: `Resolve a paper title to its exact Semantic Scholar record (paperId, DOI, metadata). Use before fetching when only a title is known.`,
     parameters: { title: { type: 'string', description: 'Exact paper title', required: true } },
-    output: {
-      schema: { type: 'object', properties: { matched: { type: 'boolean' }, markdown: { type: 'string' }, paper: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? 'No match.')
-      },
-    },
+    output: markdownOutput(
+      { matched: { type: 'boolean' }, paper: { type: 'json' } },
+      (value) => 'No match.',
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const d = await s2.matchTitle(client, args.title)
@@ -301,12 +320,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       paperId: { type: 'string', description: 'Paper id with prefix, e.g. DOI:10.1038/s41586-020-2649-2', required: true },
       includeAbstract: { type: 'boolean', description: 'Include the abstract (larger response)' },
     },
-    output: {
-      schema: { type: 'object', properties: { paperId: { type: 'string' }, markdown: { type: 'string' }, paper: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `Paper ${value.paperId ?? 'unknown'}.`)
-      },
-    },
+    output: markdownOutput(
+      { paperId: { type: 'string' }, paper: { type: 'json' } },
+      (value) => `Paper ${value.paperId ?? 'unknown'}.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const paper = await s2.getPaper(client, args.paperId, args.includeAbstract ? undefined : 'title,year,citationCount,authors,venue,externalIds,tldr,openAccessPdf')
@@ -326,12 +343,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       venues: { type: 'string', description: 'Restrict to venues (comma-separated), e.g. "Nature,N. Engl. J. Med."' },
       insertedBefore: { type: 'string', description: 'YYYY-MM-DD: only snippets ingested before this date' },
     },
-    output: {
-      schema: { type: 'object', properties: { markdown: { type: 'string' }, snippets: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? 'No content returned.')
-      },
-    },
+    output: markdownOutput(
+      { snippets: { type: 'array', items: { type: 'json' } } },
+      (value) => 'No content returned.',
+    ),
     async execute(args, exec) {
       const apiKey = await env.resolveAstaKey()
       if (!apiKey) {
@@ -371,12 +386,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       publicationDate: { type: 'string', description: 'Filter citing papers by date YYYY-MM-DD or range' },
       withIntents: { type: 'boolean', description: 'Include contextsWithIntent (larger response)' },
     },
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, citations: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} citing papers.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, citations: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} citing papers.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const citations = await s2.getCitations(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS, publicationDate: args.publicationDate, withIntents: args.withIntents })
@@ -399,12 +412,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'scholar_get_references',
     description: `List the papers a known paper cites (backward citations).`,
     parameters: { paperId: { type: 'string', description: 'Paper id', required: true }, maxResults: { type: 'integer', description: 'Result cap (default 100)' } },
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, references: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} references.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, references: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} references.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const refs = await s2.getReferences(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS })
@@ -426,12 +437,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       negativeIds: { type: 'array', items: { type: 'string', description: 'Seed paper id to steer away from' }, description: 'Optional negative seeds' },
       limit: { type: 'integer', description: 'Recommendation count (default 10, max 500)' },
     },
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, papers: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} recommendations.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, papers: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} recommendations.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const papers = args.positiveIds.length === 1 && !args.negativeIds
@@ -447,12 +456,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'scholar_search_authors',
     description: `Find researchers by name (affiliations, paper count, citations, h-index). Disambiguate common names by affiliation before using scholar_get_author.`,
     parameters: { query: { type: 'string', description: 'Author name', required: true }, maxResults: { type: 'integer', description: `Result cap (default ${s2.DEFAULT_AUTHORS}, max ${s2.S2_AUTHOR_SEARCH_MAX})` } },
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, authors: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} authors.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, authors: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} authors.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const authors = await s2.searchAuthors(client, args.query, args.maxResults ?? s2.DEFAULT_AUTHORS)
@@ -466,12 +473,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'scholar_get_author',
     description: `One author profile by authorId (affiliations, paper count, citations, h-index).`,
     parameters: { authorId: { type: 'string', description: 'Semantic Scholar authorId', required: true } },
-    output: {
-      schema: { type: 'object', properties: { authorId: { type: 'string' }, markdown: { type: 'string' }, author: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `Author ${value.authorId ?? 'unknown'}.`)
-      },
-    },
+    output: markdownOutput(
+      { authorId: { type: 'string' }, author: { type: 'json' } },
+      (value) => `Author ${value.authorId ?? 'unknown'}.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const author = await s2.getAuthor(client, args.authorId)
@@ -486,12 +491,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'scholar_get_author_papers',
     description: `An author's publication list by authorId.`,
     parameters: { authorId: { type: 'string', description: 'Semantic Scholar authorId', required: true }, maxResults: { type: 'integer', description: 'Result cap (default 100)' } },
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, papers: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} papers.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, papers: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} papers.`,
+    ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const papers = await s2.getAuthorPapers(client, args.authorId, args.maxResults ?? s2.DEFAULT_CITATIONS)
@@ -534,12 +537,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'paper_fetch_resolve',
     description: `Find the best open-access PDF URL for a paper WITHOUT downloading anything. Provide exactly one of doi or title. Reports the winning source (Unpaywall/Semantic Scholar/arXiv/Europe PMC/PMC/bioRxiv/web_search) and metadata.`,
     parameters: resolveParams,
-    output: {
-      schema: { type: 'object', properties: { doi: { type: 'string' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `Resolved ${value.doi ?? '?'}.`)
-      },
-    },
+    output: markdownOutput(
+      { doi: { type: 'string' }, data: { type: 'json' } },
+      (value) => `Resolved ${value.doi ?? '?'}.`,
+    ),
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
       const { doi, resolution } = await resolveInputDoi(rt, args as { doi?: string; title?: string })
@@ -568,12 +569,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       title: { type: 'string', description: 'Paper title; resolved to a DOI first' },
       overwrite: { type: 'boolean', description: 'Re-download even if the destination file exists' },
     },
-    output: {
-      schema: { type: 'object', properties: { ok: { type: 'boolean' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `Fetch finished (ok=${String(value.ok)}).`)
-      },
-    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, data: { type: 'json' } },
+      (value) => `Fetch finished (ok=${String(value.ok)}).`,
+    ),
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
       const { doi, resolution } = await resolveInputDoi(rt, args as { doi?: string; title?: string })
@@ -606,12 +605,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       idempotencyKey: { type: 'string', description: 'Stable key; re-running with the same key replays the previous envelope instantly' },
       overwrite: { type: 'boolean', description: 'Re-download existing files' },
     },
-    output: {
-      schema: { type: 'object', properties: { ok: { type: 'boolean' }, markdown: { type: 'string' }, data: { type: 'json' } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `Batch finished (ok=${String(value.ok)}).`)
-      },
-    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, data: { type: 'json' } },
+      (value) => `Batch finished (ok=${String(value.ok)}).`,
+    ),
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
       if (!args.dois?.length && !args.titles?.length) {
@@ -640,12 +637,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     name: 'paper_fetch_library',
     description: `List PDFs already downloaded into the configured library directory (default scholar-pdfs).`,
     parameters: {},
-    output: {
-      schema: { type: 'object', properties: { total: { type: 'integer' }, markdown: { type: 'string' }, files: { type: 'array', items: { type: 'json' } } }, additionalProperties: true },
-      render(_args, value: any) {
-        return text(value.markdown ?? `${value.total ?? 0} PDFs in the library.`)
-      },
-    },
+    output: markdownOutput(
+      { total: { type: 'integer' }, files: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} PDFs in the library.`,
+    ),
     async execute(_args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
       const files = await fetchSvc.listLibrary(rt)
@@ -672,7 +667,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
-      const timeoutMs = (args.timeoutSec === undefined ? Math.floor(MINERU_TIMEOUT_MS / 1000) : args.timeoutSec) * 1000
+      const timeoutMs = timeoutMsOf(args.timeoutSec === undefined ? Math.floor(MINERU_TIMEOUT_MS / 1000) : args.timeoutSec)
       const isUrl = /^https?:\/\//i.test(args.pdf)
       const { markdown } = isUrl
         ? await mineruParseUrl(args.pdf, { timeoutMs, signal: exec.signal })
