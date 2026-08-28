@@ -32,34 +32,41 @@ Usage rules:
    (Crossref → Semantic Scholar) is fuzzy: it can fail or match a *different*
    paper. If a title won't resolve confidently, ask the user for the DOI
    instead of guessing.
-2. Prefer \`scholar_search_papers\` with a precise boolean query and filters
+2. PDF downloads and Markdown extraction are **slow** (network fetch +
+   full-document parsing). Only run \`paper_fetch_download\` /
+   \`paper_fetch_batch\` / \`paper_pdf2md\` when the user explicitly wants the
+   papers (PDFs or their Markdown) added to the chat — never speculatively
+   download or extract while searching or summarizing. \`paper_fetch_resolve\`
+   (a single link lookup, no files) is the cheap option when only the PDF URL
+   is wanted.
+3. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
    them.
-3. Pass resolved DOIs (not titles) to \`paper_fetch_download\` /
+4. Pass resolved DOIs (not titles) to \`paper_fetch_download\` /
    \`paper_fetch_batch\` when the search already returned them.
-4. Read error envelopes before retrying: errors carry \`code\`, \`retryable\`,
+5. Read error envelopes before retrying: errors carry \`code\`, \`retryable\`,
    and \`retry_after_hours\`. Codes \`validation_error\`,
    \`download_not_a_pdf\`, \`download_host_not_allowed\` are NOT retryable —
    fix the input or report the failure instead. \`not_found\` means no
    open-access copy exists right now; \`*_network_error\` failures are
    transient — retry later. Do not treat a transport error as "paper not
    found".
-5. Re-running \`paper_fetch_batch\` with the same \`idempotencyKey\` replays
+6. Re-running \`paper_fetch_batch\` with the same \`idempotencyKey\` replays
    the previous envelope without re-downloading; files already present are
    skipped unless \`overwrite\` is set.
-6. If \`unpaywallEmail\` is not configured in the plugin settings, the
+7. If \`unpaywallEmail\` is not configured in the plugin settings, the
    \`paper_fetch_batch\` envelope carries \`meta.unpaywallSkipped\` — tell the
    user to add their email in Settings -> Plugins -> Plugin configuration for
    the best source coverage.
-7. Offer exports (\`scholar_export_bibtex\`) when the user collects references,
+8. Offer exports (\`scholar_export_bibtex\`) when the user collects references,
    and point to the exact PDF file paths returned by the fetch tools.
-8. \`scholar_get_paper_snippets\` requires the Asta API key: if it reports it is
+9. \`scholar_get_paper_snippets\` requires the Asta API key: if it reports it is
    unconfigured, tell the user to set the key on the plugin's settings card
    (Settings -> Plugins -> Plugin configuration → "Ai2 Asta API key"), which
    stores it in DSH key management.
-9. \`paper_pdf2md\` converts a single PDF to Markdown via MinerU (no API key; IP
-   rate-limited; ≤10 MB file cap — page limit is a server-side constraint; uses
-   the proxy). Give either an
-   \`https://…pdf\` URL or a local file path; it saves the .md into the library
-   directory and returns the path + a short excerpt.`
+10. \`paper_pdf2md\` converts a single PDF to Markdown via MinerU (no API key; IP
+    rate-limited; ≤10 MB file cap — page limit is a server-side constraint; uses
+    the proxy). Give either an
+    \`https://…pdf\` URL or a local file path; it saves the .md into the library
+    directory and returns the path + a short excerpt.`
