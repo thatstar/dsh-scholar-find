@@ -719,10 +719,19 @@ function fmtPapers(papers: readonly Record<string, unknown>[]): string {
   return papers
     .map((p) => {
       const authors = Array.isArray(p.author) ? (p.author as Array<{ name?: string }>).map((a) => a.name ?? '').filter(Boolean).join(', ') : ''
-      const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), p.doi ? `DOI: ${p.doi}` : '', `\`${p.unique_id}\``].filter(Boolean).join('\n')
+      const ids = [`\`${p.unique_id}\``]
+      if (p.doc_id) ids.push(`doc_id: ${p.doc_id}${p.is_content_accessible === false ? ' (not content-accessible)' : ''}`)
+      const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), p.doi ? `DOI: ${p.doi}` : '', ids.join(' · ')].filter(Boolean).join('\n')
       return line
     })
     .join('\n\n')
+}
+
+/** Compact markdown for citation-relation entries (shape {id, id_type, title}). */
+function fmtRelationItems(items: readonly Record<string, unknown>[]): string {
+  return items
+    .map((r) => `- **${r.title ?? 'untitled'}**${r.id ? ` — \`${r.id}${r.id_type ? ` (${r.id_type})` : ''}\`` : ''}`)
+    .join('\n')
 }
 
 /** Compact markdown for semantic-search chunks. */
@@ -730,7 +739,7 @@ function fmtChunks(hits: readonly Record<string, unknown>[]): string {
   return hits
     .map((h) => {
       const text = String(h.chunk ?? h.abstract ?? '').slice(0, 240)
-      return `**${h.title ?? 'untitled'}** (score ${String(h.score ?? '?')})\n${text}${String(h.chunk ?? '').length > 240 ? '…' : ''}\n\`chunk_id: ${String(h.chunk_id ?? '')}\``
+      return `**${h.title ?? 'untitled'}** (score ${String(h.score ?? '?')})\n${text}${String(h.chunk ?? '').length > 240 ? '…' : ''}\nchunk_id: ${String(h.chunk_id ?? '')} · doc_id: ${String(h.doc_id ?? '')} · offset: ${String(h.offset ?? '')}`
     })
     .join('\n\n')
 }
@@ -874,7 +883,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size })) as any
       const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
       const total = r.total_count ?? items.length
-      return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtPapers(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
+      return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtRelationItems(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
