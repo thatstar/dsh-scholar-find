@@ -37,7 +37,6 @@ export interface DownloadOutcome {
   ok: boolean
   reason?: 'download_network_error' | 'download_not_a_pdf' | 'download_host_not_allowed' | 'download_size_exceeded' | 'download_io_error'
   detail?: string
-  skipped?: boolean
 }
 
 export interface DownloadOptions {

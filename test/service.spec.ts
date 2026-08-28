@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createScholarClient } from '../src/s2/client.js'
 import { fetchOne, resolveOne, type FetchRuntime } from '../src/fetch/service.js'
+import { codeOf } from '../src/fetch/envelope.js'
 import { ScholarSettings } from '../src/settings.js'
 
 const fetchMock = vi.fn()
@@ -126,5 +127,16 @@ describe('resolveOne web-search fallback', () => {
     expect(result.file).toBeNull()
     expect(searchWeb).toHaveBeenCalledWith('Self-Paced Learning for Latent Variable Models pdf', 10, undefined)
     expect(result.sourcesTried).toContain('web_search')
+  })
+})
+
+describe('codeOf', () => {
+  it('maps download reasons to the envelope error code, falling back to network error', () => {
+    expect(codeOf('download_not_a_pdf')).toBe('download_not_a_pdf')
+    expect(codeOf('download_host_not_allowed')).toBe('download_host_not_allowed')
+    expect(codeOf('download_size_exceeded')).toBe('download_size_exceeded')
+    expect(codeOf('download_io_error')).toBe('download_io_error')
+    expect(codeOf('download_network_error')).toBe('download_network_error')
+    expect(codeOf('unknown_reason')).toBe('download_network_error')
   })
 })

@@ -178,7 +178,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         },
         additionalProperties: true,
       },
-      render(args, value: any) {
+      render(_args, value: any) {
         return text(value.markdown ?? `Search finished: ${value.total ?? 0} papers.`)
       },
     },

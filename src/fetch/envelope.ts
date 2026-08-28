@@ -45,7 +45,6 @@ export interface FetchItemResult {
   sourcesTried: readonly string[]
   skipped?: boolean
   skipReason?: string
-  via?: string
   error?: EnvelopeError
 }
 
@@ -57,4 +56,19 @@ export function makeError(code: ErrorCode, message: string, reason?: string): En
   const hours = RETRY_AFTER_HOURS[code]
   if (retryable && hours !== undefined) err.retry_after_hours = hours
   return err
+}
+
+/**
+ * Map a download failure `reason` (as produced by `DownloadOutcome`) to its
+ * envelope `ErrorCode`. Single source of truth for the download-error enum;
+ * unrecognized reasons fall back to `download_network_error`.
+ */
+export function codeOf(reason: string): ErrorCode {
+  switch (reason) {
+    case 'download_not_a_pdf': return 'download_not_a_pdf'
+    case 'download_host_not_allowed': return 'download_host_not_allowed'
+    case 'download_size_exceeded': return 'download_size_exceeded'
+    case 'download_io_error': return 'download_io_error'
+    default: return 'download_network_error'
+  }
 }

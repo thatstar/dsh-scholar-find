@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import type { ScholarClient } from '../s2/client.js'
 import type { ScholarSettings } from '../settings.js'
-import { resolveChain, resolveTitle, type ChainContext, type SourceResolution } from './chain.js'
+import { resolveChain, resolveTitle, type ChainContext } from './chain.js'
 import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore, resolveOutDir } from './download.js'
-import { makeError, type EnvelopeError, type FetchItemResult } from './envelope.js'
+import { codeOf, makeError, type EnvelopeError, type FetchItemResult } from './envelope.js'
 import { isSafeUrl } from './safety.js'
 import { resolveProxyUrl } from './transport.js'
 
@@ -61,6 +61,99 @@ function chainContext(rt: FetchRuntime, doi: string): ChainContext {
     timeoutMs: rt.settings.fetchTimeoutSec * 1000,
     signal: rt.signal,
   }
+}
+
+// ---------------------------------------------------------------------------
+// FetchItemResult builders — every branch of resolveOne/fetchOne goes through
+// these so the envelope shape (and one-off fields like `skipped`) is defined in
+// exactly one place.
+// ---------------------------------------------------------------------------
+
+type ResultSeed = {
+  success: boolean
+  source: string | null
+  pdfUrl: string | null
+  file: string | null
+  meta: Record<string, unknown>
+  sourcesTried: readonly string[]
+  skipped?: boolean
+  skipReason?: string
+  error?: EnvelopeError
+}
+
+function item(doi: string, seed: ResultSeed): FetchItemResult {
+  return { doi, ...seed }
+}
+
+function validationFailure(doi: string, explainExpected: boolean): FetchItemResult {
+  return item(doi, {
+    success: false,
+    source: null,
+    pdfUrl: null,
+    file: null,
+    meta: {},
+    sourcesTried: [],
+    error: makeError('validation_error', explainExpected ? `Not a valid DOI: ${doi} (expected 10.xxxx/xxxx)` : `Not a valid DOI: ${doi}`),
+  })
+}
+
+function resolveFailure(doi: string, e: unknown): FetchItemResult {
+  return item(doi, {
+    success: false,
+    source: null,
+    pdfUrl: null,
+    file: null,
+    meta: {},
+    sourcesTried: ['resolve_error'],
+    error: makeError('resolve_network_error', `Metadata resolvers failed: ${(e as Error).message}`),
+  })
+}
+
+function notFound(doi: string, meta: Record<string, unknown>, sourcesTried: readonly string[]): FetchItemResult {
+  return item(doi, {
+    success: false,
+    source: null,
+    pdfUrl: null,
+    file: null,
+    meta,
+    sourcesTried,
+    error: makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears'),
+  })
+}
+
+function webSearchSuccess(doi: string, href: string, file: string | null, meta: Record<string, unknown>, sourcesTried: readonly string[]): FetchItemResult {
+  return item(doi, {
+    success: true,
+    source: 'web_search',
+    pdfUrl: href,
+    file,
+    meta,
+    sourcesTried,
+  })
+}
+
+function candidateSuccess(doi: string, source: string | null, pdfUrl: string | null, file: string | null, meta: Record<string, unknown>, sourcesTried: readonly string[], skip?: { skipReason: string }): FetchItemResult {
+  return item(doi, {
+    success: true,
+    source,
+    pdfUrl,
+    file,
+    meta,
+    sourcesTried,
+    ...(skip ? { skipped: true, skipReason: skip.skipReason } : {}),
+  })
+}
+
+function downloadFailure(doi: string, source: string, reason: string, detail: string | undefined, meta: Record<string, unknown>, sourcesTried: readonly string[]): FetchItemResult {
+  return item(doi, {
+    success: false,
+    source,
+    pdfUrl: null,
+    file: null,
+    meta,
+    sourcesTried,
+    error: makeError(codeOf(reason), `Download failed from ${source}: ${reason}${detail ? ` (${detail})` : ''}`),
+  })
 }
 
 /** Candidate PDF URLs from a title web-search: direct `.pdf` links + arXiv `abs` → `pdf`. */
@@ -125,70 +218,24 @@ async function tryWebSearch(
 /** Resolve one DOI to candidates (no download). */
 export async function resolveOne(rt: FetchRuntime, doi: string): Promise<FetchItemResult> {
   const normalized = normalizeDoi(doi)
-  if (!isValidDoi(normalized)) {
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: {},
-      sourcesTried: [],
-      error: makeError('validation_error', `Not a valid DOI: ${normalized} (expected 10.xxxx/xxxx)`),
-    }
-  }
+  if (!isValidDoi(normalized)) return validationFailure(normalized, true)
   let chain
   try {
     chain = await resolveChain(chainContext(rt, normalized))
   } catch (e) {
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: {},
-      sourcesTried: ['resolve_error'],
-      error: makeError('resolve_network_error', `Metadata resolvers failed: ${(e as Error).message}`),
-    }
+    return resolveFailure(normalized, e)
   }
+  const meta = { ...chain.meta }
+  const tried = chain.sourcesTried
   if (!chain.candidates.length) {
     // Last-resort automatic fallback: web-search the title and report the first
     // likely free-PDF URL (no download). Only then report a clean not_found.
     const webUrl = (await webCandidates(rt, chain.meta))[0]
-    if (webUrl) {
-      return {
-        doi: normalized,
-        success: true,
-        source: 'web_search',
-        pdfUrl: webUrl,
-        file: null,
-        meta: { ...chain.meta },
-        sourcesTried: [...chain.sourcesTried, 'web_search'],
-      }
-    }
-    const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: { ...chain.meta },
-      sourcesTried: chain.sourcesTried,
-      error: err,
-    }
+    if (webUrl) return webSearchSuccess(normalized, webUrl, null, meta, [...tried, 'web_search'])
+    return notFound(normalized, meta, tried)
   }
   const first = chain.candidates[0]!
-  return {
-    doi: normalized,
-    success: true,
-    source: first.source,
-    pdfUrl: first.pdfUrl,
-    file: null,
-    meta: { ...chain.meta },
-    sourcesTried: chain.sourcesTried,
-  }
+  return candidateSuccess(normalized, first.source, first.pdfUrl, null, meta, tried)
 }
 
 export interface DownloadOptions {
@@ -199,80 +246,33 @@ export interface DownloadOptions {
 /** Resolve then download; tries every candidate until one validates. */
 export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOptions = {}): Promise<FetchItemResult> {
   const normalized = normalizeDoi(doi)
-  if (!isValidDoi(normalized)) {
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: {},
-      sourcesTried: [],
-      error: makeError('validation_error', `Not a valid DOI: ${normalized}`),
-    }
-  }
+  if (!isValidDoi(normalized)) return validationFailure(normalized, false)
   let chain
   try {
     chain = await resolveChain(chainContext(rt, normalized))
   } catch (e) {
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: {},
-      sourcesTried: ['resolve_error'],
-      error: makeError('resolve_network_error', `Metadata resolvers failed: ${(e as Error).message}`),
-    }
+    return resolveFailure(normalized, e)
   }
 
   const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
 
   const fname = buildFilename(chain.meta, normalized)
   const dest = join(outDir, fname)
+  const meta = { ...chain.meta }
+  const tried = chain.sourcesTried
 
   // No candidate source yielded a PDF URL. Last-resort automatic fallback: web-
   // search the title for a free PDF; only then report a clean not_found.
   if (!chain.candidates.length) {
     const hit = await tryWebSearch(rt, chain.meta, dest, opts)
-    if (hit) {
-      return {
-        doi: normalized,
-        success: true,
-        source: hit.source,
-        pdfUrl: hit.href,
-        file: dest,
-        meta: { ...chain.meta },
-        sourcesTried: [...chain.sourcesTried, 'web_search'],
-      }
-    }
-    const err = makeError('not_found', 'No open-access PDF found', 'OA availability changes over time; retry after embargo lifts or a preprint appears')
-    return {
-      doi: normalized,
-      success: false,
-      source: null,
-      pdfUrl: null,
-      file: null,
-      meta: { ...chain.meta },
-      sourcesTried: chain.sourcesTried,
-      error: err,
-    }
+    if (hit) return webSearchSuccess(normalized, hit.href, dest, meta, [...tried, 'web_search'])
+    return notFound(normalized, meta, tried)
   }
 
   const exists = await fileExists(dest)
   if (exists && !opts.overwrite) {
-    return {
-      doi: normalized,
-      success: true,
-      source: chain.candidates[0]?.source ?? null,
-      pdfUrl: chain.candidates[0]?.pdfUrl ?? null,
-      file: dest,
-      meta: { ...chain.meta },
-      sourcesTried: chain.sourcesTried,
-      skipped: true,
-      skipReason: 'file_exists',
-    }
+    const first = chain.candidates[0]!
+    return candidateSuccess(normalized, first.source, first.pdfUrl, dest, meta, tried, { skipReason: 'file_exists' })
   }
 
   const failures: Array<{ source: string; reason: string; detail?: string }> = []
@@ -290,71 +290,31 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
       cloakEnabled: rt.settings.cloakEnabled,
       proxyUrl: resolveProxyUrl(rt.settings.proxyUrl),
     })
-    if (outcome.ok) {
-      return {
-        doi: normalized,
-        success: true,
-        source: cand.source,
-        pdfUrl: cand.pdfUrl,
-        file: dest,
-        meta: { ...chain.meta },
-        sourcesTried: chain.sourcesTried,
-      }
-    }
+    if (outcome.ok) return candidateSuccess(normalized, cand.source, cand.pdfUrl, dest, meta, tried)
     failures.push({ source: cand.source, reason: outcome.reason ?? 'download_network_error', detail: outcome.detail })
   }
 
   // Last-resort automatic fallback: if every OA candidate's download failed,
   // web-search the title for a free PDF.
   const hit = await tryWebSearch(rt, chain.meta, dest, opts)
-  if (hit) {
-    return {
-      doi: normalized,
-      success: true,
-      source: hit.source,
-      pdfUrl: hit.href,
-      file: dest,
-      meta: { ...chain.meta },
-      sourcesTried: [...chain.sourcesTried, 'web_search'],
-    }
-  }
+  if (hit) return webSearchSuccess(normalized, hit.href, dest, meta, [...tried, 'web_search'])
 
   if (failures.length === 0) {
     // Defensive: should be unreachable (candidates was non-empty above), but
     // never index an empty list.
-    const err = makeError('not_found', 'No candidate could be downloaded', 'All resolved URLs were unusable')
-    return {
-      doi: normalized,
+    return item(normalized, {
       success: false,
       source: null,
       pdfUrl: null,
       file: null,
-      meta: { ...chain.meta },
-      sourcesTried: chain.sourcesTried,
-      error: err,
-    }
+      meta,
+      sourcesTried: tried,
+      error: makeError('not_found', 'No candidate could be downloaded', 'All resolved URLs were unusable'),
+    })
   }
 
   const last = failures[failures.length - 1]!
-  const code = (() => {
-    switch (last.reason) {
-      case 'download_not_a_pdf': return 'download_not_a_pdf' as const
-      case 'download_host_not_allowed': return 'download_host_not_allowed' as const
-      case 'download_size_exceeded': return 'download_size_exceeded' as const
-      case 'download_io_error': return 'download_io_error' as const
-      default: return 'download_network_error' as const
-    }
-  })()
-  return {
-    doi: normalized,
-    success: false,
-    source: last.source,
-    pdfUrl: null,
-    file: null,
-    meta: { ...chain.meta },
-    sourcesTried: chain.sourcesTried,
-    error: makeError(code, `Download failed from ${last.source}: ${last.reason}${last.detail ? ` (${last.detail})` : ''}`),
-  }
+  return downloadFailure(normalized, last.source, last.reason, last.detail, meta, tried)
 }
 
 /** Batch fetch with per-item results, summary, and retry hints. */

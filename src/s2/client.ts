@@ -86,7 +86,6 @@ export interface ScholarClientOptions {
 export interface ScholarClient {
   readonly request: (method: 'GET' | 'POST', url: string, params?: Record<string, string | undefined>, json?: unknown) => Promise<any>
   readonly apiKey: () => Promise<string | undefined>
-  readonly minGapMs: () => number
   readonly timeoutMs: number
   readonly signal?: AbortSignal
 }
@@ -102,12 +101,6 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
     if (keyInvalid) return undefined
     const key = options.apiKey ? await options.apiKey() : undefined
     return key?.trim() ? key : undefined
-  }
-
-  function gapMs(): number {
-    const override = options.minGapMs
-    if (override !== undefined && override > 0) return override
-    return keyInvalid ? ANONYMOUS_GAP_MS : ANONYMOUS_GAP_MS
   }
 
   /** The effective pacing given whether a key is (still) considered valid. */
@@ -200,7 +193,6 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
   return {
     request,
     apiKey: currentKey,
-    minGapMs: gapMs,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     signal: options.signal,
   }
@@ -423,5 +415,3 @@ export async function batchPapers(client: ScholarClient, ids: readonly string[],
   const r = await client.request('POST', `${GRAPH}/paper/batch`, { fields: fields ?? DEFAULT_PAPER_FIELDS }, { ids: ids.slice(0, S2_BATCH_MAX) })
   return Array.isArray(r) ? r : []
 }
-
-export const S2_ENDPOINTS = { GRAPH, RECS } as const

@@ -1,14 +1,12 @@
-import type { PaperMeta } from '../src/fetch/chain.js'
-
-// Mock the browser-backed cloak module so no Chromium is launched in tests.
-vi.mock('../src/fetch/cloak.js', () => ({ cloakFetchPdf: vi.fn() }))
-
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildFilename, downloadPdf, idemLoad, idemStore } from '../src/fetch/download.js'
 import type { PaperMeta } from '../src/fetch/chain.js'
+
+// Mock the browser-backed cloak module so no Chromium is launched in tests.
+vi.mock('../src/fetch/cloak.js', () => ({ cloakFetchPdf: vi.fn() }))
 
 const fetchMock = vi.fn()
 let tmp: string
