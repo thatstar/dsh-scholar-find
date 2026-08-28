@@ -20,6 +20,9 @@ await build({
   platform: 'node',
   target: 'es2022',
   outfile: join(root, 'lib', 'sciverse', 'sdk.bundle.js'),
+  // Redistribution requires retaining the third-party notice; see
+  // THIRD_PARTY_NOTICES.md for the full Apache-2.0 text.
+  banner: { js: '/* Bundles the "sciverse" SDK (Apache-2.0, Sciverse Platform Team).\n   See THIRD_PARTY_NOTICES.md in the package root. */' },
   logLevel: 'info',
 })
 // Remove the tsc-compiled twin (lib/sciverse/sdk.js) that re-exports the bare
