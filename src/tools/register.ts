@@ -898,8 +898,8 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       limit: { type: 'integer', description: 'Max bytes to read (server-enforced cap)' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' } },
-      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}.`,
+      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'string' } } },
+      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.join(', ')}` : ''}.`,
     ),
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
@@ -907,9 +907,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
       const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit })) as any
       const text = String(r?.text ?? '')
+      // Surfaces figure/table file_names referenced as ![alt](file_name) in this
+      // slice so the model can call sciverse_get_resource without rereading.
+      const images = [...text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((f, i, a) => a.indexOf(f) === i)
       return {
-        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text,
-        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : 'No content returned (document may not be content-accessible).',
+        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images,
+        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${images.length ? `\n\n**Figures in this slice:** ${images.join(', ')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : 'No content returned (document may not be content-accessible).',
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
