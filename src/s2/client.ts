@@ -1,7 +1,7 @@
 /**
  * Independent TypeScript client for the Semantic Scholar Graph API.
- * Clean-room implementation from the public API docs; no code from the
- * reference skill repos. Built on the Node global `fetch`.
+ * Clean-room implementation from the public API docs. Built on the Node
+ * global `fetch`.
  *
  * Enforces: per-request pacing (auto 1100 ms with a key / 5000 ms anonymous),
  * exponential backoff on 429/504, and a 403-with-key fallback to anonymous.

@@ -34,28 +34,20 @@ toggle, proxy, output directory, …) in the **DSH Web UI: Settings → 插件 (
   Node.js host. No Python, no shelling out to Python.
 - **Independent implementation.** The plugin is written from scratch against
   the *public HTTP APIs* (Semantic Scholar Graph API, Unpaywall API, Crossref,
-  arXiv Atom, bioRxiv API, PMC/Europe PMC). Do **not** copy source code from
-  other projects — including the reference skill repos below (copyright /
-  licensing independence is a project requirement).
+  arXiv Atom, bioRxiv API, PMC/Europe PMC). Do **not** copy source code or
+  designs from other projects (copyright / licensing independence is a project
+  requirement). **Reference citations live only in `README.md`** — that is the
+  single sanctioned place that names external skills.
 - **No user-preset dependency.** The plugin is a self-contained
   host-composition unit — tools, settings section, and companion-instructions
   prompt row are mounted deployment-wide (host plane). No personalized agent
   preset is required or used.
-- **Reference-only repos.** The following repos are *references* for API
-  behavior and tool UX design — never an upstream to vendor, sync, or import:
+- **No CLI.** The plugin ships no binary; every capability is a DSH tool. Retry
+  hints in `paper_fetch_batch` envelopes (`next`) name the DSH tools to re-call,
+  and the idempotency sidecar is `.dsh-scholar-idem/`.
 
-  | Repo | What we take from it |
-  | --- | --- |
-  | [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill) | S2 REST endpoint semantics, query/filter vocabulary, result presentation conventions |
-  | [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Source-chain ordering, safety requirements (SSRF gate, `%PDF` check, size cap), agent-facing result envelope design |
-
-  Only the *patterns* are borrowed, not the implementation: this plugin ships
-  **no `paper-fetch` CLI binary** — its retry hints (`envelope.next`) name the
-  DSH tools (`paper_fetch_batch` / `paper_fetch_download`), and the idempotency
-  sidecar lives in `.dsh-scholar-idem/` (not the reference's `.paper-fetch-idem/`).
-
-  Research clones may live in `.research-tmp/` (git-ignored) for consultation;
-  they are disposable and never part of the shipped plugin.
+  Research/consultation clones may live in `.research-tmp/` (git-ignored); they
+  are disposable and never part of the shipped plugin.
 
 ## The `.notes/` rule (mandatory)
 

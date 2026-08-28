@@ -2,7 +2,7 @@
  * Download-layer safety for the paper_fetch tools: SSRF gate, `%PDF` magic
  * check, size cap, and a redirect walk that re-validates every hop.
  * Independent TypeScript implementation of the documented safety
- * requirements (no code from the reference repos).
+ * requirements.
  * @module dsh-scholar-find/fetch-safety
  */
 
