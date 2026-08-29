@@ -846,7 +846,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_search_papers',
-    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: a keyword \`query\` reports a hit total capped at 10000 by the server; structured filters give exact counts. \`abstract_contains\` is folded into the full-text \`query\`.`,
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: reported hit totals are capped at 10000 by the server whenever the matched set is larger (keyword query or broad filter); narrow the query/filters for an exact count. \`abstract_contains\` is folded into the full-text \`query\`.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
       query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
@@ -886,11 +886,15 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const r = (await sc.searchPapers(payload)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const total = r.total_count ?? results.length
-      const queryUsed = typeof payload.query === 'string' && payload.query.trim() !== ''
-      const capped = queryUsed && total >= SCIVERSE_TOTAL_HITS_CAP
+      // The backend caps reported hit counts at 10000 whenever the matched set is
+      // larger (track_total_hits-style) — for keyword queries AND broad structured
+      // filters alike (e.g. subjects alone hit it, with no keyword query). Annotate
+      // any 10000 so it is not mistaken for a real total; exact counts require a
+      // narrowed query/filter set (structured filters are not always exact).
+      const capped = total >= SCIVERSE_TOTAL_HITS_CAP
       const markdown = results.length
         ? `**${total} papers** (page ${args.page ?? 1})${capped
-          ? `\n\n> total is capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server (keyword query). Use structured filters (title_contains / journals / subjects / year_from / year_to) for exact counts.`
+          ? `\n\n> total is capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server (the matched set is larger). Narrow the query/filters (title_contains / journals / subjects / year range) for an exact count.`
           : ''}\n\n${fmtPapers(results)}`
         : 'No papers found.'
       return { ok: true, total, page: args.page ?? 1, results, markdown }
