@@ -14,7 +14,7 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
-import { mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
+import { buildFigureName, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
 import { resolveRootDir, resolveSubDir } from '../outdir.js'
@@ -931,21 +931,23 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       limit: { type: 'integer', description: 'Max bytes to read (server-enforced cap)' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'string' } } },
-      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.join(', ')}` : ''}.`,
+      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: { file_name: { type: 'string' }, caption: { type: 'string' } }, additionalProperties: true } } },
+      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
     ),
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, doc_id: args.doc_id, bytes_returned: 0, next_offset: 0, text: '', markdown: sciverseNotConfigured() } as any
+      if (!key) return { ok: false, doc_id: args.doc_id, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
       const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit })) as any
       const text = String(r?.text ?? '')
-      // Surfaces figure/table file_names referenced as ![alt](file_name) in this
-      // slice so the model can call sciverse_get_resource without rereading.
-      const images = [...text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((f, i, a) => a.indexOf(f) === i)
+      // Surfaces figure/table references as ![alt](file_name) in this slice, with
+      // BOTH the file_name (for sciverse_get_resource) and the alt caption (the
+      // only semantic hint the model gets) so it can judge the figure content
+      // without rereading.
+      const figs = extractFigureRefs(text)
       return {
-        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images,
-        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${images.length ? `\n\n**Figures in this slice:** ${images.join(', ')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} bytes). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
+        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images: figs,
+        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} bytes). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
@@ -954,9 +956,11 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_get_resource',
-    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline (avoids bloating context).`,
+    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline. Pass the paper id (doi/unique_id/title via \`paper\`) and the figure caption (the \`alt\` text, via \`caption\`) to save a self-describing filename instead of the raw hash.`,
     parameters: {
-      file_name: { type: 'string', description: 'Image file name from the markdown (relative path)', required: true },
+      file_name: { type: 'string', description: 'Image file name from read_content markdown (relative path)', required: true },
+      paper: { type: 'string', description: `Paper identifier for the filename: a DOI, unique_id (e.g. paper:10.1038/xxx), or short title. Scopes the saved name so figures from different papers don't collide.` },
+      caption: { type: 'string', description: `Figure caption / alt text from read_content (e.g. "Figure 2. Architecture"). Embedded in the saved filename so it's self-describing.` },
       save: { type: 'boolean', description: 'Write the image to disk (default true). When false, only metadata is returned (no path).' },
       out_dir: { type: 'string', description: `Directory for saved figures, resolved against the session workspace (default: <defaultOutputDir>/figs, i.e. .scholar/figs).` },
     },
@@ -996,7 +1000,13 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const outDir = typeof args.out_dir === 'string' && args.out_dir
         ? resolveRootDir(args.out_dir, base)
         : resolveSubDir(resolveRootDir(env.settings().defaultOutputDir, base), 'figs')
-      const name = safeImageBasename(args.file_name, sniffed.ext)
+      // Name the file from the paper identity + caption when the model supplies
+      // them (so it's self-describing and paper-scoped); otherwise fall back to
+      // the raw asset path so distinct figures never collapse to one name.
+      const hasContext = (typeof args.paper === 'string' && args.paper.trim()) || (typeof args.caption === 'string' && args.caption.trim())
+      const name = hasContext
+        ? buildFigureName({ paper: args.paper, caption: args.caption, ext: sniffed.ext })
+        : safeImageBasename(args.file_name, sniffed.ext)
       let path: string
       try {
         await mkdir(outDir, { recursive: true })

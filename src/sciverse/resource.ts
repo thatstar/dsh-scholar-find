@@ -64,6 +64,62 @@ export function safeImageBasename(file_name: string, ext: string): string {
   return `${usable}.${ext}`
 }
 
+/** One image reference parsed out of a `read_content` Markdown slice. */
+export type FigureRef = {
+  /** The asset path `file_name` to pass to `get_resource`. */
+  file_name: string
+  /** The `alt` text from `![alt](file_name)` — a description/caption when present. */
+  caption: string
+}
+
+/**
+ * Extract figure/table references from a `read_content` slice's Markdown,
+ * capturing both the `file_name` (what `get_resource` needs) and the `alt`
+ * text (the caption — the only semantic hint the model gets about the figure).
+ * De-duplicated by `file_name`.
+ */
+export function extractFigureRefs(text: string): FigureRef[] {
+  const out: FigureRef[] = []
+  const seen = new Set<string>()
+  for (const m of text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+    const file_name = m[2]
+    if (!file_name || seen.has(file_name)) continue
+    seen.add(file_name)
+    out.push({ file_name, caption: (m[1] ?? '').trim() })
+  }
+  return out
+}
+
+/**
+ * Slug a string into a safe `[a-z0-9-]` token: lowercase everything, collapse
+ * non-alphanumeric runs to a single dash, trim, cap and re-trim. Digits are
+ * kept so a caption like "Figure 2. Architecture" survives as `figure-2-architecture`.
+ */
+function figureSlug(value: string, max: number): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max)
+    .replace(/-+$/g, '')
+}
+
+/**
+ * Build a human-meaningful figure filename from the paper identity and caption
+ * the model already has at call time. Purely model-driven (no persisted state):
+ * `paper` (a DOI/unique_id/title, e.g. `paper:10.1038/xxx`) scopes the name so
+ * figures from different papers never collide, and `caption` (the alt text)
+ * embeds the semantic hint (and any figure number present) so the name is
+ * self-describing. Falls back to `figure` when nothing usable is provided;
+ * callers choose the raw `safeImageBasename` when the model passes neither.
+ */
+export function buildFigureName(opts: { paper?: string; caption?: string; ext: string }): string {
+  const paperSlug = opts.paper ? figureSlug(opts.paper.replace(/^paper[:/]+/i, ''), 40) : ''
+  const captionSlug = opts.caption ? figureSlug(opts.caption, 50) : 'figure'
+  const core = [paperSlug, captionSlug].filter(Boolean).join('-') || 'figure'
+  return `${core}.${opts.ext}`
+}
+
 /** Structured error for `sciverse_get_resource`, mirroring the paper_fetch_* envelopes. */
 export interface GetResourceError {
   code: string

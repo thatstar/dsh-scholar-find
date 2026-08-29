@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapGetResourceError, safeImageBasename, sniffImageType } from '../src/sciverse/resource.js'
+import { buildFigureName, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../src/sciverse/resource.js'
 
 describe('sniffImageType', () => {
   it('detects PNG, JPEG, GIF and WebP from magic bytes', () => {
@@ -73,5 +73,44 @@ describe('mapGetResourceError', () => {
     const r = mapGetResourceError(new TypeError('fetch failed'))
     expect(r.code).toBe('network_error')
     expect(r.retryable).toBe(true)
+  })
+})
+
+describe('extractFigureRefs', () => {
+  it('captures both file_name and caption (alt) from ![...](...)', () => {
+    const md = 'Text before\n![Figure 2. Architecture of the model](5bc89b37.jpg)\nText after\n'
+    expect(extractFigureRefs(md)).toEqual([{ file_name: '5bc89b37.jpg', caption: 'Figure 2. Architecture of the model' }])
+  })
+
+  it('returns empty caption for a bare ![](file) and de-dupes by file_name', () => {
+    const md = '![a](x.png) ![b](x.png) ![](y.png)'
+    expect(extractFigureRefs(md)).toEqual([
+      { file_name: 'x.png', caption: 'a' },
+      { file_name: 'y.png', caption: '' },
+    ])
+  })
+
+  it('yields nothing for a text slice with no figure placeholders', () => {
+    expect(extractFigureRefs('just some prose, no images')).toEqual([])
+  })
+})
+
+describe('buildFigureName', () => {
+  it('builds a paper-scoped, caption-suffixed name', () => {
+    expect(buildFigureName({ paper: 'paper:10.1038/s41586-021-03819-2', caption: 'Figure 2. Architecture', ext: 'png' }))
+      .toBe('10-1038-s41586-021-03819-2-figure-2-architecture.png')
+  })
+
+  it('keeps a caption-only name and falls back to figure', () => {
+    expect(buildFigureName({ caption: 'Convergence curves', ext: 'jpg' })).toBe('convergence-curves.jpg')
+    expect(buildFigureName({ paper: 'My Paper Title', ext: 'gif' })).toBe('my-paper-title-figure.gif')
+    expect(buildFigureName({ ext: 'webp' })).toBe('figure.webp')
+  })
+
+  it('sanitises hostile characters and caps length', () => {
+    const name = buildFigureName({ paper: 'a//b::c', caption: '../../etc/passwd & more!!', ext: 'png' })
+    expect(name).not.toMatch(/\.\./)
+    expect(name.endsWith('.png')).toBe(true)
+    expect(name.length).toBeLessThan(120)
   })
 })

@@ -31,7 +31,11 @@ Three tool families are available for academic paper research:
   full-text slices (\`sciverse_read_content\`), and figures/tables
   (\`sciverse_get_resource\`, which validates the bytes are a real image and, by
   default, saves them into the session workspace — it returns the saved \`path\`,
-  never the full base64 inline). One Bearer token (\`sciverseApiKeyRef\`).
+  never the full base64 inline). \`sciverse_read_content\` surfaces each figure's
+  \`alt\` caption alongside its \`file_name\`; pass that caption (and the paper
+  identity via the \`paper\` argument) to \`sciverse_get_resource\` so the saved
+  figure is self-describing (e.g. \`10.1038-xxx-figure-2-architecture.png\`).
+  One Bearer token (\`sciverseApiKeyRef\`).
 
 Usage rules:
 
