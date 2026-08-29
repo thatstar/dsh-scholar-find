@@ -314,41 +314,50 @@ export class ScholarCardController {
     if (!snapshot.dirty || snapshot.invalid || snapshot.saving) return Promise.resolve()
     this.store.update((draft) => { draft.saving = true })
     this.writing = this.writing.then(async () => {
-      const { value, base } = this.view()
-      const apiWrites: Promise<unknown>[] = []
-      const writes: Promise<void>[] = []
-      const secretFields: string[] = []
-      for (const spec of this.specs) {
-        const field = this.store.getSnapshot().fields[spec.key]
-        if (!field) continue
-        if (this.isSecret(spec.key)) {
-          if (field.raw !== '') {
-            secretFields.push(spec.key)
-            const ref = this.refOf(spec.key)
-            const api = this.api?.credentials
-            if (api && ref) {
-              apiWrites.push(api.set({ ref, value: field.raw }).catch(() => undefined))
+      try {
+        const { value, base } = this.view()
+        const apiWrites: Promise<unknown>[] = []
+        const writes: Promise<void>[] = []
+        const secretFields: string[] = []
+        for (const spec of this.specs) {
+          const field = this.store.getSnapshot().fields[spec.key]
+          if (!field) continue
+          if (this.isSecret(spec.key)) {
+            if (field.raw !== '') {
+              secretFields.push(spec.key)
+              const ref = this.refOf(spec.key)
+              const api = this.api?.credentials
+              if (api && ref) {
+                apiWrites.push(api.set({ ref, value: field.raw }).catch(() => undefined))
+              }
             }
+            continue
           }
-          continue
+          if (field.raw === textOf(value[spec.key] ?? base[spec.key])) continue
+          if (field.raw === '') {
+            writes.push(this.scope.unset(spec.key))
+            continue
+          }
+          const parsed = spec.kind === 'number' ? Number(field.raw) : spec.kind === 'boolean' ? field.raw === 'true' : field.raw
+          writes.push(this.scope.set(spec.key, parsed))
         }
-        if (field.raw === textOf(value[spec.key] ?? base[spec.key])) continue
-        if (field.raw === '') {
-          writes.push(this.scope.unset(spec.key))
-          continue
-        }
-        const parsed = spec.kind === 'number' ? Number(field.raw) : spec.kind === 'boolean' ? field.raw === 'true' : field.raw
-        writes.push(this.scope.set(spec.key, parsed))
+        await Promise.all([...writes, ...apiWrites])
+        this.store.update((draft) => {
+          for (const field of secretFields) {
+            const f = draft.fields[field]
+            if (f) f.raw = ''
+          }
+        })
+        for (const field of secretFields) await this.readCredential(field)
+      } catch (e) {
+        // A failed save must not strand the card: keep the user's input (so they
+        // can fix and retry) and release the write latch. `console.warn` keeps
+        // the error audible without rejecting the chain (which would brand
+        // `this.writing` rejected and break every later save).
+        console.warn(`[dsh-scholar-find] save failed: ${(e as Error).message}`)
+      } finally {
+        this.store.update((draft) => { draft.saving = false })
       }
-      await Promise.all([...writes, ...apiWrites])
-      this.store.update((draft) => {
-        for (const field of secretFields) {
-          const f = draft.fields[field]
-          if (f) f.raw = ''
-        }
-        draft.saving = false
-      })
-      for (const field of secretFields) await this.readCredential(field)
     })
     return this.writing
   }

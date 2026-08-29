@@ -66,4 +66,14 @@ describe('astaSnippetSearch', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(astaSnippetSearch('ak-test', { query: 'q' })).rejects.toThrow(/rate limited/)
   })
+
+  it('skips a method notification that precedes the real result', async () => {
+    const data = [snippet()]
+    const body = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n\ndata: ${JSON.stringify(rpcResult({ content: [{ type: 'text', text: JSON.stringify({ data }) }], isError: false }))}\n\n`
+    fetchMock.mockResolvedValue(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await astaSnippetSearch('ak-test', { query: 'q' })
+    expect(result).toHaveLength(1)
+    expect(result[0]!.paper!.title).toBe('A Paper')
+  })
 })

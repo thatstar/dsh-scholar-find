@@ -79,6 +79,7 @@ type ResultSeed = {
   sourcesTried: readonly string[]
   skipped?: boolean
   skipReason?: string
+  verified?: boolean
   error?: EnvelopeError
 }
 
@@ -122,7 +123,7 @@ function notFound(doi: string, meta: Record<string, unknown>, sourcesTried: read
   })
 }
 
-function webSearchSuccess(doi: string, href: string, file: string | null, meta: Record<string, unknown>, sourcesTried: readonly string[]): FetchItemResult {
+function webSearchSuccess(doi: string, href: string, file: string | null, meta: Record<string, unknown>, sourcesTried: readonly string[], verified = true): FetchItemResult {
   return item(doi, {
     success: true,
     source: 'web_search',
@@ -130,6 +131,7 @@ function webSearchSuccess(doi: string, href: string, file: string | null, meta: 
     file,
     meta,
     sourcesTried,
+    verified,
   })
 }
 
@@ -246,8 +248,10 @@ export async function resolveOne(rt: FetchRuntime, doi: string): Promise<FetchIt
   if (!chain.candidates.length) {
     // Last-resort automatic fallback: web-search the title and report the first
     // likely free-PDF URL (no download). Only then report a clean not_found.
+    // Marked `verified:false` — this URL was never fetched, so it is a hint,
+    // not a confirmed OA copy.
     const webUrl = (await webCandidates(rt, chain.meta))[0]
-    if (webUrl) return webSearchSuccess(normalized, webUrl, null, meta, [...tried, 'web_search'])
+    if (webUrl) return webSearchSuccess(normalized, webUrl, null, meta, [...tried, 'web_search'], false)
     return notFound(normalized, meta, tried)
   }
   const first = chain.candidates[0]!
@@ -272,10 +276,19 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
 
   const outDir = resolveSubDir(resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir), 'pdfs')
 
-  const fname = buildFilename(chain.meta, normalized)
+  const fname = buildFilename(chain.meta, 'paper', normalized)
   const dest = join(outDir, fname)
   const meta = { ...chain.meta }
   const tried = chain.sourcesTried
+
+  // Skip existing files BEFORE any fallback: the web-search fallback writes to
+  // the same `dest`, so leaving this check after it would let an existing file
+  // be overwritten even when `overwrite: false`.
+  const exists = await fileExists(dest)
+  if (exists && !opts.overwrite) {
+    const first = chain.candidates[0]
+    return candidateSuccess(normalized, first?.source ?? null, first?.pdfUrl ?? null, dest, meta, tried, { skipReason: 'file_exists' })
+  }
 
   // No candidate source yielded a PDF URL. Last-resort automatic fallback: web-
   // search the title for a free PDF; only then report a clean not_found.
@@ -283,12 +296,6 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
     const hit = await tryWebSearch(rt, chain.meta, dest, opts)
     if (hit) return webSearchSuccess(normalized, hit.href, dest, meta, [...tried, 'web_search'])
     return notFound(normalized, meta, tried)
-  }
-
-  const exists = await fileExists(dest)
-  if (exists && !opts.overwrite) {
-    const first = chain.candidates[0]!
-    return candidateSuccess(normalized, first.source, first.pdfUrl, dest, meta, tried, { skipReason: 'file_exists' })
   }
 
   const failures: Array<{ source: string; reason: string; detail?: string }> = []

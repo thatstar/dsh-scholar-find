@@ -11,7 +11,8 @@
 import { timedFetch } from '../fetch/transport.js'
 import { sleep } from '../util/async.js'
 
-const GRAPH = 'https://api.semanticscholar.org/graph/v1'
+/** S2 Graph API base URL (shared by this client and the fetch chain's title resolver). */
+export const GRAPH = 'https://api.semanticscholar.org/graph/v1'
 const RECS = 'https://api.semanticscholar.org/recommendations/v1'
 
 /** Max backoff wait between retries, ms. */
@@ -191,13 +192,16 @@ export function createScholarClient(options: ScholarClientOptions): ScholarClien
         throw e
       }
       if (r.status === 403 && key) {
-        // Invalid or expired key: drop it and retry unauthenticated.
+        // Invalid or expired key: drop it and retry unauthenticated. Drain the
+        // body so the socket is not held while we retry.
+        await r.body?.cancel().catch(() => {})
         keyInvalid = true
         key = undefined
         continue
       }
       if (r.status === 429 || r.status === 504) {
         if (attemptNo < MAX_RETRIES) {
+          await r.body?.cancel().catch(() => {})
           await sleep(options.backoffMs ? options.backoffMs(attemptNo) : backoff(attemptNo), options.signal)
           continue
         }
@@ -304,6 +308,8 @@ async function paginate(client: ScholarClient, url: string, params: Record<strin
   while (out.length < maxResults) {
     const r = await client.request('GET', url, next)
     out.push(...(r.data ?? []))
+    // `r.next` is the next `offset` (a number). It is typed as a string here
+    // because params values are strings; URLSearchParams coerces the number.
     const cursor: string | undefined = r.next
     if (!cursor || out.length >= maxResults) break
     next.offset = cursor

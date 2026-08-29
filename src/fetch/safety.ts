@@ -154,9 +154,12 @@ export function looksLikePdf(bytes: Uint8Array): boolean {
   return bytes.length >= PDF_MAGIC.length && PDF_MAGIC.every((b, i) => bytes[i] === b)
 }
 
-/** Read a response body up to `cap` bytes; null when it exceeds the cap. */
+/** Read a response body up to `cap` bytes; null when it exceeds the cap. A
+ * bodyless response returns an empty buffer (it is a non-PDF, not an
+ * over-cap), and on over-cap we cancel the reader so the connection is not
+ * left streaming the rest of a document we are discarding. */
 export async function readBodyCapped(r: Response, cap: number, signal?: AbortSignal): Promise<Uint8Array | null> {
-  if (!r.body) return null
+  if (!r.body) return new Uint8Array(0)
   const reader = r.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -165,7 +168,10 @@ export async function readBodyCapped(r: Response, cap: number, signal?: AbortSig
       const { done, value } = await reader.read()
       if (done) break
       total += value.byteLength
-      if (total > cap) return null
+      if (total > cap) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
       chunks.push(value)
     }
   } finally {

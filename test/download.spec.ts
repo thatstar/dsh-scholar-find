@@ -39,6 +39,14 @@ describe('buildFilename', () => {
     const name = buildFilename(meta, 'x')
     expect(name).toMatch(/^unknown-2024-A_very_long_paper_title_that_should_be_truncated_t\.pdf$/)
   })
+
+  it('appends a DOI slug so distinct papers cannot collide on the same name', () => {
+    const meta: PaperMeta = { title: 'AlphaFold', year: 2021, author: 'John Jumper' }
+    const a = buildFilename(meta, 'paper', '10.1038/s41586-021-03819-2')
+    const b = buildFilename(meta, 'paper', '10.1038/s41586-021-03819-9')
+    expect(a).toMatch(/^Jumper-2021-AlphaFold-10_1038_s41586_021_03819_2\.pdf$/)
+    expect(a).not.toBe(b)
+  })
 })
 
 describe('downloadPdf', () => {

@@ -45,6 +45,9 @@ export interface FetchItemResult {
   sourcesTried: readonly string[]
   skipped?: boolean
   skipReason?: string
+  /** true when the PDF URL was fetched/validated; false for an unverified
+   * web-search hit in a resolve-only call. */
+  verified?: boolean
   error?: EnvelopeError
 }
 

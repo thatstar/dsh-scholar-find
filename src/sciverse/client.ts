@@ -11,7 +11,7 @@
  *
  * The SDK value import comes from the esbuild bundle (`./sdk.bundle.js`) — the
  * published `sciverse` entry uses extensionless ESM imports that plain Node
- * cannot resolve (see src/sciverse/sdk.ts and scripts/build-sciverse.mjs).
+ * cannot resolve (see src/sciverse/sdk.bundle.ts and scripts/build-sciverse.mjs).
  * @module dsh-scholar-find/sciverse
  */
 

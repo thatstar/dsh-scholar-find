@@ -66,4 +66,11 @@ describe('readBodyCapped', () => {
     expect(out).not.toBeNull()
     expect(Array.from(out!)).toEqual([1, 2, 3, 4, 5])
   })
+
+  it('returns an empty buffer (not null) for a bodyless response', async () => {
+    const r = new Response(null, { status: 204 })
+    const out = await readBodyCapped(r, 10)
+    expect(out).not.toBeNull()
+    expect(out!.byteLength).toBe(0)
+  })
 })

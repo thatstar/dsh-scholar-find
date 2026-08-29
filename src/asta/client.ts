@@ -46,25 +46,37 @@ export interface AstaSnippet {
   }
 }
 
+/** A parsed JSON-RPC envelope that actually carries a result or error (i.e. not
+ * a `method` notification the server may send ahead of the answer). Both the
+ * streaming and the fallback parser require this so a trailing notification
+ * never shadows the real result. */
+function isResultEnvelope(p: JSONRpcResponse | undefined): p is JSONRpcResponse {
+  return Boolean(p && p.jsonrpc === '2.0' && (p.result !== undefined || p.error !== undefined))
+}
+
 /**
  * Parse a JSON-RPC envelope from an SSE (`event: message\ndata: {...}`) or a
- * plain JSON response body. CRLF-tolerant (`.trim()` drops a trailing `\r`).
+ * plain JSON response body. Only accepts an envelope that carries a
+ * `result`/`error` (skips `method` notifications), CRLF-tolerant (`.trim()`
+ * drops a trailing `\r`).
  */
 function parseEnvelope(body: string): JSONRpcResponse | undefined {
-  // SSE: every `data:` line is a JSON payload; return the first that parses.
+  // SSE: every `data:` line is a JSON payload; return the first that parses
+  // and carries a result/error.
   const dataLines = body.match(/^data:\s*(.+)$/gm)
   if (dataLines) {
     for (const line of dataLines) {
       try {
         const parsed = JSON.parse(line.replace(/^data:\s*/, '').trim()) as JSONRpcResponse
-        if (parsed) return parsed
+        if (isResultEnvelope(parsed)) return parsed
       } catch {
         // not JSON — skip to the next data line
       }
     }
   }
   try {
-    return JSON.parse(body.trim()) as JSONRpcResponse
+    const parsed = JSON.parse(body.trim()) as JSONRpcResponse
+    return isResultEnvelope(parsed) ? parsed : undefined
   } catch {
     return undefined
   }
@@ -90,7 +102,7 @@ async function readEnvelope(res: Response): Promise<JSONRpcResponse | undefined>
     if (!line.startsWith('data:')) return undefined
     try {
       const parsed = JSON.parse(line.slice(5).trim()) as JSONRpcResponse
-      if (parsed?.jsonrpc === '2.0' && (parsed?.result !== undefined || parsed?.error)) {
+      if (isResultEnvelope(parsed)) {
         await reader.cancel().catch(() => {})
         return parsed
       }

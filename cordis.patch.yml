@@ -13,7 +13,7 @@
 # The plugin registers, from its `apply(ctx)`:
 #   - the `dsh-scholar-find` settings section (Web UI: Settings -> Plugins ->
 #     Plugin configuration),
-#   - the `scholar_search_*` / `paper_fetch_*` tools,
+#   - the `scholar_search_*` / `paper_fetch_*` / `sciverse_*` tools,
 #   - the companion-instructions prompt section.
 - insert:
     - id: dsh-scholar-find

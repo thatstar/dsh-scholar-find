@@ -10,7 +10,7 @@
  */
 
 import type { ScholarClient } from '../s2/client.js'
-import { getPaper, ScholarHttpError } from '../s2/client.js'
+import { getPaper, GRAPH, ScholarHttpError } from '../s2/client.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
 import { timedFetch } from './transport.js'
 
@@ -540,7 +540,7 @@ export async function resolveTitle(
   // Pass 2 — Semantic Scholar match (covers arXiv-only papers).
   resolversTried.push('semantic_scholar')
   try {
-    const d = await ctx.s2.request('GET', 'https://api.semanticscholar.org/graph/v1/paper/search/match', { query: q, fields: 'title,authors,year,venue,externalIds' })
+    const d = await ctx.s2.request('GET', `${GRAPH}/paper/search/match`, { query: q, fields: 'title,authors,year,venue,externalIds' })
     const top = (d.data ?? [])[0]
     if (top && titleSimilarity(q, top.title ?? '') >= TITLE_SIMILARITY_MIN) {
       const ext = top.externalIds ?? {}

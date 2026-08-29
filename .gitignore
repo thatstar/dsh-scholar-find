@@ -8,8 +8,8 @@ build/
 # Plugin build output (built via `prepare`, not git-tracked — mirrors upstream dsh plugins)
 lib/
 
-# Plugin PDF output (created on use in the session workspace)
-scholar-pdfs/
+# Plugin output root (default output dir + per-tool subdirs: pdfs/md/figs/idem)
+.scholar/
 
 # Logs
 logs/
@@ -53,6 +53,3 @@ Thumbs.db
 
 # Temporary upstream research clones
 .research-tmp/
-
-# paper-fetch default PDF output (created on use)
-pdfs/

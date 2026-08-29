@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { OUTPUT_SUBDIRS, resolveRootDir, resolveSubDir } from '../src/outdir.js'
+import { OUTPUT_SUBDIRS, resolveInsideRoot, resolveRootDir, resolveSubDir } from '../src/outdir.js'
 
 describe('resolveRootDir', () => {
   it('uses the setting unchanged when it is absolute', () => {
@@ -26,5 +26,26 @@ describe('resolveSubDir', () => {
 
   it('exposes exactly the four expected subdirs', () => {
     expect(Object.keys(OUTPUT_SUBDIRS).sort()).toEqual(['figs', 'idem', 'md', 'pdfs'])
+  })
+})
+
+describe('resolveInsideRoot', () => {
+  it('returns the resolved target for a path inside the workspace', () => {
+    expect(resolveInsideRoot('/tmp/ws', 'figs')).toBe('/tmp/ws/figs')
+    expect(resolveInsideRoot('/tmp/ws', './figs')).toBe('/tmp/ws/figs')
+  })
+
+  it('rejects a path that escapes the workspace (..)', () => {
+    expect(resolveInsideRoot('/tmp/ws', '../../evil')).toBeNull()
+    expect(resolveInsideRoot('/tmp/ws', 'a/../../evil')).toBeNull()
+  })
+
+  it('rejects an absolute path (or one resolving outside the workspace)', () => {
+    expect(resolveInsideRoot('/tmp/ws', '/etc/passwd')).toBeNull()
+    expect(resolveInsideRoot('/tmp/ws', '/tmp/ws-nearby')).toBeNull()
+  })
+
+  it('allows the workspace root itself', () => {
+    expect(resolveInsideRoot('/tmp/ws', '.')).toBe('/tmp/ws')
   })
 })

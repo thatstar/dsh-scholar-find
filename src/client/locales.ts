@@ -26,7 +26,7 @@ export type ScholarLocaleKey =
 
 export const en: Record<ScholarLocaleKey, string> = {
   title: 'Scholar Retrieval',
-  description: 'Semantic Scholar search and open-access PDF fetch.',
+  description: 'Semantic Scholar search, open-access PDF fetch, and Sciverse corpus retrieval.',
   save: 'Save',
   saving: 'Saving…',
   discard: 'Discard',
@@ -65,7 +65,7 @@ export const en: Record<ScholarLocaleKey, string> = {
 
 export const zh: Record<ScholarLocaleKey, string> = {
   title: '学术检索',
-  description: 'Semantic Scholar 论文检索与开放获取 PDF 下载。',
+  description: 'Semantic Scholar 论文检索、开放获取 PDF 下载与 Sciverse 语料检索。',
   save: '保存',
   saving: '保存中…',
   discard: '放弃修改',

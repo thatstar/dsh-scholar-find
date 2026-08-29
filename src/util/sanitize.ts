@@ -16,7 +16,12 @@
  * A plain, deeply-clean object/array structure is returned; otherwise the
  * offending value is omitted (object key / array element) or, at the root,
  * replaced by `null`.
- * @module dsh-scholar/util/sanitize
+ *
+ * Caution: any non-plain object (typed arrays, `Date`, `Map`, `Set`, …) is
+ * treated as a plain object — a `Uint8Array` becomes `{0:…,1:…}` and a `Date`
+ * becomes `{}`. Safe today because every tool input comes from `JSON.parse` /
+ * literals, but do not rely on this for array buffers or class instances.
+ * @module dsh-scholar-find/util/sanitize
  */
 
 const OMIT = Symbol('omitted')

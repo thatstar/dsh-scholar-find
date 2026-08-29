@@ -7,7 +7,7 @@
  * @module dsh-scholar-find/outdir
  */
 
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 /**
  * One subdir per tool/family under the root. Names are kept short and stable:
@@ -35,4 +35,19 @@ export function resolveRootDir(setting: string, base: string): string {
 /** Resolve one tool's subdirectory beneath the root. */
 export function resolveSubDir(root: string, sub: OutputSubdir): string {
   return join(root, OUTPUT_SUBDIRS[sub])
+}
+
+/**
+ * Resolve a (possibly model-supplied) path so it stays INSIDE `base` — the
+ * session workspace. Used by `sciverse_get_resource`'s `out_dir` argument,
+ * which a tool call can supply directly: unlike the operator-owned
+ * `defaultOutputDir` setting, a model-supplied path must never escape the
+ * workspace. Absolute values and any `..` escape resolve to `null` (reject).
+ */
+export function resolveInsideRoot(base: string, value: string): string | null {
+  const target = resolve(base, value)
+  const rel = relative(base, target)
+  if (rel === '') return target
+  if (isAbsolute(rel) || rel.startsWith('..')) return null
+  return target
 }

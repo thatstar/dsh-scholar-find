@@ -1,7 +1,7 @@
 {
   "name": "dsh-scholar-find",
   "version": "0.1.0",
-  "description": "DSH scholar plugin: Semantic Scholar search tools (scholar_search_*) and open-access PDF fetch tools (paper_fetch_*), configured via the Web UI settings (dsh-scholar-find namespace).",
+  "description": "DSH scholar plugin: Semantic Scholar search (scholar_search_*), open-access PDF fetch + pdf-to-markdown (paper_fetch_*), and Sciverse corpus retrieval (sciverse_*), configured via the Web UI settings (dsh-scholar-find namespace).",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -47,10 +47,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-credentials": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "schemastery": "^3.18.0"

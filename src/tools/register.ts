@@ -1,6 +1,7 @@
 /**
- * Tool registration for dsh-scholar-find: `scholar_search_*` and `paper_fetch_*`
- * families, defined with `defineTool` and registered into `ctx.tools`.
+ * Tool registration for dsh-scholar-find: the `scholar_search_*` / `paper_fetch_*`
+ * families plus the `sciverse_*` tools, defined with `defineTool` and registered
+ * into `ctx.tools`.
  * @module dsh-scholar-find/tools
  */
 
@@ -17,7 +18,7 @@ import { createSciverseClient } from '../sciverse/client.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
-import { resolveRootDir, resolveSubDir } from '../outdir.js'
+import { resolveInsideRoot, resolveRootDir, resolveSubDir } from '../outdir.js'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
@@ -42,6 +43,12 @@ const FETCH_DOWNLOAD_TIMEOUT_MS = 300_000
 const FETCH_BATCH_TIMEOUT_MS = 600_000
 /** Margin on top of the MinerU parse timeout for the full paper_pdf2md run. */
 const MINERU_TOOL_TIMEOUT_MARGIN_MS = 20_000
+/** paper_pdf2md `timeoutSec` clamp: the lightweight parser is slow, so a floor
+ * avoids a 0/negative deadline (instant "poll timeout"), and the tool cap is
+ * derived from the MAX so a large user request isn't killed by a fixed tool
+ * timeout. */
+const MINERU_MIN_TIMEOUT_SEC = 10
+const MINERU_MAX_TIMEOUT_SEC = 1800
 /** Wall-clock cap per Sciverse API call (SDK accepts no AbortSignal; we bound
  * the call with withTimeout). Generous: quality semantic search takes seconds. */
 const SCIVERSE_CLIENT_TIMEOUT_MS = 60_000
@@ -164,37 +171,45 @@ async function resolveInputDoi(rt: FetchRuntime, input: { doi?: string; title?: 
   return { doi: r.doi, resolution: r.resolution }
 }
 
+/**
+ * Register one tool into `ctx.tools` with the two shared hardening wrappers,
+ * shared by BOTH tool families so the copy cannot drift:
+ *  - execute -> the returned value is always lossless JSON (DSH rejects any
+ *    result containing undefined/NaN/±Infinity/-0/sparse arrays). Upstream data
+ *    is messy, so everything goes through the sanitizer before snapshotting.
+ *  - render  -> MUST return ContentBlock[]; a bare string makes the model-run
+ *    pipeline fail ("content.some is not a function"). Normalise any non-array
+ *    return (string or none) to a text block, using `fallbackText` when nothing
+ *    else is available.
+ */
+function registerTool(ctx: Context, disposers: Array<() => void>, tool: ReturnType<typeof defineTool>, fallbackText: (value: unknown) => string): boolean {
+  const tools = ctx.get('tools')
+  if (!tools) return false
+  const execute = tool.execute.bind(tool)
+  const render = tool.output.render.bind(tool.output)
+  disposers.push(tools.register({
+    ...tool,
+    execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
+    output: {
+      ...tool.output,
+      render: (args: unknown, value: unknown) => {
+        const rendered = render(args as never, value as never)
+        if (Array.isArray(rendered)) return rendered
+        if (typeof rendered === 'string') return [{ type: 'text', text: rendered }]
+        return [{ type: 'text', text: fallbackText(value) }]
+      },
+    },
+  }))
+  return true
+}
+
 /** Register every scholar tool; returns a disposer that unregisters all. */
 export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void {
   const disposers: Array<() => void> = []
   disposers.push(applySciverseTools(ctx, env))
 
   const register = (tool: ReturnType<typeof defineTool>): void => {
-    const tools = ctx.get('tools')
-    if (!tools) return
-    // Wrap the tool's execute so its returned value is always lossless JSON:
-    // DSH rejects any tool result containing undefined / NaN / ±Infinity / -0
-    // / sparse arrays ("value is not lossless JSON"). Upstream data (S2 etc.)
-    // is messy, so every tool output goes through the sanitizer before it is
-    // snapshotted.
-    const execute = tool.execute.bind(tool)
-    // A tool's `render` MUST return ContentBlock[]; a bare string makes the
-    // model-run pipeline fail with "content.some is not a function". Normalise
-    // it so a mistaken return can never reach the runner.
-    const render = tool.output.render.bind(tool.output)
-    disposers.push(tools.register({
-      ...tool,
-      execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
-      output: {
-        ...tool.output,
-        render: (args: unknown, value: unknown) => {
-          const rendered = render(args as never, value as never)
-          if (Array.isArray(rendered)) return rendered
-          if (typeof rendered === 'string') return [{ type: 'text', text: rendered }]
-          return [{ type: 'text', text: `Result (${String(value != null ? (value as { total?: unknown }).total ?? '' : '')})` }]
-        },
-      },
-    }))
+    registerTool(ctx, disposers, tool, (value) => `Result (${String(value != null ? (value as { total?: unknown }).total ?? '' : '')})`)
   }
 
   // -------------------------------------------------------------------------
@@ -246,9 +261,13 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const query = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
+      const builtQuery = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
+      const query = (builtQuery ?? '').trim() || String(args.query ?? '').trim()
       const strategy = args.includeTldr ? 'relevance' : 'bulk'
-      const maxResults = Math.min(args.maxResults ?? env.settings().maxResultsPerSearch, SEARCH_RESULT_CAP)
+      const maxResults = Math.max(1, Math.min(args.maxResults ?? env.settings().maxResultsPerSearch, SEARCH_RESULT_CAP))
+      if (!query) {
+        return { query, total: 0, strategy, markdown: 'scholar_search_papers needs a non-empty `query` (or a `boolean` with at least one term).', results: [] }
+      }
       const papers = args.includeTldr
         ? await s2.searchRelevance(client, query, {
             maxResults,
@@ -452,6 +471,9 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
+      if (!args.positiveIds?.length) {
+        return { total: 0, markdown: 'scholar_get_recommendations needs at least one `positiveIds` seed.', papers: [] }
+      }
       const papers = args.positiveIds.length === 1 && !args.negativeIds
         ? await s2.findSimilar(client, args.positiveIds[0]!, { limit: args.limit ?? s2.DEFAULT_RECS })
         : await s2.recommend(client, { positiveIds: args.positiveIds, negativeIds: args.negativeIds, limit: args.limit ?? s2.DEFAULT_RECS })
@@ -558,7 +580,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       }
       const result = await fetchSvc.resolveOne(rt, doi)
       const sourceLine = result.success
-        ? `**Source:** ${result.source}\n**PDF URL:** ${result.pdfUrl}\n**Title:** ${(result.meta as any).title ?? '?'}\n${(result.meta as any).year !== undefined ? `**Year:** ${(result.meta as any).year}\n` : ''}`
+        ? `**Source:** ${result.source}\n**PDF URL:** ${result.pdfUrl}\n**Title:** ${(result.meta as any).title ?? '?'}\n${(result.meta as any).year !== undefined ? `**Year:** ${(result.meta as any).year}\n` : ''}${result.source === 'web_search' && result.verified === false ? '*This link was found by web search and not fetched — treat it as a hint, not a confirmed OA copy.*\n' : ''}`
         : `**Not found.** ${(result.error as any)?.message ?? ''}`
       return {
         doi,
@@ -615,7 +637,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       overwrite: { type: 'boolean', description: 'Re-download existing files' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, data: { type: 'json' } },
+      { ok: { oneOf: [{ type: 'boolean' }, { type: 'string' }] }, data: { type: 'json' } },
       (value) => `Batch finished (ok=${String(value.ok)}).`,
     ),
     async execute(args, exec) {
@@ -676,7 +698,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     },
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
-      const timeoutMs = timeoutMsOf(args.timeoutSec === undefined ? Math.floor(MINERU_TIMEOUT_MS / 1000) : args.timeoutSec)
+      const timeoutSec = args.timeoutSec === undefined
+        ? Math.floor(MINERU_TIMEOUT_MS / 1000)
+        : Math.min(Math.max(args.timeoutSec, MINERU_MIN_TIMEOUT_SEC), MINERU_MAX_TIMEOUT_SEC)
+      const timeoutMs = timeoutMsOf(timeoutSec)
       const isUrl = /^https?:\/\//i.test(args.pdf)
       const { markdown } = isUrl
         ? await mineruParseUrl(args.pdf, { timeoutMs, signal: exec.signal })
@@ -689,7 +714,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       await writeFile(dest, markdown, 'utf8')
       return { path: dest, excerpt: markdown.slice(0, 400), pdf: args.pdf }
     },
-    timeoutMs: MINERU_TIMEOUT_MS + MINERU_TOOL_TIMEOUT_MARGIN_MS,
+    timeoutMs: timeoutMsOf(MINERU_MAX_TIMEOUT_SEC) + MINERU_TOOL_TIMEOUT_MARGIN_MS,
     isConcurrencySafe: NON_CONCURRENT,
   }))
 
@@ -787,23 +812,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
   const disposers: Array<() => void> = []
 
   const register = (tool: ReturnType<typeof defineTool>): void => {
-    const tools = ctx.get('tools')
-    if (!tools) return
-    const execute = tool.execute.bind(tool)
-    const render = tool.output.render.bind(tool.output)
-    disposers.push(tools.register({
-      ...tool,
-      execute: async (args, exec) => sanitizeForOutput(await execute(args, exec)),
-      output: {
-        ...tool.output,
-        render: (args: unknown, value: unknown) => {
-          const rendered = render(args as never, value as never)
-          if (Array.isArray(rendered)) return rendered
-          if (typeof rendered === 'string') return [{ type: 'text', text: rendered }]
-          return [{ type: 'text', text: 'See result.' }]
-        },
-      },
-    }))
+    registerTool(ctx, disposers, tool, () => 'See result.')
   }
 
   register(defineTool({
@@ -850,6 +859,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Prefer results in the query language' },
       page: { type: 'integer', description: 'Page number (default 1)' },
       page_size: { type: 'integer', description: 'Page size (default 10)' },
+      next_cursor: { type: 'string', description: 'Cursor token from a prior response: pass back to fetch the next deep page (>10000 rows).' },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, total: { type: 'integer' }, page: { type: 'integer' }, next_cursor: { type: 'string' }, results: { type: 'array', items: { type: 'json' } } },
@@ -998,9 +1008,13 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         return { ok: true, file_name: args.file_name, mimeType: sniffed.mimeType, bytes: bytes.byteLength, wrote: false } as any
       }
       const base = baseDirOf(exec)
-      const outDir = typeof args.out_dir === 'string' && args.out_dir
-        ? resolveRootDir(args.out_dir, base)
+      const outDirArg = typeof args.out_dir === 'string' ? args.out_dir.trim() : ''
+      const outDir = outDirArg
+        ? resolveInsideRoot(base, outDirArg)
         : resolveSubDir(resolveRootDir(env.settings().defaultOutputDir, base), 'figs')
+      if (!outDir) {
+        return { ok: false, file_name: args.file_name, code: 'validation_error', retryable: false, markdown: '`out_dir` must resolve inside the session workspace (absolute paths and `..` escapes are not allowed).' } as any
+      }
       // Name the file from the paper identity + figure number + caption when the
       // model supplies them (so it's self-describing and paper-scoped); otherwise
       // fall back to the raw asset path so distinct figures never collapse to one name.

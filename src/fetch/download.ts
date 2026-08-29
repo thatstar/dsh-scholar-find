@@ -18,15 +18,22 @@ import type { PaperMeta } from './chain.js'
 /** Max length for the title portion of the canonical filename. */
 const TITLE_MAX_LEN = 50
 
-/** Deterministic canonical filename: {first author}-{year}-{title(≤50, spaces→_)}.pdf */
-export function buildFilename(meta: PaperMeta, fallbackTitle: string): string {
+/** Deterministic canonical filename: {first author}-{year}-{title(≤50, spaces→_)}.pdf,
+ * plus `-{doi-slug}` when a DOI is given. The DOI segment keeps two *different*
+ * papers that share a first author + year + title prefix from colliding on the
+ * same file (a same-named collision would otherwise report "already downloaded"
+ * for the wrong paper). */
+export function buildFilename(meta: PaperMeta, fallbackTitle: string, doi?: string): string {
   // First author's surname; blank/whitespace author falls back to 'unknown'.
   const author = slug(meta.author?.trim() ? meta.author.trim().split(/\s+/).pop()! : 'unknown', 20)
   const year = String(meta.year ?? 'nd')
   // Slug the title into underscore-separated tokens, then cap the length and
   // drop any trailing underscore left by the cut so it reads cleanly.
   const title = slug(meta.title ?? fallbackTitle, TITLE_MAX_LEN).replace(/_+$/, '') || 'paper'
-  return [author, year, title].filter(Boolean).join('-') + '.pdf'
+  const parts = [author, year, title]
+  const doiSlug = doi?.trim() ? slug(doi.trim(), 60) : ''
+  if (doiSlug) parts.push(doiSlug)
+  return parts.filter(Boolean).join('-') + '.pdf'
 }
 
 function slug(value: string, max: number): string {
