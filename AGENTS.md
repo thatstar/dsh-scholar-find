@@ -21,10 +21,7 @@ instructions:
    Markdown full text via the MinerU lightweight parse API (no key; ≤10 MB file
    cap — page limit is a server-side constraint; uses the proxy) and saves the
    .md into the library directory.
-3. **Companion instructions** — a prompt section telling the LLM when and how
-   to use each tool (parameter hygiene, envelope interpretation, retry policy).
-
-4. **`sciverse_*`** — Sciverse Open Platform retrieval (one Bearer token, set
+3. **`sciverse_*`** — Sciverse Open Platform retrieval (one Bearer token, set
    as the `sciverseApiKeyRef` credential): structured paper search, semantic
    RAG search, field catalog, citation relations, full-text slices, and
    figures. **Fetched DIRECTLY — no proxy** (China-hosted service; routed
@@ -32,6 +29,9 @@ instructions:
    requests/minute. The SDK (`sciverse` npm package) is bundled by esbuild
    (`scripts/build-sciverse.mjs`) because its published ESM entry uses
    extensionless imports that plain Node cannot resolve.
+
+4. **Companion instructions** — a prompt section telling the LLM when and how
+   to use each tool (parameter hygiene, envelope interpretation, retry policy).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
 toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
@@ -129,6 +129,4 @@ the literal to the **DSH credentials domain** (`api.credentials.set`), and the
 keys are resolved at runtime via `ctx.credentials.resolve(credentialRef(...))` —
 never stored in the settings section/repo.
 
-Remaining: **deployment restart** to load the current `lib/`, set the Asta key via
-the card (writes to DSH key management), and **in-session end-to-end
-verification**. Keep everything TypeScript-only, clean-room, and test-covered.
+Keep everything TypeScript-only, clean-room, and test-covered.
