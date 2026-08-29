@@ -67,7 +67,10 @@ Usage rules:
    totals are **capped at 10000** by the server whenever the matched set is larger
    (keyword query or broad structured filter); narrow the query/filters for an
    exact count. \`abstract_contains\` is folded into the full-text \`query\` (the
-   abstract field is not filterable).
+   abstract field is not filterable). The keyword \`query\` is for relevance-ranked
+   *discovery*, not precise counting; \`title_contains\` is token/field-level and may
+   not substring-match every phrase — for exact counts prefer \`authors\` /
+   \`journals\` / \`year_from\` / \`year_to\` / \`filters_advanced\`.
 5. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
