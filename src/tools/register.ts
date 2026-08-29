@@ -52,6 +52,11 @@ const MINERU_MAX_TIMEOUT_SEC = 1800
 /** Wall-clock cap per Sciverse API call (SDK accepts no AbortSignal; we bound
  * the call with withTimeout). Generous: quality semantic search takes seconds. */
 const SCIVERSE_CLIENT_TIMEOUT_MS = 60_000
+/** The Sciverse /meta-search backend caps reported hit counts at 10000 for any
+ * free-text/BM25 query (OpenSearch track_total_hits-style). Structured field
+ * filters report exact counts. We annotate the tool output when this ceiling is
+ * reached so a 10000 is not mistaken for a real publication total. */
+const SCIVERSE_TOTAL_HITS_CAP = 10000
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
@@ -841,12 +846,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_search_papers',
-    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead.`,
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: a keyword \`query\` reports a hit total capped at 10000 by the server; structured filters give exact counts. \`abstract_contains\` is folded into the full-text \`query\`.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
       query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
       title_contains: { type: 'string', description: 'Word the title must contain' },
-      abstract_contains: { type: 'string', description: 'Word the abstract must contain' },
+      abstract_contains: { type: 'string', description: 'Word the abstract must contain — matched via the full-text query (the abstract field is not filterable; the term is folded into `query`).' },
       authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match)' },
       year_from: { type: 'integer', description: 'Earliest publication year (inclusive)' },
       year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
@@ -868,12 +873,27 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, total: 0, results: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.searchPapers(args as Record<string, unknown>)) as any
+      // `abstract_contains` maps to a FILTER_OP_CONTAINS on `abstract`, which the
+      // backend rejects (abstract has no .keyword subfield — full-text only, so it
+      // cannot be filtered; see the field catalog). Fold it into the full-text
+      // `query` and drop it so it never reaches the SDK's filter path.
+      const payload: Record<string, unknown> = { ...args }
+      const abstractTerm = typeof payload.abstract_contains === 'string' ? payload.abstract_contains.trim() : ''
+      if (abstractTerm) {
+        delete payload.abstract_contains
+        payload.query = [typeof payload.query === 'string' ? payload.query : '', abstractTerm].filter(Boolean).join(' ').trim()
+      }
+      const r = (await sc.searchPapers(payload)) as any
       const results = Array.isArray(r?.results) ? r.results : []
+      const total = r.total_count ?? results.length
+      const queryUsed = typeof payload.query === 'string' && payload.query.trim() !== ''
+      const capped = queryUsed && total >= SCIVERSE_TOTAL_HITS_CAP
       const markdown = results.length
-        ? `**${r.total_count ?? results.length} papers** (page ${args.page ?? 1})\n\n${fmtPapers(results)}`
+        ? `**${total} papers** (page ${args.page ?? 1})${capped
+          ? `\n\n> total is capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server (keyword query). Use structured filters (title_contains / journals / subjects / year_from / year_to) for exact counts.`
+          : ''}\n\n${fmtPapers(results)}`
         : 'No papers found.'
-      return { ok: true, total: r.total_count ?? results.length, page: args.page ?? 1, results, markdown }
+      return { ok: true, total, page: args.page ?? 1, results, markdown }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,

@@ -63,7 +63,11 @@ Usage rules:
 4. **Respect Sciverse rate limits**: each endpoint allows ~30 requests/minute.
    Pace consecutive \`sciverse_*\` calls (plan/batch queries), keep \`top_k\` /
    \`page_size\` modest, and on a 429 back off instead of retrying in a burst.
-   Paginate \`sciverse_search_papers\` with \`page\` / \`page_size\`.
+   Paginate \`sciverse_search_papers\` with \`page\` / \`page_size\`. A keyword
+   \`query\` reports a hit **total capped at 10000** by the server; for exact
+   counts use structured filters (\`title_contains\` / \`journals\` / \`subjects\` /
+   \`year_from\` / \`year_to\`). \`abstract_contains\` is folded into the
+   full-text \`query\` (the abstract field is not filterable).
 5. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
