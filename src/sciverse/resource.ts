@@ -91,33 +91,56 @@ export function extractFigureRefs(text: string): FigureRef[] {
 }
 
 /**
- * Slug a string into a safe `[a-z0-9-]` token: lowercase everything, collapse
- * non-alphanumeric runs to a single dash, trim, cap and re-trim. Digits are
- * kept so a caption like "Figure 2. Architecture" survives as `figure-2-architecture`.
+ * Sanitize a value into a safe single filename token: keep `[A-Za-z0-9._-]`,
+ * collapse separators to `_`, trim leading/trailing `_`, cap to `max` and
+ * re-trim. Returns `''` when nothing alphanumeric survives (so empty/symbol-only
+ * values drop their segment entirely instead of producing `____.ext`).
  */
-function figureSlug(value: string, max: number): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+function token(value: string, max: number): string {
+  const t = value
+    .replace(/\.\.+/g, '.') // never allow `..` path segments
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
     .slice(0, max)
-    .replace(/-+$/g, '')
+    .replace(/_+$/g, '')
+  return /[A-Za-z0-9]/.test(t) ? t : ''
 }
 
 /**
- * Build a human-meaningful figure filename from the paper identity and caption
- * the model already has at call time. Purely model-driven (no persisted state):
- * `paper` (a DOI/unique_id/title, e.g. `paper:10.1038/xxx`) scopes the name so
- * figures from different papers never collide, and `caption` (the alt text)
- * embeds the semantic hint (and any figure number present) so the name is
- * self-describing. Falls back to `figure` when nothing usable is provided;
- * callers choose the raw `safeImageBasename` when the model passes neither.
+ * Split a figure caption into its figure number and the descriptive remainder.
+ * Handles `Figure 2. Architecture`, `Fig. 2 Architecture`, `Fig 2: Architecture`,
+ * and a bare leading number `2. Architecture`. Non-matching captions yield no
+ * number and the full text as `text`.
  */
-export function buildFigureName(opts: { paper?: string; caption?: string; ext: string }): string {
-  const paperSlug = opts.paper ? figureSlug(opts.paper.replace(/^paper[:/]+/i, ''), 40) : ''
-  const captionSlug = opts.caption ? figureSlug(opts.caption, 50) : 'figure'
-  const core = [paperSlug, captionSlug].filter(Boolean).join('-') || 'figure'
-  return `${core}.${opts.ext}`
+export function parseFigureCaption(caption: string): { fignum?: string; text: string } {
+  const c = (caption ?? '').trim()
+  if (!c) return { text: '' }
+  const m = c.match(/^(?:figure|fig\.?)\s*(\d+)\b[.\-:\s]*(.*)/i) ?? c.match(/^(\d+)\b[.\-:\s]+(.*)/)
+  if (m) return { fignum: m[1], text: (m[2] ?? '').trim() }
+  return { text: c }
+}
+
+/**
+ * Build a self-describing figure filename in the `{doi}_Fig_{fignum}_Caption_{caption}`
+ * shape, model-driven (no persisted state):
+ *  - `doi` scopes the file to its paper (a DOI/unique_id — the `paper:` prefix is
+ *    stripped so e.g. `paper:10.1038/xxx` becomes `10.1038_sxxx…`).
+ *  - `fignum` (or the number parsed from `caption`) gives the `_Fig_<n>` segment.
+ *  - `caption` is truncated to ≤20 chars for the `_Caption_<text>` segment, which
+ *    is **omitted** when the caption is empty/blank.
+ *  - `_Fig_`/`_Caption_` appear only when their value is present.
+ * Falls back to `figure` when nothing usable is provided; callers choose the raw
+ * `safeImageBasename` when the model supplies no context at all.
+ */
+export function buildFigureFilename(opts: { doi?: string; fignum?: string | number; caption?: string; ext: string }): string {
+  const parts: string[] = []
+  if (opts.doi) parts.push(token(opts.doi.replace(/^paper[:/]+/i, ''), 40))
+  const parsed = parseFigureCaption(opts.caption ?? '')
+  const fig = opts.fignum !== undefined && opts.fignum !== '' ? String(opts.fignum) : parsed.fignum
+  if (fig) parts.push(`Fig_${token(fig, 4)}`)
+  if (parsed.text) parts.push(`Caption_${token(parsed.text.toLowerCase(), 20)}`)
+  const base = parts.join('_') || 'figure'
+  return `${base}.${opts.ext}`
 }
 
 /** Structured error for `sciverse_get_resource`, mirroring the paper_fetch_* envelopes. */

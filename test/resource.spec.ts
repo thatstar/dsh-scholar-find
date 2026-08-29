@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFigureName, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../src/sciverse/resource.js'
+import { buildFigureFilename, extractFigureRefs, mapGetResourceError, parseFigureCaption, safeImageBasename, sniffImageType } from '../src/sciverse/resource.js'
 
 describe('sniffImageType', () => {
   it('detects PNG, JPEG, GIF and WebP from magic bytes', () => {
@@ -95,20 +95,50 @@ describe('extractFigureRefs', () => {
   })
 })
 
-describe('buildFigureName', () => {
-  it('builds a paper-scoped, caption-suffixed name', () => {
-    expect(buildFigureName({ paper: 'paper:10.1038/s41586-021-03819-2', caption: 'Figure 2. Architecture', ext: 'png' }))
-      .toBe('10-1038-s41586-021-03819-2-figure-2-architecture.png')
+describe('parseFigureCaption', () => {
+  it('extracts a figure number and its descriptive remainder', () => {
+    expect(parseFigureCaption('Figure 2. Architecture')).toEqual({ fignum: '2', text: 'Architecture' })
+    expect(parseFigureCaption('Fig. 3 Convergence curves')).toEqual({ fignum: '3', text: 'Convergence curves' })
+    expect(parseFigureCaption('Fig 4: Results')).toEqual({ fignum: '4', text: 'Results' })
+    expect(parseFigureCaption('2. Results')).toEqual({ fignum: '2', text: 'Results' })
   })
 
-  it('keeps a caption-only name and falls back to figure', () => {
-    expect(buildFigureName({ caption: 'Convergence curves', ext: 'jpg' })).toBe('convergence-curves.jpg')
-    expect(buildFigureName({ paper: 'My Paper Title', ext: 'gif' })).toBe('my-paper-title-figure.gif')
-    expect(buildFigureName({ ext: 'webp' })).toBe('figure.webp')
+  it('returns the full text with no number for a non-figure caption', () => {
+    expect(parseFigureCaption('Convergence curves')).toEqual({ text: 'Convergence curves' })
+  })
+
+  it('handles blank captions', () => {
+    expect(parseFigureCaption('')).toEqual({ text: '' })
+    expect(parseFigureCaption('   ')).toEqual({ text: '' })
+  })
+})
+
+describe('buildFigureFilename', () => {
+  it('builds the {doi}_Fig_{n}_Caption_{text} shape', () => {
+    expect(buildFigureFilename({ doi: 'paper:10.1038/s41586-021-03819-2', caption: 'Figure 2. Architecture', ext: 'png' }))
+      .toBe('10.1038_s41586-021-03819-2_Fig_2_Caption_architecture.png')
+  })
+
+  it('omits the Caption segment when the caption is empty/blank', () => {
+    expect(buildFigureFilename({ doi: '10.1000/abc', caption: '  ', ext: 'png' })).toBe('10.1000_abc.png')
+    expect(buildFigureFilename({ caption: 'Figure 2', ext: 'png' })).toBe('Fig_2.png')
+  })
+
+  it('an explicit fignum overrides the number parsed from the caption', () => {
+    expect(buildFigureFilename({ doi: '10.1000/x', fignum: '3', caption: 'Figure 2. Something', ext: 'gif' }))
+      .toBe('10.1000_x_Fig_3_Caption_something.gif')
+  })
+
+  it('captures a valid caption even without a paper id', () => {
+    expect(buildFigureFilename({ caption: 'Convergence curves', ext: 'jpg' })).toBe('Caption_convergence_curves.jpg')
+  })
+
+  it('falls back to figure when nothing meaningful is provided', () => {
+    expect(buildFigureFilename({ ext: 'webp' })).toBe('figure.webp')
   })
 
   it('sanitises hostile characters and caps length', () => {
-    const name = buildFigureName({ paper: 'a//b::c', caption: '../../etc/passwd & more!!', ext: 'png' })
+    const name = buildFigureFilename({ doi: 'a//b::c', caption: '../../etc/passwd & more!!', ext: 'png' })
     expect(name).not.toMatch(/\.\./)
     expect(name.endsWith('.png')).toBe(true)
     expect(name.length).toBeLessThan(120)

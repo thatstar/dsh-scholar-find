@@ -1,5 +1,5 @@
 /**
- * Minimal client for the MinerU **Agent 轻量解析 API** — a keyless (IP-limited)
+ * Minimal client for the MinerU **lightweight parse API** — a keyless (IP-limited)
  * async document parser that converts a single PDF (URL or local file) to
  * Markdown full text. It is submit → poll → download:
  *

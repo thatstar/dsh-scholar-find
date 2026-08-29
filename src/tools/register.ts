@@ -14,7 +14,7 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
-import { buildFigureName, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
+import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
 import { resolveRootDir, resolveSubDir } from '../outdir.js'
@@ -753,7 +753,7 @@ function fmtPapers(papers: readonly Record<string, unknown>[]): string {
     .map((p) => {
       const authors = Array.isArray(p.author) ? (p.author as Array<{ name?: string }>).map((a) => a.name ?? '').filter(Boolean).join(', ') : ''
       const ids = [`\`${p.unique_id}\``]
-      if (p.doc_id) ids.push(`doc_id: ${p.doc_id}${p.is_content_accessible === false ? ' (not content-accessible)' : ''}`)
+      if (p.doc_id) ids.push(`doc_id: ${p.doc_id}`)
       const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), p.doi ? `DOI: ${p.doi}` : '', ids.join(' · ')].filter(Boolean).join('\n')
       return line
     })
@@ -832,7 +832,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_search_papers',
-    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id + is_content_accessible (when full text exists). For natural-language questions use sciverse_semantic_search instead.`,
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
       query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
@@ -956,11 +956,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_get_resource',
-    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline. Pass the paper id (doi/unique_id/title via \`paper\`) and the figure caption (the \`alt\` text, via \`caption\`) to save a self-describing filename instead of the raw hash.`,
+    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline. Pass the paper id (\`paper\`), figure number (\`fignum\`) and caption (\`caption\`) to save a self-describing name (\`{doi}_Fig_{n}_Caption_{text}\`) instead of the raw hash.`,
     parameters: {
       file_name: { type: 'string', description: 'Image file name from read_content markdown (relative path)', required: true },
       paper: { type: 'string', description: `Paper identifier for the filename: a DOI, unique_id (e.g. paper:10.1038/xxx), or short title. Scopes the saved name so figures from different papers don't collide.` },
-      caption: { type: 'string', description: `Figure caption / alt text from read_content (e.g. "Figure 2. Architecture"). Embedded in the saved filename so it's self-describing.` },
+      fignum: { type: 'string', description: `Figure number for the filename (e.g. '2'). When omitted, parsed from the caption (e.g. 'Figure 2. …').` },
+      caption: { type: 'string', description: `Figure caption / alt text from read_content (e.g. 'Figure 2. Architecture'). Embedded (truncated to 20 chars) in the saved filename so it's self-describing; omitted when blank.` },
       save: { type: 'boolean', description: 'Write the image to disk (default true). When false, only metadata is returned (no path).' },
       out_dir: { type: 'string', description: `Directory for saved figures, resolved against the session workspace (default: <defaultOutputDir>/figs, i.e. .scholar/figs).` },
     },
@@ -1000,12 +1001,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const outDir = typeof args.out_dir === 'string' && args.out_dir
         ? resolveRootDir(args.out_dir, base)
         : resolveSubDir(resolveRootDir(env.settings().defaultOutputDir, base), 'figs')
-      // Name the file from the paper identity + caption when the model supplies
-      // them (so it's self-describing and paper-scoped); otherwise fall back to
-      // the raw asset path so distinct figures never collapse to one name.
-      const hasContext = (typeof args.paper === 'string' && args.paper.trim()) || (typeof args.caption === 'string' && args.caption.trim())
+      // Name the file from the paper identity + figure number + caption when the
+      // model supplies them (so it's self-describing and paper-scoped); otherwise
+      // fall back to the raw asset path so distinct figures never collapse to one name.
+      const hasContext = (typeof args.paper === 'string' && args.paper.trim()) || (typeof args.fignum === 'string' && args.fignum.trim()) || (typeof args.caption === 'string' && args.caption.trim())
       const name = hasContext
-        ? buildFigureName({ paper: args.paper, caption: args.caption, ext: sniffed.ext })
+        ? buildFigureFilename({ doi: args.paper, fignum: args.fignum, caption: args.caption, ext: sniffed.ext })
         : safeImageBasename(args.file_name, sniffed.ext)
       let path: string
       try {

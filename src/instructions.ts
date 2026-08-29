@@ -34,7 +34,7 @@ Three tool families are available for academic paper research:
   never the full base64 inline). \`sciverse_read_content\` surfaces each figure's
   \`alt\` caption alongside its \`file_name\`; pass that caption (and the paper
   identity via the \`paper\` argument) to \`sciverse_get_resource\` so the saved
-  figure is self-describing (e.g. \`10.1038-xxx-figure-2-architecture.png\`).
+  figure is self-describing (e.g. \`10.1038_xxx_Fig_2_Caption_architecture.png\`).
   One Bearer token (\`sciverseApiKeyRef\`).
 
 Usage rules:
