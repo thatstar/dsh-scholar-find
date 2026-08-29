@@ -62,8 +62,8 @@ Usage rules:
    it never returns the full base64 inline, and refuses non-image bytes.
 4. **Respect Sciverse rate limits**: each endpoint allows ~30 requests/minute.
    Pace consecutive \`sciverse_*\` calls (plan/batch queries), keep \`top_k\` /
-   \`page_size\` modest, use \`next_cursor\` for deep pages, and on a 429 back
-   off instead of retrying in a burst.
+   \`page_size\` modest, and on a 429 back off instead of retrying in a burst.
+   Paginate \`sciverse_search_papers\` with \`page\` / \`page_size\`.
 5. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs

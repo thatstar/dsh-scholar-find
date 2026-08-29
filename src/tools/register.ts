@@ -859,10 +859,9 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Prefer results in the query language' },
       page: { type: 'integer', description: 'Page number (default 1)' },
       page_size: { type: 'integer', description: 'Page size (default 10)' },
-      next_cursor: { type: 'string', description: 'Cursor token from a prior response: pass back to fetch the next deep page (>10000 rows).' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, total: { type: 'integer' }, page: { type: 'integer' }, next_cursor: { type: 'string' }, results: { type: 'array', items: { type: 'json' } } },
+      { ok: { type: 'boolean' }, total: { type: 'integer' }, page: { type: 'integer' }, results: { type: 'array', items: { type: 'json' } } },
       (value) => `${value.total ?? 0} papers (page ${value.page ?? 1}).`,
     ),
     async execute(args, exec) {
@@ -872,9 +871,9 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const r = (await sc.searchPapers(args as Record<string, unknown>)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const markdown = results.length
-        ? `**${r.total_count ?? results.length} papers** (page ${args.page ?? 1}${r.next_cursor ? ', deep pagination available via next_cursor' : ''})\n\n${fmtPapers(results)}\n\n> pass \`next_cursor\` back to fetch the next page when deep (>10000) pagination is needed`
+        ? `**${r.total_count ?? results.length} papers** (page ${args.page ?? 1})\n\n${fmtPapers(results)}`
         : 'No papers found.'
-      return { ok: true, total: r.total_count ?? results.length, page: args.page ?? 1, next_cursor: r.next_cursor ?? '', results, markdown }
+      return { ok: true, total: r.total_count ?? results.length, page: args.page ?? 1, results, markdown }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,

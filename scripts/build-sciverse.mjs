@@ -9,7 +9,7 @@
 // node_modules patching.
 import { build } from 'esbuild'
 import { dirname, join } from 'node:path'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -30,23 +30,4 @@ await build({
 rmSync(join(root, 'lib', 'sciverse', 'sdk.js'), { force: true })
 rmSync(join(root, 'lib', 'sciverse', 'sdk.js.map'), { force: true })
 rmSync(join(root, 'lib', 'sciverse', 'sdk.d.ts'), { force: true })
-
-// Forward the deep-pagination cursor. The sciverse@0.14 SDK's `toBackendPayload`
-// forwards only its `PASSTHROUGH` whitelist (query/page/page_size/fields/
-// collection + soft-weight boosts) and drops `next_cursor` — so a cursor echoed
-// back to `searchPapers` was silently discarded and cursor-based deep pagination
-// (>10000 rows) never worked. Inject it into the bundled array. This is OUR build
-// artifact (reinstall-safe; node_modules untouched), and the injection is
-// verified below so an SDK refactor that renames the array fails the build
-// loudly instead of silently re-breaking deep pagination.
-const bundlePath = join(root, 'lib', 'sciverse', 'sdk.bundle.js')
-const PASSTHROUGH_ANCHOR = '  "language_affinity"\n];'
-let bundle = readFileSync(bundlePath, 'utf8')
-if (!bundle.includes(PASSTHROUGH_ANCHOR)) {
-  throw new Error(`build-sciverse: PASSTHROUGH array anchor not found in the bundled SDK — the sciverse layout changed; re-check the next_cursor injection.`)
-}
-if (!bundle.includes('"next_cursor"')) {
-  bundle = bundle.replace(PASSTHROUGH_ANCHOR, '  "language_affinity",\n  "next_cursor"\n];')
-  writeFileSync(bundlePath, bundle)
-}
-console.log('built lib/sciverse/sdk.bundle.js (next_cursor forwarded)')
+console.log('built lib/sciverse/sdk.bundle.js')
