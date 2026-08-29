@@ -31,7 +31,7 @@ export interface ScholarSettings {
   sciverseApiKeyRef: string
   cloakEnabled: boolean
   proxyUrl: string
-  pdfOutputDir: string
+  defaultOutputDir: string
   maxResultsPerSearch: number
   fetchTimeoutSec: number
   maxPdfSizeMb: number
@@ -50,7 +50,7 @@ export const DEFAULT_SCHOLAR_SETTINGS: ScholarSettings = {
   sciverseApiKeyRef: DEFAULT_SCIVERSE_KEY_REF,
   cloakEnabled: false,
   proxyUrl: '',
-  pdfOutputDir: 'scholar-pdfs',
+  defaultOutputDir: '.scholar',
   maxResultsPerSearch: 20,
   fetchTimeoutSec: 30,
   maxPdfSizeMb: 50,
@@ -80,8 +80,9 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   cloakEnabled: z.boolean().default(DEFAULT_SCHOLAR_SETTINGS.cloakEnabled),
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */
   proxyUrl: z.string().default(DEFAULT_SCHOLAR_SETTINGS.proxyUrl),
-  /** Download directory; relative values resolve against the session workspace. */
-  pdfOutputDir: z.string().default(DEFAULT_SCHOLAR_SETTINGS.pdfOutputDir),
+  /** Root output directory; relative values resolve against the session
+   * workspace. Each tool owns a subdirectory below it (pdfs/md/figs/idem). */
+  defaultOutputDir: z.string().default(DEFAULT_SCHOLAR_SETTINGS.defaultOutputDir),
   /** Default result cap for scholar search tools (per-call ceiling is 100). */
   maxResultsPerSearch: z.number().default(DEFAULT_SCHOLAR_SETTINGS.maxResultsPerSearch),
   /** Per-request HTTP timeout in seconds. */

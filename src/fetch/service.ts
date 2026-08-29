@@ -9,7 +9,8 @@ import { readdir } from 'node:fs/promises'
 import type { ScholarClient } from '../s2/client.js'
 import { maxBytesOf, timeoutMsOf, type ScholarSettings } from '../settings.js'
 import { arxivPdfUrl, resolveChain, resolveTitle, type ChainContext } from './chain.js'
-import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore, resolveOutDir } from './download.js'
+import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore } from './download.js'
+import { resolveRootDir, resolveSubDir } from '../outdir.js'
 import { codeOf, makeError, type EnvelopeError, type FetchItemResult } from './envelope.js'
 import { isSafeUrl } from './safety.js'
 import { resolveProxyUrl } from './transport.js'
@@ -269,7 +270,7 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
     return resolveFailure(normalized, e)
   }
 
-  const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+  const outDir = resolveSubDir(resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir), 'pdfs')
 
   const fname = buildFilename(chain.meta, normalized)
   const dest = join(outDir, fname)
@@ -326,10 +327,10 @@ export async function fetchOne(rt: FetchRuntime, doi: string, opts: DownloadOpti
 
 /** Batch fetch with per-item results, summary, and retry hints. */
 export async function fetchBatch(rt: FetchRuntime, dois: readonly string[], opts: DownloadOptions & { idempotencyKey?: string } = {}): Promise<unknown> {
-  const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+  const rootDir = resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir)
 
   if (opts.idempotencyKey) {
-    const cached = await idemLoad(outDir, opts.idempotencyKey)
+    const cached = await idemLoad(rootDir, opts.idempotencyKey)
     if (cached !== undefined) return cached
   }
 
@@ -364,13 +365,13 @@ export async function fetchBatch(rt: FetchRuntime, dois: readonly string[], opts
     },
   }
 
-  if (opts.idempotencyKey) await idemStore(outDir, opts.idempotencyKey, envelope)
+  if (opts.idempotencyKey) await idemStore(rootDir, opts.idempotencyKey, envelope)
   return envelope
 }
 
 /** List PDFs already in the library directory. */
 export async function listLibrary(rt: FetchRuntime): Promise<Array<{ file: string; path: string }>> {
-  const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+  const outDir = resolveSubDir(resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir), 'pdfs')
   let entries: string[]
   try {
     entries = await readdir(outDir)

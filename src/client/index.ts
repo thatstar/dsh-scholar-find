@@ -41,7 +41,7 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
   { key: 'sciverseApiKey', kind: 'secret' },
   { key: 'cloakEnabled', kind: 'boolean' },
   { key: 'proxyUrl', kind: 'text' },
-  { key: 'pdfOutputDir', kind: 'text' },
+  { key: 'defaultOutputDir', kind: 'text' },
   { key: 'maxResultsPerSearch', kind: 'number' },
   { key: 'fetchTimeoutSec', kind: 'number' },
   { key: 'maxPdfSizeMb', kind: 'number' },

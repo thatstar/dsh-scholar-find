@@ -18,7 +18,7 @@ export type ScholarLocaleKey =
   | 'sciverseApiKey' | 'sciverseApiKeyHint'
   | 'cloakEnabled' | 'cloakEnabledHint'
   | 'proxyUrl' | 'proxyUrlHint'
-  | 'pdfOutputDir' | 'pdfOutputDirHint'
+  | 'defaultOutputDir' | 'defaultOutputDirHint'
   | 'maxResultsPerSearch' | 'maxResultsPerSearchHint'
   | 'fetchTimeoutSec' | 'fetchTimeoutSecHint'
   | 'maxPdfSizeMb' | 'maxPdfSizeMbHint'
@@ -51,8 +51,8 @@ export const en: Record<ScholarLocaleKey, string> = {
   cloakEnabledHint: 'Retry Cloudflare/WAF-blocked PDFs through a stealth browser (heavy). Off by default.',
   proxyUrl: 'Outbound HTTP proxy',
   proxyUrlHint: 'e.g. http://127.0.0.1:10808. Empty = off / fall back to HTTPS_PROXY.',
-  pdfOutputDir: 'PDF output directory',
-  pdfOutputDirHint: 'Relative paths resolve against the session workspace.',
+  defaultOutputDir: 'Default output directory',
+  defaultOutputDirHint: 'Base folder for PDFs / Markdown / figures (default .scholar); relative paths resolve against the session workspace.',
   maxResultsPerSearch: 'Default results per search',
   maxResultsPerSearchHint: 'Result cap used by scholar_search_* tools (max 100).',
   fetchTimeoutSec: 'HTTP timeout (seconds)',
@@ -90,8 +90,8 @@ export const zh: Record<ScholarLocaleKey, string> = {
   cloakEnabledHint: '对被 Cloudflare/WAF 拦截的 PDF 用隐形浏览器重试（较重）。默认关闭。',
   proxyUrl: '出站 HTTP 代理',
   proxyUrlHint: '例如 http://127.0.0.1:10808。留空 = 关闭 / 回退到 HTTPS_PROXY。',
-  pdfOutputDir: 'PDF 输出目录',
-  pdfOutputDirHint: '相对路径基于当前会话工作区解析。',
+  defaultOutputDir: '默认输出目录',
+  defaultOutputDirHint: 'PDF/图片/Markdown 的基础目录（默认 .scholar）；相对路径基于当前会话工作区解析。',
   maxResultsPerSearch: '默认搜索结果数',
   maxResultsPerSearchHint: 'scholar_search_* 工具的默认结果上限（最大 100）。',
   fetchTimeoutSec: 'HTTP 超时（秒）',

@@ -26,7 +26,7 @@ function defaults(): ScholarSettings {
     s2ApiKeyRef: '',
     cloakEnabled: false,
     proxyUrl: '',
-    pdfOutputDir: 'scholar-pdfs',
+    defaultOutputDir: '.scholar',
     maxResultsPerSearch: 20,
     fetchTimeoutSec: 30,
     maxPdfSizeMb: 50,

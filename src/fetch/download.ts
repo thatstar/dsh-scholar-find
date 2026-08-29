@@ -1,13 +1,14 @@
 /**
  * Downloading and library bookkeeping: deterministic filenames,
  * skip-existing, `%PDF` + size validation through the safety gate, and the
- * idempotency sidecar (`<out>/.dsh-scholar-idem/<sha256>.json`).
+ * idempotency sidecar (`<root>/idem/<sha256>.json`).
  * @module dsh-scholar-find/fetch-download
  */
 
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
+import { OUTPUT_SUBDIRS } from '../outdir.js'
 import { fetchWithRedirects, looksLikePdf, readBodyCapped } from './safety.js'
 import { cloakFetchPdf } from './cloak.js'
 import { timedFetch } from './transport.js'
@@ -135,31 +136,26 @@ export async function downloadPdf(url: string, dest: string, opts: DownloadOptio
 // Idempotency sidecar
 // ---------------------------------------------------------------------------
 
-function idemPath(outDir: string, key: string): string {
+function idemPath(rootDir: string, key: string): string {
   const safe = createHash('sha256').update(key).digest('hex')
-  return join(outDir, '.dsh-scholar-idem', `${safe}.json`)
+  return join(rootDir, OUTPUT_SUBDIRS.idem, `${safe}.json`)
 }
 
-export async function idemLoad(outDir: string, key: string): Promise<unknown | undefined> {
+export async function idemLoad(rootDir: string, key: string): Promise<unknown | undefined> {
   try {
-    return JSON.parse(await readFile(idemPath(outDir, key), 'utf8'))
+    return JSON.parse(await readFile(idemPath(rootDir, key), 'utf8'))
   } catch {
     return undefined
   }
 }
 
-export async function idemStore(outDir: string, key: string, envelope: unknown): Promise<void> {
+export async function idemStore(rootDir: string, key: string, envelope: unknown): Promise<void> {
   // Best-effort sidecar: a write failure must not fail the batch (idempotency
   // is a convenience), but it is now logged instead of silently dropped.
   await bestEffort('idempotency sidecar write', async () => {
-    await mkdir(dirname(idemPath(outDir, key)), { recursive: true })
-    await writeFile(idemPath(outDir, key), JSON.stringify(envelope, null, 2), 'utf8')
+    await mkdir(dirname(idemPath(rootDir, key)), { recursive: true })
+    await writeFile(idemPath(rootDir, key), JSON.stringify(envelope, null, 2), 'utf8')
   })
-}
-
-/** Resolve the output directory: absolute as-is, relative against `base`. */
-export function resolveOutDir(pdfOutputDir: string, base: string): string {
-  return resolve(base, pdfOutputDir)
 }
 
 export async function fileExists(path: string): Promise<boolean> {

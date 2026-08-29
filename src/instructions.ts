@@ -21,13 +21,17 @@ Three tool families are available for academic paper research:
   library directory; \`paper_fetch_batch\` downloads many DOIs with a
   resumable envelope; \`paper_pdf2md\` converts a single PDF (an https:// PDF
   URL or a local file path) to Markdown full text via the MinerU lightweight
-  parse API and saves the .md into the library directory.
+  parse API and saves the .md into the library directory. \`scholar_list_library\`
+  lists everything produced under the default output dir (PDFs, Markdown,
+  figures), grouped by subdirectory.
 - \`sciverse_*\` — Sciverse Open Platform content retrieval: structured paper
   search (\`sciverse_search_papers\`), natural-language semantic search with
   RAG passage chunks (\`sciverse_semantic_search\`), field catalog
   (\`sciverse_list_catalog\`), citation relations (\`sciverse_list_paper_relations\`),
   full-text slices (\`sciverse_read_content\`), and figures/tables
-  (\`sciverse_get_resource\`). One Bearer token (\`sciverseApiKeyRef\`).
+  (\`sciverse_get_resource\`, which validates the bytes are a real image and, by
+  default, saves them into the session workspace — it returns the saved \`path\`,
+  never the full base64 inline). One Bearer token (\`sciverseApiKeyRef\`).
 
 Usage rules:
 
@@ -49,7 +53,9 @@ Usage rules:
    \`sciverse_*\` chain — \`sciverse_semantic_search\` / \`sciverse_search_papers\`
    → \`sciverse_read_content\` / \`sciverse_get_resource\` — and only fall back
    to \`paper_fetch_*\` PDF download/extraction as a LAST resort when the user
-   explicitly wants the PDF file itself.
+   explicitly wants the PDF file itself. \`sciverse_get_resource\` persists the
+   figure to disk by default (report the returned \`path\` rather than re-fetching);
+   it never returns the full base64 inline, and refuses non-image bytes.
 4. **Respect Sciverse rate limits**: each endpoint allows ~30 requests/minute.
    Pace consecutive \`sciverse_*\` calls (plan/batch queries), keep \`top_k\` /
    \`page_size\` modest, use \`next_cursor\` for deep pages, and on a 429 back

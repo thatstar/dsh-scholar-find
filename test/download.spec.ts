@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildFilename, downloadPdf, idemLoad, idemStore } from '../src/fetch/download.js'
+import { buildFilename, downloadPdf, fileExists, idemLoad, idemStore } from '../src/fetch/download.js'
 import type { PaperMeta } from '../src/fetch/chain.js'
 
 // Mock the browser-backed cloak module so no Chromium is launched in tests.
@@ -137,12 +137,14 @@ describe('downloadPdf', () => {
 })
 
 describe('idempotency sidecar', () => {
-  it('round-trips the envelope', async () => {
+  it('round-trips the envelope into the idem subdir', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'scholar-test-'))
     const envelope = { ok: true, data: { summary: { total: 1, succeeded: 1, failed: 0 } } }
     await idemStore(tmp, 'weekly-review', envelope)
     expect(await idemLoad(tmp, 'weekly-review')).toEqual(envelope)
     expect(await idemLoad(tmp, 'other-key')).toBeUndefined()
+    // Idempotency envelopes now live under <root>/idem/, not spread at the root.
+    expect(await fileExists(join(tmp, 'idem'))).toBe(true)
   })
 })
 

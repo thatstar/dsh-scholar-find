@@ -31,7 +31,8 @@ Restart the deployment afterwards.
 - Set it up in **Settings → Plugins → Plugin configuration**: your email
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
-  `pdfOutputDir` (default `scholar-pdfs`). Everything else has safe defaults.
+  `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`figs/` subfolders
+  per tool). Everything else has safe defaults.
 
 ## References
 

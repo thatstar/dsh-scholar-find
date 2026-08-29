@@ -53,7 +53,7 @@ toggle, proxy, output directory, …) in the **DSH Web UI: Settings → 插件 (
   preset is required or used.
 - **No CLI.** The plugin ships no binary; every capability is a DSH tool. Retry
   hints in `paper_fetch_batch` envelopes (`next`) name the DSH tools to re-call,
-  and the idempotency sidecar is `.dsh-scholar-idem/`.
+  and the idempotency sidecar is `<defaultOutputDir>/idem/` (default `.scholar/idem/`).
 
   Research/consultation clones may live in `.research-tmp/` (git-ignored); they
   are disposable and never part of the shipped plugin.
@@ -107,16 +107,16 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the card's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
-| `pdfOutputDir` | Where downloaded PDFs land. **Decided: `scholar-pdfs`** (resolved against the session workspace). |
+| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
 ## Code policy
 
 Implementation is **complete** and committed:
-The repository root is the pure-TypeScript DSH plugin (**23 tools**: `scholar_search_*`
+The repository root is the pure-TypeScript DSH plugin (**24 tools**: `scholar_search_*`
 incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`, and
 `sciverse_*` via the Sciverse Open Platform),
-settings section, companion instructions, client-half settings card. **91 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **113 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

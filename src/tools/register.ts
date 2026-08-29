@@ -14,11 +14,13 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
+import { mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
-import { resolveOutDir } from '../fetch/download.js'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { resolveRootDir, resolveSubDir } from '../outdir.js'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
 
 /**
@@ -570,7 +572,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_download',
-    description: `Resolve a paper (doi or title) to its best open-access PDF, download it into the configured library directory (default scholar-pdfs), and report the saved file path. Skips existing files unless overwrite.`,
+    description: `Resolve a paper (doi or title) to its best open-access PDF, download it into the configured library directory (default .scholar/pdfs), and report the saved file path. Skips existing files unless overwrite.`,
     parameters: {
       doi: { type: 'string', description: 'DOI to download' },
       title: { type: 'string', description: 'Paper title; resolved to a DOI first' },
@@ -642,7 +644,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_library',
-    description: `List PDFs already downloaded into the configured library directory (default scholar-pdfs).`,
+    description: `List PDFs already downloaded into the configured library directory (default .scholar/pdfs).`,
     parameters: {},
     output: markdownOutput(
       { total: { type: 'integer' }, files: { type: 'array', items: { type: 'json' } } },
@@ -652,8 +654,8 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const rt = runtimeOf(ctx, env, exec).fetch
       const files = await fetchSvc.listLibrary(rt)
       const markdown = files.length
-        ? `**${files.length} PDF(s) in ${rt.settings.pdfOutputDir}:**\n\n${files.map((f) => `- \`${f.file}\``).join('\n')}`
-        : `No PDFs in ${rt.settings.pdfOutputDir} yet.`
+        ? `**${files.length} PDF(s) in ${rt.settings.defaultOutputDir}/pdfs:**\n\n${files.map((f) => `- \`${f.file}\``).join('\n')}`
+        : `No PDFs in ${rt.settings.defaultOutputDir}/pdfs yet.`
       return { total: files.length, markdown, files }
     },
     isConcurrencySafe: NON_CONCURRENT,
@@ -661,7 +663,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_pdf2md',
-    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB file cap — the page limit is a server-side constraint). Saves the .md into the configured library directory (default scholar-pdfs) and returns the path (+ a short excerpt).`,
+    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB file cap — the page limit is a server-side constraint). Saves the .md into the configured library directory (default .scholar/md) and returns the path (+ a short excerpt).`,
     parameters: {
       pdf: { type: 'string', description: 'PDF to convert: an https://...pdf URL or a local file path.', required: true },
       timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)})` },
@@ -681,13 +683,45 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         : await mineruParseFile(args.pdf, { timeoutMs, signal: exec.signal })
       // Deterministic .md filename from the source basename (strip .pdf).
       const base = (isUrl ? new URL(args.pdf).pathname : args.pdf).split(/[\\/]/).pop() || 'paper'
-      const outDir = resolveOutDir(rt.settings.pdfOutputDir, rt.baseDir)
+      const outDir = resolveSubDir(resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir), 'md')
       const dest = join(outDir, base.replace(/\.pdf$/i, '') + '.md')
       await mkdir(outDir, { recursive: true })
       await writeFile(dest, markdown, 'utf8')
       return { path: dest, excerpt: markdown.slice(0, 400), pdf: args.pdf }
     },
     timeoutMs: MINERU_TIMEOUT_MS + MINERU_TOOL_TIMEOUT_MARGIN_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'scholar_list_library',
+    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/figs). Optionally restrict to one subdirectory.`,
+    parameters: {
+      subdir: { type: 'string', enum: ['pdfs', 'md', 'figs', 'all'], description: 'Which subdirectory to list (default all).' },
+    },
+    output: markdownOutput(
+      { root: { type: 'string' }, files: { type: 'array', items: { type: 'json' } } },
+      (value) => `${Array.isArray(value.files) ? value.files.length : 0} files under the library root.`,
+    ),
+    async execute(args, exec) {
+      const rt = runtimeOf(ctx, env, exec).fetch
+      const rootDir = resolveRootDir(rt.settings.defaultOutputDir, rt.baseDir)
+      const subs = pickSubdirs(typeof args.subdir === 'string' ? args.subdir : undefined)
+      const files: LibraryFile[] = []
+      for (const sub of subs) {
+        const d = resolveSubDir(rootDir, sub)
+        let entries: string[]
+        try {
+          entries = await readdir(d)
+        } catch {
+          continue // subdir absent -> skip
+        }
+        for (const f of entries.filter((e) => !e.startsWith('.'))) {
+          files.push({ sub, file: f, path: join(d, f) })
+        }
+      }
+      return { ok: true, root: rootDir, files, markdown: formatLibrary(files, rootDir) }
+    },
     isConcurrencySafe: NON_CONCURRENT,
   }))
 
@@ -911,7 +945,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const images = [...text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]).filter((f, i, a) => a.indexOf(f) === i)
       return {
         ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images,
-        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${images.length ? `\n\n**Figures in this slice:** ${images.join(', ')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : 'No content returned (document may not be content-accessible).',
+        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${images.length ? `\n\n**Figures in this slice:** ${images.join(', ')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} bytes). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
@@ -920,23 +954,58 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_get_resource',
-    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown). Returns the raw image bytes (mimeType + base64 + data URL).`,
+    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline (avoids bloating context).`,
     parameters: {
       file_name: { type: 'string', description: 'Image file name from the markdown (relative path)', required: true },
+      save: { type: 'boolean', description: 'Write the image to disk (default true). When false, only metadata is returned (no path).' },
+      out_dir: { type: 'string', description: `Directory for saved figures, resolved against the session workspace (default: <defaultOutputDir>/figs, i.e. .scholar/figs).` },
     },
     output: {
-      schema: { type: 'object', properties: { ok: { type: 'boolean' }, file_name: { type: 'string' }, mimeType: { type: 'string' }, bytes: { type: 'integer' }, base64: { type: 'string' }, dataUrl: { type: 'string' } }, additionalProperties: true },
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, file_name: { type: 'string' }, mimeType: { type: 'string' }, bytes: { type: 'integer' }, path: { type: 'string' }, wrote: { type: 'boolean' }, code: { type: 'string' }, retryable: { type: 'boolean' } }, additionalProperties: true },
       render(_args: unknown, value: any) {
-        return text(value.ok && value.dataUrl ? `![${value.file_name}](${value.dataUrl})\n\n(${value.mimeType}, ${value.bytes} bytes)` : value.markdown ?? 'No image returned.')
+        if (value.ok) {
+          if (value.path) return text(`Figure saved: \`${value.path}\`\n\n(${value.mimeType}, ${value.bytes} bytes) — open with read_image / the image viewer.`)
+          return text(`Figure fetched (${value.mimeType}, ${value.bytes} bytes) but not saved (set \`save: true\` to persist it).`)
+        }
+        return text(value.markdown ?? 'No image returned.')
       },
     },
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, file_name: args.file_name, markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const { bytes, mimeType } = await sc.getResource({ file_name: args.file_name })
-      const base64 = Buffer.from(bytes).toString('base64')
-      return { ok: true, file_name: args.file_name, mimeType, bytes: bytes.byteLength, base64, dataUrl: `data:${mimeType};base64,${base64}` }
+      let bytes: Uint8Array
+      try {
+        const r = (await sc.getResource({ file_name: args.file_name })) as { bytes?: Uint8Array }
+        bytes = r.bytes ?? new Uint8Array(0)
+      } catch (e) {
+        const err = mapGetResourceError(e)
+        return { ok: false, file_name: args.file_name, code: err.code, retryable: err.retryable, markdown: err.markdown } as any
+      }
+      // Trust the bytes, not the upstream content-type: it can be undefined or
+      // served for an error page. Non-image bytes are refused, not emitted.
+      const sniffed = sniffImageType(bytes)
+      if (!sniffed) {
+        return { ok: false, file_name: args.file_name, code: 'not_an_image', retryable: false, markdown: `Fetched ${bytes.byteLength} bytes but they are not a recognized image (PNG/JPEG/GIF/WebP). May be a non-image asset or an error page.` } as any
+      }
+      const save = args.save !== false
+      if (!save) {
+        return { ok: true, file_name: args.file_name, mimeType: sniffed.mimeType, bytes: bytes.byteLength, wrote: false } as any
+      }
+      const base = baseDirOf(exec)
+      const outDir = typeof args.out_dir === 'string' && args.out_dir
+        ? resolveRootDir(args.out_dir, base)
+        : resolveSubDir(resolveRootDir(env.settings().defaultOutputDir, base), 'figs')
+      const name = safeImageBasename(args.file_name, sniffed.ext)
+      let path: string
+      try {
+        await mkdir(outDir, { recursive: true })
+        path = join(outDir, name)
+        await writeFile(path, bytes)
+      } catch (e) {
+        return { ok: false, file_name: args.file_name, code: 'io_error', retryable: false, markdown: `Could not write figure: ${(e as Error).message}` } as any
+      }
+      return { ok: true, file_name: args.file_name, mimeType: sniffed.mimeType, bytes: bytes.byteLength, path, wrote: true } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
