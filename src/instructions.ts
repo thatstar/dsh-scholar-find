@@ -35,7 +35,10 @@ Three tool families are available for academic paper research:
   \`alt\` caption alongside its \`file_name\`; pass that caption (and the paper
   identity via the \`paper\` argument) to \`sciverse_get_resource\` so the saved
   figure is self-describing (e.g. \`10.1038_xxx_Fig_2_Caption_architecture.png\`).
-  One Bearer token (\`sciverseApiKeyRef\`).
+  Two workflow tools run multi-call pipelines in one call:
+  \`sciverse_trend_scan\` (per-year paper counts + top-cited papers + venues for
+  a topic) and \`sciverse_evidence_pack\` (verifiable per-claim citation packs,
+  quote verified against the full text). One Bearer token (\`sciverseApiKeyRef\`).
 
 Usage rules:
 
@@ -101,4 +104,20 @@ Usage rules:
     rate-limited; ≤10 MB file cap — page limit is a server-side constraint; uses
     the proxy). Give either an
     \`https://…pdf\` URL or a local file path; it saves the .md into the library
-    directory and returns the path + a short excerpt.`
+    directory and returns the path + a short excerpt.
+
+## Workflow recipes (Sciverse)
+
+Compose the pipeline below when the user's goal matches a case. Primitives (one
+call each): C=\`sciverse_list_catalog\` · M=\`sciverse_search_papers\` ·
+S=\`sciverse_semantic_search\` · X=\`sciverse_read_content\`.
+
+| Case | When the user asks for | Recipe |
+| --- | --- | --- |
+| literature-review | a survey / research progress / state of a field | S(query, top_k=20) → X around each high-score hit → write the review with every claim bound to [doc_id + quote + offset] |
+| scientific-rag | a question answered with evidence | S(query) → keep hits with score ≥ 0.6 → answer with numbered citations |
+| systematic-screen | PRISMA-style screening / include-exclude | C → M(broad: year + type, paginate) → S re-rank candidates → LLM include/exclude with reasons → PRISMA counts |
+| evidence-pack | citation packs / ground a draft | \`sciverse_evidence_pack\` (per-claim S + X verify; quote verbatim, never rewritten) |
+| trend-scan | field trends / hotness / top-cited | \`sciverse_trend_scan\` (per-year counts + citation-sorted top-cited; format the final table) |
+
+Caps: ≤5 claims per pack; S top_k ≤ 100; page M; pace to ~30 calls/min.`

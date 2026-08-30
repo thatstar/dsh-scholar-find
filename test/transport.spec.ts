@@ -24,6 +24,7 @@ describe('resolveProxyUrl', () => {
     process.env.HTTPS_PROXY = 'http://env:3128'
     expect(resolveProxyUrl('')).toBe('http://env:3128')
     delete process.env.HTTPS_PROXY
+    delete process.env.HTTP_PROXY
     process.env.ALL_PROXY = 'socks5://localhost:1080'
     expect(resolveProxyUrl(undefined)).toBe('socks5://localhost:1080')
     delete process.env.ALL_PROXY

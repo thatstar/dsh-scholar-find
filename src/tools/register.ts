@@ -16,6 +16,8 @@ import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
+import { buildEvidenceItem, pickEvidenceHit, resolveYearRange, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
+import { sleep } from '../util/async.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
 import { resolveInsideRoot, resolveRootDir, resolveSubDir } from '../outdir.js'
@@ -57,6 +59,27 @@ const SCIVERSE_CLIENT_TIMEOUT_MS = 60_000
  * filters report exact counts. We annotate the tool output when this ceiling is
  * reached so a 10000 is not mistaken for a real publication total. */
 const SCIVERSE_TOTAL_HITS_CAP = 10000
+/** Pacing between the looped Sciverse calls inside the workflow tools (the
+ * endpoints allow ~30 req/min; per-year trend scans and per-claim evidence
+ * packs are multi-call loops, so they pace themselves). */
+const SCIVERSE_WORKFLOW_PACE_MS = 700
+/** sciverse_trend_scan: year-span cap (each year costs 2 calls). */
+const TREND_MAX_YEARS = 10
+/** sciverse_trend_scan: per-year candidate pool (cost budget + locality: pools
+ * bigger than ~100 add little and multiply latency). */
+const TREND_DEFAULT_POOL = 50
+const TREND_MAX_POOL = 100
+const TREND_DEFAULT_TOP_N = 5
+const TREND_MAX_TOP_N = 20
+/** sciverse_evidence_pack: claims per pack (each claim costs 2 calls). */
+const EVIDENCE_MAX_CLAIMS = 5
+const EVIDENCE_DEFAULT_TOP_K = 5
+const EVIDENCE_DEFAULT_MIN_SCORE = 0.6
+/** Full-text slice read for quote verification (bytes at the chunk offset). */
+const EVIDENCE_READ_LEN = 2000
+/** Wall-clock cap for the workflow tools (multi-call loops: trend spans 10
+ * years x 2 calls, evidence packs 5 claims x 2 calls, each internally paced). */
+const SCIVERSE_WORKFLOW_TIMEOUT_MS = 180_000
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
@@ -812,7 +835,7 @@ function sciverseNotConfigured(): string {
   return 'sciverse_* tools are not configured. Add a `sciverseApiKeyRef` credential (Settings -> Plugins -> Plugin configuration → "Sciverse API token") to enable them.'
 }
 
-/** Register the six sciverse_* tools; returns a disposer that unregisters all. */
+/** Register the eight sciverse_* tools; returns a disposer that unregisters all. */
 export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => void {
   const disposers: Array<() => void> = []
 
@@ -1056,6 +1079,120 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       return { ok: true, file_name: args.file_name, mimeType: sniffed.mimeType, bytes: bytes.byteLength, path, wrote: true } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_trend_scan',
+    description: `Run the research-trend pipeline in one call: for each year in a range, the paper count for the query plus its top-cited papers (hard sort by citation_count) and most common venues. Returns table-ready rows; the model formats the final report. Per-year counts can cap at 10000 server-side (annotated).`,
+    parameters: {
+      query: { type: 'string', description: 'Research area/topic keywords (BM25). Required.', required: true },
+      year_from: { type: 'integer', description: `Earliest year (default: year_to - 4; span capped at ${TREND_MAX_YEARS} years)` },
+      year_to: { type: 'integer', description: 'Latest year (default: current year)' },
+      top_n: { type: 'integer', description: `Top-cited papers per year (default ${TREND_DEFAULT_TOP_N}, cap ${TREND_MAX_TOP_N})` },
+      pool: { type: 'integer', description: `Candidate pool per year for the venue distribution (default ${TREND_DEFAULT_POOL}, cap ${TREND_MAX_POOL})` },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, query: { type: 'string' }, years: { type: 'array', items: { type: 'json' } } },
+      (value) => `Trend for "${value.query ?? ''}": ${Array.isArray(value.years) ? value.years.length : 0} years.`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, query: args.query, years: [], markdown: sciverseNotConfigured() } as any
+      const q = typeof args.query === 'string' ? args.query.trim() : ''
+      if (!q) return { ok: false, query: q, years: [], code: 'validation_error', markdown: 'sciverse_trend_scan needs a non-empty `query`.' } as any
+      const range = resolveYearRange(args.year_from, args.year_to, TREND_MAX_YEARS)
+      if (!range.ok) return { ok: false, query: q, years: [], code: 'validation_error', markdown: range.error } as any
+      const topN = Math.min(Math.max(Math.trunc(args.top_n ?? TREND_DEFAULT_TOP_N), 1), TREND_MAX_TOP_N)
+      const pool = Math.min(Math.max(Math.trunc(args.pool ?? TREND_DEFAULT_POOL), 1), TREND_MAX_POOL)
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const years: Array<{ year: number; total: number; capped: boolean; top: TrendPaper[]; venues: TrendVenue[] }> = []
+      // citation_count hard-sort needs the backend `sort` passthrough: the SDK
+      // maps sort_advanced -> {field, order} and lets `fields` project the
+      // metric columns (citation_count is sortable but NOT default-returned).
+      const sort = [{ field: 'citation_count', order: 'SORT_ORDER_DESC' }]
+      const fields = ['unique_id', 'title', 'publication_published_year', 'publication_venue_name_unified', 'citation_count', 'doi']
+      for (const [i, y] of range.years.entries()) {
+        if (i > 0) await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
+        const count = (await sc.searchPapers({ query: q, year_from: y, year_to: y, page: 1, page_size: 1 })) as any
+        const total = Number(count?.total_count ?? 0)
+        await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
+        const poolRes = (await sc.searchPapers({ query: q, year_from: y, year_to: y, page: 1, page_size: pool, sort_advanced: sort, fields })) as any
+        const papers = Array.isArray(poolRes?.results) ? (poolRes.results as Record<string, unknown>[]) : []
+        years.push({ year: y, total, capped: total >= SCIVERSE_TOTAL_HITS_CAP, top: topByCitation(papers, topN), venues: topVenues(papers, 5) })
+      }
+      const lines = years.map((row) => {
+        const capNote = row.capped ? ` (server-capped at ${SCIVERSE_TOTAL_HITS_CAP})` : ''
+        const topLines = row.top.length
+          ? row.top.map((p) => `  - [${p.citation_count ?? 0} cites] ${p.title ?? 'untitled'}${p.venue ? ` · ${p.venue}` : ''}\`${p.unique_id ?? ''}\``).join('\n')
+          : '  (no papers returned)'
+        const venueLine = row.venues.length ? `  venues: ${row.venues.map((v) => `${v.venue} (${v.count})`).join(', ')}` : ''
+        return `### ${row.year} — ${row.total} papers${capNote}\n${topLines}${venueLine}`
+      })
+      const markdown = `**Trend: "${q}" (${range.yearFrom}-${range.yearTo})** — counts from meta-search; top-cited per year by citation_count (hard sort over a pool of ${pool} relevance hits per year).\n\n${lines.join('\n\n')}${years.some((r) => r.capped) ? `\n\n> Years capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server: the matched set is larger; narrow the query for exact counts.` : ''}`
+      return { ok: true, query: q, years, markdown }
+    },
+    timeoutMs: SCIVERSE_WORKFLOW_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'sciverse_evidence_pack',
+    description: `Build a verifiable citation pack for a list of claims (≤${EVIDENCE_MAX_CLAIMS}): per claim, semantic search for the best passage, then read the full-text slice at its offset to verify the quote is in the source. Returns {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} per claim; quotes are verbatim source text, never rewritten.`,
+    parameters: {
+      claims: { type: 'array', items: { type: 'string' }, description: `Claims to ground (1-${EVIDENCE_MAX_CLAIMS}); each is used as the semantic query`, required: true },
+      top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap 20)` },
+      min_score: { type: 'number', description: `Minimum score to count as a match (default ${EVIDENCE_DEFAULT_MIN_SCORE})` },
+      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'Semantic search mode: fast=keyword (~200ms); balanced=hybrid (~600ms); quality=LLM-rewrite (~2-4s)' },
+      quote_max: { type: 'integer', description: 'Max quote length per item in chars (default 600, cap 2000)' },
+    },
+    output: markdownOutput(
+      { ok: { type: 'boolean' }, total: { type: 'integer' }, verified: { type: 'integer' }, matched: { type: 'integer' }, items: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} claims (${value.verified ?? 0} verified).`,
+    ),
+    async execute(args, exec) {
+      const key = await env.resolveSciverseKey()
+      if (!key) return { ok: false, total: 0, verified: 0, matched: 0, items: [], markdown: sciverseNotConfigured() } as any
+      const claims = (Array.isArray(args.claims) ? args.claims : []).map((c: unknown) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
+      if (!claims.length) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: 'sciverse_evidence_pack needs at least one `claim`.' } as any
+      if (claims.length > EVIDENCE_MAX_CLAIMS) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: `sciverse_evidence_pack accepts at most ${EVIDENCE_MAX_CLAIMS} claims (got ${claims.length}); split into multiple calls.` } as any
+      const topK = Math.min(Math.max(Math.trunc(args.top_k ?? EVIDENCE_DEFAULT_TOP_K), 1), 20)
+      const minScore = Number.isFinite(args.min_score) ? Math.min(Math.max(args.min_score as number, 0), 1) : EVIDENCE_DEFAULT_MIN_SCORE
+      const quoteMax = Math.min(Math.max(Math.trunc(args.quote_max ?? 600), 100), 2000)
+      const mode = typeof args.mode === 'string' ? args.mode : undefined
+      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      const items: EvidenceItem[] = []
+      for (const [i, claim] of claims.entries()) {
+        if (i > 0) await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
+        const res = (await sc.semanticSearch({ query: claim, top_k: topK, ...(mode ? { mode } : {}) })) as any
+        const hits = Array.isArray(res?.hits) ? (res.hits as Record<string, unknown>[]) : []
+        const { hit, matched } = pickEvidenceHit(hits, minScore)
+        let verified = false
+        if (hit && typeof hit.doc_id === 'string' && typeof hit.offset === 'number') {
+          await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
+          try {
+            const slice = (await sc.readContent({ doc_id: hit.doc_id as string, offset: hit.offset as number, limit: EVIDENCE_READ_LEN })) as any
+            verified = verifyQuoteInSlice(String(slice?.text ?? ''), String(hit.chunk ?? ''))
+          } catch {
+            // Full text unavailable at this offset — keep the semantic hit but
+            // mark it unverified instead of failing the whole pack.
+            verified = false
+          }
+        }
+        items.push(buildEvidenceItem(claim, hit, { matched, verified, quoteMax }))
+      }
+      const verifiedN = items.filter((it) => it.verified).length
+      const matchedN = items.filter((it) => it.matched).length
+      const lines = items.map((it, i) => {
+        const status = it.matched ? (it.verified ? '✅ verified' : '⚠️ matched, unverified') : '❌ no evidence ≥ min_score'
+        const src = it.title ? `*${it.title}*` : ''
+        const loc = it.doc_id ? `\`${it.doc_id}\`${it.offset !== undefined ? ` @${it.offset}` : ''}${it.page_no !== undefined ? ` p.${it.page_no}` : ''}` : 'no doc'
+        return `### Claim ${i + 1}: ${it.claim}\n${status} (score ${String(it.score ?? '?')}, confidence ${String(it.confidence ?? '?')}) — ${src} ${loc}\n> ${it.quote.replace(/\n/g, ' ').slice(0, 400)}${it.quote.length > 400 ? '…' : ''}`
+      })
+      const markdown = `**Evidence pack: ${items.length} claim(s), ${verifiedN} verified, ${matchedN} matched**\n\n${lines.join('\n\n')}${verifiedN < matchedN ? `\n\n> Unverified items matched semantically but the quote could not be located in the full-text slice — re-read the context before citing.` : ''}`
+      return { ok: true, total: items.length, verified: verifiedN, matched: matchedN, items, markdown }
+    },
+    timeoutMs: SCIVERSE_WORKFLOW_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
   }))
 
