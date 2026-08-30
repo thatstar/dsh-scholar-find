@@ -65,7 +65,27 @@ export function resolveYearRange(
   return { ok: true, yearFrom: from, yearTo: to, years }
 }
 
-/** Sort by citation_count desc (missing = 0) and keep the top n. */
+/**
+ * Map one Semantic Scholar bulk-search paper to the trend shape used by
+ * topByCitation/topVenues (S2 field names differ: citationCount / venue /
+ * externalIds.DOI / year). Missing values stay undefined (dropped losslessly).
+ */
+export function mapS2Paper(p: Record<string, unknown>): Record<string, unknown> {
+  const ext = (p.externalIds ?? {}) as Record<string, unknown>
+  return {
+    unique_id: typeof p.paperId === 'string' ? p.paperId : undefined,
+    title: typeof p.title === 'string' ? p.title : undefined,
+    citation_count: typeof p.citationCount === 'number' ? p.citationCount : undefined,
+    publication_venue_name_unified: typeof p.venue === 'string' ? p.venue : undefined,
+    publication_published_year: typeof p.year === 'number' ? p.year : undefined,
+    doi: typeof ext.DOI === 'string' ? ext.DOI : undefined,
+  }
+}
+
+/**
+ * Sort by citation_count desc (missing = 0) and keep the top n. Accepts both
+ * the Sciverse shape and the output of mapS2Paper (same field names).
+ */
 export function topByCitation(papers: readonly Record<string, unknown>[], n: number): TrendPaper[] {
   return [...papers]
     .sort((a, b) => Number(b.citation_count ?? 0) - Number(a.citation_count ?? 0))

@@ -345,6 +345,28 @@ export async function searchBulk(
   return paginateBulk(client, `${GRAPH}/paper/search/bulk`, params, options.maxResults ?? DEFAULT_SEARCH_RESULTS)
 }
 
+/**
+ * One bulk-search page PLUS the API's real `total` (the full match count).
+ * `searchBulk`/`paginateBulk` discard `total`; trend counts need it (the
+ * per-year publication counts of a topic), so this keeps the first page's
+ * numbers without extra requests.
+ */
+export async function searchBulkWithMeta(
+  client: ScholarClient,
+  query: string,
+  options: { limit?: number; sort?: 'citationCount:desc' | 'publicationDate:desc' | 'paperId:asc'; filters?: ScholarFilters; fields?: string } = {},
+): Promise<{ papers: any[]; total: number | undefined }> {
+  const params = {
+    query,
+    fields: options.fields ?? BULK_PAPER_FIELDS,
+    sort: options.sort ?? 'citationCount:desc',
+    ...toQueryParams(options.filters),
+    limit: String(Math.min(options.limit ?? DEFAULT_SEARCH_RESULTS, S2_PAGE_MAX)),
+  }
+  const r = await client.request('GET', `${GRAPH}/paper/search/bulk`, params)
+  return { papers: r.data ?? [], total: typeof r.total === 'number' ? r.total : undefined }
+}
+
 /** Relevance-ranked search (supports tldr). */
 export async function searchRelevance(
   client: ScholarClient,

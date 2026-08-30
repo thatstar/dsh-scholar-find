@@ -16,7 +16,7 @@ import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
-import { buildEvidenceItem, pickEvidenceHit, resolveYearRange, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
+import { buildEvidenceItem, mapS2Paper, pickEvidenceHit, resolveYearRange, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
 import { sleep } from '../util/async.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
@@ -1084,55 +1084,66 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_trend_scan',
-    description: `Run the research-trend pipeline in one call: for each year in a range, the paper count for the query plus its top-cited papers (hard sort by citation_count) and most common venues. Returns table-ready rows; the model formats the final report. Per-year counts can cap at 10000 server-side (annotated).`,
+    description: `Run the research-trend pipeline in one call: per-year publication counts, top-cited papers and top venues for a topic. Counts and citation data come from Semantic Scholar (real citations; boolean + year filters; minCitationCount/publicationTypes noise filters) — the Sciverse keyword index caps counts at 10000 and its citation data is unreliable for broad queries, so this tool no longer uses it for trend numbers. Returns table-ready rows; the model formats the final report. Pass \`boolean\` for precision (e.g. phrases:["high-entropy alloys"] + required:["molecular dynamics"]); use sciverse_semantic_search / sciverse_evidence_pack for content and evidence.`,
     parameters: {
-      query: { type: 'string', description: 'Research area/topic keywords (BM25). Required.', required: true },
+      query: { type: 'string', description: 'Topic keywords; used as the Semantic Scholar query. Required.' },
+      boolean: {
+        type: 'object',
+        description: 'Structured boolean query components (exact phrases, +required, -excluded, OR groups) — preferred over raw `query` for precision.',
+        properties: {
+          phrases: { type: 'array', items: { type: 'string', description: 'Exact phrase, quoted' } },
+          required: { type: 'array', items: { type: 'string', description: 'Term that must appear (+term)' } },
+          excluded: { type: 'array', items: { type: 'string', description: 'Term that must not appear (-term)' } },
+          orTerms: { type: 'array', items: { type: 'string', description: 'OR group (a | b | c)' } },
+        },
+        additionalProperties: true,
+      },
       year_from: { type: 'integer', description: `Earliest year (default: year_to - 4; span capped at ${TREND_MAX_YEARS} years)` },
       year_to: { type: 'integer', description: 'Latest year (default: current year)' },
       top_n: { type: 'integer', description: `Top-cited papers per year (default ${TREND_DEFAULT_TOP_N}, cap ${TREND_MAX_TOP_N})` },
       pool: { type: 'integer', description: `Candidate pool per year for the venue distribution (default ${TREND_DEFAULT_POOL}, cap ${TREND_MAX_POOL})` },
+      minCitationCount: { type: 'integer', description: 'Only papers with at least this many citations (excludes zero-cite noise)' },
+      publicationTypes: { type: 'string', description: 'e.g. JournalArticle,Conference,Review (comma-separated)' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, query: { type: 'string' }, years: { type: 'array', items: { type: 'json' } } },
+      { ok: { type: 'boolean' }, query: { type: 'string' }, source: { type: 'string' }, years: { type: 'array', items: { type: 'json' } } },
       (value) => `Trend for "${value.query ?? ''}": ${Array.isArray(value.years) ? value.years.length : 0} years.`,
     ),
     async execute(args, exec) {
-      const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, query: args.query, years: [], markdown: sciverseNotConfigured() } as any
-      const q = typeof args.query === 'string' ? args.query.trim() : ''
-      if (!q) return { ok: false, query: q, years: [], code: 'validation_error', markdown: 'sciverse_trend_scan needs a non-empty `query`.' } as any
+      const { s2: client } = runtimeOf(ctx, env, exec)
+      const builtQuery = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
+      const q = (builtQuery ?? '').trim() || String(args.query ?? '').trim()
+      if (!q) return { ok: false, query: q, source: 'semantic-scholar', years: [], code: 'validation_error', markdown: 'sciverse_trend_scan needs a non-empty `query` (or a `boolean` with at least one term).' } as any
       const range = resolveYearRange(args.year_from, args.year_to, TREND_MAX_YEARS)
-      if (!range.ok) return { ok: false, query: q, years: [], code: 'validation_error', markdown: range.error } as any
+      if (!range.ok) return { ok: false, query: q, source: 'semantic-scholar', years: [], code: 'validation_error', markdown: range.error } as any
       const topN = Math.min(Math.max(Math.trunc(args.top_n ?? TREND_DEFAULT_TOP_N), 1), TREND_MAX_TOP_N)
       const pool = Math.min(Math.max(Math.trunc(args.pool ?? TREND_DEFAULT_POOL), 1), TREND_MAX_POOL)
-      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const years: Array<{ year: number; total: number; capped: boolean; top: TrendPaper[]; venues: TrendVenue[] }> = []
-      // citation_count hard-sort needs the backend `sort` passthrough: the SDK
-      // maps sort_advanced -> {field, order} and lets `fields` project the
-      // metric columns (citation_count is sortable but NOT default-returned).
-      const sort = [{ field: 'citation_count', order: 'SORT_ORDER_DESC' }]
-      const fields = ['unique_id', 'title', 'publication_published_year', 'publication_venue_name_unified', 'citation_count', 'doi']
-      for (const [i, y] of range.years.entries()) {
-        if (i > 0) await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
-        const count = (await sc.searchPapers({ query: q, year_from: y, year_to: y, page: 1, page_size: 1 })) as any
-        const total = Number(count?.total_count ?? 0)
-        await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
-        const poolRes = (await sc.searchPapers({ query: q, year_from: y, year_to: y, page: 1, page_size: pool, sort_advanced: sort, fields })) as any
-        const papers = Array.isArray(poolRes?.results) ? (poolRes.results as Record<string, unknown>[]) : []
-        years.push({ year: y, total, capped: total >= SCIVERSE_TOTAL_HITS_CAP, top: topByCitation(papers, topN), venues: topVenues(papers, 5) })
+      const years: Array<{ year: number; total: number; top: TrendPaper[]; venues: TrendVenue[] }> = []
+      for (const y of range.years) {
+        // One bulk call per year: citation-sorted page serves BOTH the top-cited
+        // papers and the venue histogram; the API `total` is the year count.
+        const r = await s2.searchBulkWithMeta(client, q, {
+          limit: pool,
+          sort: 'citationCount:desc',
+          filters: {
+            year: String(y),
+            ...pickFilters(args),
+          },
+        })
+        const shaped = r.papers.map(mapS2Paper)
+        years.push({ year: y, total: r.total ?? r.papers.length, top: topByCitation(shaped, topN), venues: topVenues(shaped, 5) })
       }
       const lines = years.map((row) => {
-        const capNote = row.capped ? ` (server-capped at ${SCIVERSE_TOTAL_HITS_CAP})` : ''
         const topLines = row.top.length
           ? row.top.map((p) => `  - [${p.citation_count ?? 0} cites] ${p.title ?? 'untitled'}${p.venue ? ` · ${p.venue}` : ''}\`${p.unique_id ?? ''}\``).join('\n')
           : '  (no papers returned)'
         const venueLine = row.venues.length ? `  venues: ${row.venues.map((v) => `${v.venue} (${v.count})`).join(', ')}` : ''
-        return `### ${row.year} — ${row.total} papers${capNote}\n${topLines}${venueLine}`
+        return `### ${row.year} — ${row.total} papers\n${topLines}${venueLine}`
       })
-      const markdown = `**Trend: "${q}" (${range.yearFrom}-${range.yearTo})** — counts from meta-search; top-cited per year by citation_count (hard sort over a pool of ${pool} relevance hits per year).\n\n${lines.join('\n\n')}${years.some((r) => r.capped) ? `\n\n> Years capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server: the matched set is larger; narrow the query for exact counts.` : ''}`
-      return { ok: true, query: q, years, markdown }
+      const markdown = `**Trend: "${q}" (${range.yearFrom}-${range.yearTo})** — counts and top-cited from Semantic Scholar (real citation counts, citation-sorted; venue distribution over the top ${pool} hits per year).\n\n${lines.join('\n\n')}`
+      return { ok: true, query: q, source: 'semantic-scholar', years, markdown }
     },
-    timeoutMs: SCIVERSE_WORKFLOW_TIMEOUT_MS,
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
   }))
 

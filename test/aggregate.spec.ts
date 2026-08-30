@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEvidenceItem,
+  mapS2Paper,
   normalizeText,
   pickEvidenceHit,
   resolveYearRange,
@@ -141,6 +142,36 @@ describe('buildEvidenceItem', () => {
     expect(item.doc_id).toBeUndefined()
     expect(item.page_no).toBeUndefined()
     expect(item.confidence).toBe(0.5)
+  })
+})
+
+describe('mapS2Paper', () => {
+  it('maps Semantic Scholar fields to the trend shape', () => {
+    const m = mapS2Paper({
+      paperId: 'arXiv:1234.5678',
+      title: 'HEA MD study',
+      citationCount: 42,
+      venue: 'npj Computational Materials',
+      year: 2023,
+      externalIds: { DOI: '10.1038/s41524-023-01139-9', ArXiv: '1234.5678' },
+    })
+    expect(m).toEqual({
+      unique_id: 'arXiv:1234.5678',
+      title: 'HEA MD study',
+      citation_count: 42,
+      publication_venue_name_unified: 'npj Computational Materials',
+      publication_published_year: 2023,
+      doi: '10.1038/s41524-023-01139-9',
+    })
+  })
+
+  it('leaves missing fields undefined (dropped losslessly) and feeds topByCitation', () => {
+    const m = mapS2Paper({ title: 'No meta at all' })
+    expect(m.unique_id).toBeUndefined()
+    expect(m.citation_count).toBeUndefined()
+    const top = topByCitation([mapS2Paper({ title: 'a', citationCount: 9 }), m], 5)
+    expect(top[0]?.title).toBe('a')
+    expect(top[1]?.citation_count).toBeUndefined()
   })
 })
 

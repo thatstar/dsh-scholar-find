@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildBoolQuery, createScholarClient, deduplicate, resetSharedPacing, searchBulk } from '../src/s2/client.js'
+import { buildBoolQuery, createScholarClient, deduplicate, resetSharedPacing, searchBulk, searchBulkWithMeta } from '../src/s2/client.js'
 
 const fetchMock = vi.fn()
 
@@ -114,5 +114,38 @@ describe('searchBulk', () => {
     const papers = await searchBulk(client, 'attention', { maxResults: 4 })
     expect(papers.map((p) => p.paperId)).toEqual(['a', 'b', 'c', 'd'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('searchBulkWithMeta', () => {
+  it('returns the first page with the API total (single request, no cursor)', async () => {
+    stubFetch(() => jsonResponse({
+      data: [{ paperId: 'a', title: 'A', citationCount: 3 }, { paperId: 'b', title: 'B', citationCount: 1 }],
+      total: 137,
+      token: 'tok2',
+    }))
+    const client = createScholarClient({ minGapMs: 1 })
+    const r = await searchBulkWithMeta(client, 'high-entropy alloys', {
+      limit: 50,
+      sort: 'citationCount:desc',
+      filters: { year: '2023', minCitationCount: 5 },
+    })
+    expect(r.total).toBe(137)
+    expect(r.papers).toHaveLength(2)
+    const url = decodeURIComponent(String(fetchMock.mock.calls[0]![0]))
+    expect(url).toContain('/paper/search/bulk')
+    expect(url).toContain('limit=50')
+    expect(url).toContain('sort=citationCount:desc')
+    expect(url).toContain('year=2023')
+    expect(url).toContain('minCitationCount=5')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to paper count when the API omits total', async () => {
+    stubFetch(() => jsonResponse({ data: [{ paperId: 'a' }] }))
+    const client = createScholarClient({ minGapMs: 1 })
+    const r = await searchBulkWithMeta(client, 'x', { limit: 10 })
+    expect(r.total).toBeUndefined()
+    expect(r.papers).toEqual([{ paperId: 'a' }])
   })
 })

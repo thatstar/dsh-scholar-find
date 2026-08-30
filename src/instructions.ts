@@ -37,7 +37,8 @@ Three tool families are available for academic paper research:
   figure is self-describing (e.g. \`10.1038_xxx_Fig_2_Caption_architecture.png\`).
   Two workflow tools run multi-call pipelines in one call:
   \`sciverse_trend_scan\` (per-year paper counts + top-cited papers + venues for
-  a topic) and \`sciverse_evidence_pack\` (verifiable per-claim citation packs,
+  a topic — counts and citation data from Semantic Scholar, real values) and
+  \`sciverse_evidence_pack\` (verifiable per-claim citation packs,
   quote verified against the full text). One Bearer token (\`sciverseApiKeyRef\`).
 
 Usage rules:
@@ -73,7 +74,11 @@ Usage rules:
    abstract field is not filterable). The keyword \`query\` is for relevance-ranked
    *discovery*, not precise counting; \`title_contains\` is token/field-level and may
    not substring-match every phrase — for exact counts prefer \`authors\` /
-   \`journals\` / \`year_from\` / \`year_to\` / \`filters_advanced\`.
+   \`journals\` / \`year_from\` / \`year_to\` / \`filters_advanced\`. For per-year
+   counts and citation trends use \`sciverse_trend_scan\` (Semantic Scholar-backed:
+   real citations) or boolean \`scholar_search_papers\`; Sciverse keyword counts
+   cap at 10000 and its citation data is unreliable for broad queries — verify
+   any top-cited list is on-topic before quoting it.
 5. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
@@ -118,6 +123,6 @@ S=\`sciverse_semantic_search\` · X=\`sciverse_read_content\`.
 | scientific-rag | a question answered with evidence | S(query) → keep hits with score ≥ 0.6 → answer with numbered citations |
 | systematic-screen | PRISMA-style screening / include-exclude | C → M(broad: year + type, paginate) → S re-rank candidates → LLM include/exclude with reasons → PRISMA counts |
 | evidence-pack | citation packs / ground a draft | \`sciverse_evidence_pack\` (per-claim S + X verify; quote verbatim, never rewritten) |
-| trend-scan | field trends / hotness / top-cited | \`sciverse_trend_scan\` (per-year counts + citation-sorted top-cited; format the final table) |
+| trend-scan | field trends / hotness / top-cited | \`sciverse_trend_scan\` (S2-backed: real counts + citations; pass \`boolean\` for precision) |
 
 Caps: ≤5 claims per pack; S top_k ≤ 100; page M; pace to ~30 calls/min.`
