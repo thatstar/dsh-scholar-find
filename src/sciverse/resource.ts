@@ -6,6 +6,8 @@
  * @module dsh-scholar-find/sciverse-resource
  */
 
+import { SciverseHttpError } from './client.js'
+
 /** A recognized still-image type, sniffed from the leading bytes. */
 export interface SniffedImage {
   mimeType: string
@@ -155,8 +157,31 @@ export interface GetResourceError {
  * `{ ok:false, code, retryable, markdown }` envelope so the tool call fails
  * gracefully instead of throwing raw and so the model gets a retry hint (esp.
  * on the per-endpoint 429 rate limit).
+ *
+ * Structured errors first: the direct client already classifies the status
+ * (`retryable` = 5xx/429, never 4xx), so its verdict wins over message
+ * sniffing — a 400/401/409/422 must NOT be labelled retryable just because
+ * the body lacks the words "forbidden"/"not found". Only non-Sciverse
+ * failures (timeouts, network errors) fall through to the heuristic below.
  */
 export function mapGetResourceError(e: unknown): GetResourceError {
+  if (e instanceof SciverseHttpError) {
+    const code = e.status === 429 ? 'rate_limited'
+      : e.status === 404 ? 'not_found'
+        : e.status === 403 ? 'forbidden'
+          : e.status >= 500 ? 'server_error'
+            : 'validation_error'
+    const markdown = code === 'rate_limited'
+      ? 'Sciverse rate limit (429) reached. Back off ~60s before retrying this fetch.'
+      : code === 'not_found'
+        ? 'Resource not found (404). This file may not exist in the paper\'s asset set.'
+        : code === 'forbidden'
+          ? 'Access forbidden (403).'
+          : code === 'server_error'
+            ? `Sciverse server error (${e.status}). Transient — retry later.`
+            : `Sciverse request rejected (${e.status}${e.code ? ` ${e.code}` : ''}). Not retryable — fix the input (bad token, invalid file_name, or upstream policy).`
+    return { code, retryable: e.retryable, markdown }
+  }
   const msg = e instanceof Error ? e.message : String(e)
   const lower = msg.toLowerCase()
   if (/timeout/i.test(msg)) {

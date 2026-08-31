@@ -31,6 +31,11 @@ export interface TopicCandidate {
   votes: number
 }
 
+/** evidence_pack: default quote length in chars (the tool clamps to ≤2000). */
+export const EVIDENCE_DEFAULT_QUOTE_MAX = 600
+/** evidence_pack: semantic hits per claim cap (the tool clamps to 1..20). */
+export const EVIDENCE_MAX_TOP_K = 20
+
 /**
  * Frequency-rank the OpenAlex primary topics found in a discovery pool
  * (meta-search results projected with `fields: ['primary_topic']`). Hits
@@ -195,7 +200,7 @@ export function verifyQuoteInSlice(slice: string, quote: string): boolean {
 
 /** Build a lossless-safe evidence item from a hit plus its verification verdict. */
 export function buildEvidenceItem(claim: string, hit: Record<string, unknown> | undefined, opts: { matched: boolean; verified: boolean; quoteMax?: number }): EvidenceItem {
-  const quoteMax = opts.quoteMax ?? 600
+  const quoteMax = opts.quoteMax ?? EVIDENCE_DEFAULT_QUOTE_MAX
   const quote = typeof hit?.chunk === 'string' ? hit.chunk : typeof hit?.abstract === 'string' ? hit.abstract : ''
   const score = typeof hit?.score === 'number' ? hit.score : undefined
   return {

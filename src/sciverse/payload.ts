@@ -20,9 +20,11 @@
  *    backend rejects `FILTER_OP_CONTAINS` on `abstract` (the field is
  *    full-text only, not filterable). The tool layer folds it into `query`
  *    before this builder runs; if it ever reaches here it is ignored.
- *  - `query` and `sort` are mutually exclusive upstream; the `auto` year-sort
- *    rule keeps the sort empty whenever a keyword `query` (or `sort_advanced`)
- *    is present, so BM25 relevance ordering is preserved.
+ *  - `query` + explicit `sort` ARE compatible upstream (the query degrades to
+ *    a hit filter, the hard sort wins) — that is what `sort_advanced` does.
+ *    The `auto` year-sort rule only decides the IMPLICIT year ordering: it
+ *    keeps the sort empty whenever a keyword `query` (or `sort_advanced`) is
+ *    present, so BM25 relevance (and soft boosts) rank instead of a year sort.
  * @module dsh-scholar-find/sciverse-payload
  */
 
@@ -61,6 +63,23 @@ export interface MetaSearchFilter {
 export interface MetaSearchSort {
   field: string
   order?: string
+}
+
+/** Paper-only filter: drops books/ebooks/Zenodo-style records from pools. */
+export function paperOnlyFilter(): MetaSearchFilter {
+  return { field: 'metadata_type', operator: FILTER_OP_EQ, value: 'paper' }
+}
+
+/**
+ * Topic-scoped filter set for trend queries: OpenAlex topic (matched via
+ * `primary_topic.id`), optional exact year, paper-only. Omitting `year` gives
+ * the year-free discovery shape.
+ */
+export function topicYearPaperFilters(topicId: string, year?: number): MetaSearchFilter[] {
+  const filters: MetaSearchFilter[] = [{ field: 'primary_topic.id', operator: FILTER_OP_EQ, value: topicId }]
+  if (year !== undefined) filters.push({ field: YEAR_FIELD, operator: FILTER_OP_EQ, value: year })
+  filters.push(paperOnlyFilter())
+  return filters
 }
 
 /**
@@ -107,7 +126,12 @@ export function buildMetaSearchPayload(args: Record<string, unknown>): Record<st
   if (Array.isArray(args.filters_advanced)) {
     for (const item of args.filters_advanced) {
       if (item && typeof item === 'object') {
-        filters.push({ operator: FILTER_OP_EQ, ...(item as Record<string, unknown>) } as MetaSearchFilter)
+        const f = item as { field?: unknown; operator?: unknown; value?: unknown }
+        // Malformed items without a field string are dropped silently (the
+        // tool schema already validates the array shape).
+        if (typeof f.field === 'string') {
+          filters.push({ field: f.field, operator: typeof f.operator === 'string' ? f.operator : FILTER_OP_EQ, value: f.value })
+        }
       }
     }
   }
@@ -130,9 +154,13 @@ export function buildMetaSearchPayload(args: Record<string, unknown>): Record<st
   }
   if (Array.isArray(args.sort_advanced)) {
     for (const item of args.sort_advanced) {
-      if (item && typeof item === 'object' && (item as Record<string, unknown>).field) {
-        const s = item as Record<string, unknown>
-        sort.push({ field: s.field as string, order: (s.order as string | undefined) ?? SORT_ORDER_DESC })
+      if (item && typeof item === 'object') {
+        const s = item as { field?: unknown; order?: unknown }
+        // Sort items without a field string are malformed input — dropped
+        // silently (the tool schema validates the array shape).
+        if (typeof s.field === 'string') {
+          sort.push({ field: s.field, order: typeof s.order === 'string' ? s.order : SORT_ORDER_DESC })
+        }
       }
     }
   }

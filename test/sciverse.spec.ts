@@ -105,6 +105,27 @@ describe('SciverseClient (direct REST, no SDK)', () => {
     await expect(sc.listCatalog()).rejects.toThrow('timeout after 60ms')
   })
 
+  it('forwards an outer cancellation signal to the request', async () => {
+    stubFetch((url, init) => {
+      const { signal } = init ?? {}
+      return new Promise<Response>((_resolve, reject) => {
+        // The signal may already be aborted when fetch is called (pre-aborted
+        // outer signal → timedFetch aborts the inner controller synchronously).
+        if (signal?.aborted) {
+          reject(signal.reason ?? new Error('aborted'))
+          return
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), { once: true })
+      })
+    })
+    const sc = createSciverseClient('tk', 5000)
+    const controller = new AbortController()
+    controller.abort(new Error('tool cancelled'))
+    await expect(sc.searchPapers({ query: 'x' }, controller.signal)).rejects.toThrow('tool cancelled')
+    // The pre-aborted signal must reach the request without waiting on the timeout.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('throws a structured SciverseHttpError on an error status', async () => {
     stubFetch(() => new Response('rate limited', { status: 429 }))
     const sc = createSciverseClient('tk', 5000)

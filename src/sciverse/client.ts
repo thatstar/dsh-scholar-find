@@ -80,8 +80,10 @@ export class SciverseClient {
     this.baseUrl = (baseUrl ?? SCIVERSE_DEFAULT_ENDPOINT).replace(/\/$/, '')
   }
 
-  /** JSON request with the common headers; real socket timeout via AbortSignal. */
-  private async json<T>(label: string, path: string, init: RequestInit = {}): Promise<T> {
+  /** JSON request with the common headers; real socket timeout via AbortSignal.
+   *  An optional outer `signal` (e.g. the tool's `exec.signal`) composes with
+   *  the timeout, so a cancelled tool run aborts the in-flight request. */
+  private async json<T>(label: string, path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
     const res = await timedFetch(
       `${this.baseUrl}${path}`,
       {
@@ -97,6 +99,7 @@ export class SciverseClient {
       {
         timeoutMs: this.timeoutMs,
         errorLabel: `sciverse ${label}: timeout after ${this.timeoutMs}ms`,
+        signal,
         // Global undici fetch: NO proxy dispatcher, NO plugin browser UA.
         fetchImpl: (url, reqInit) => fetch(url, reqInit),
       },
@@ -106,51 +109,52 @@ export class SciverseClient {
   }
 
   /** Structured metadata search over papers/authors/sources. */
-  searchPapers(args: Record<string, unknown>): Promise<unknown> {
+  searchPapers(args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     return this.json('search_papers', '/meta-search', {
       method: 'POST',
       body: JSON.stringify(buildMetaSearchPayload(args)),
-    })
+    }, signal)
   }
 
   /** Natural-language semantic retrieval over passages (RAG chunks). */
-  semanticSearch(args: { query: string } & Record<string, unknown>): Promise<unknown> {
+  semanticSearch(args: { query: string } & Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     return this.json('semantic_search', '/agentic-search', {
       method: 'POST',
       body: JSON.stringify(buildAgenticSearchPayload(args)),
-    })
+    }, signal)
   }
 
   /** Discover search_papers fields, filter operators, and enum samples. */
   listCatalog(
     args: { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string } = {},
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const qs = new URLSearchParams()
     qs.set('include_sample_values', String(Boolean(args.include_sample_values)))
     if (args.include_field_stats) qs.set('include_field_stats', 'true')
     if (args.collection) qs.set('collection', args.collection)
-    return this.json('list_catalog', `/meta-catalog?${qs.toString()}`)
+    return this.json('list_catalog', `/meta-catalog?${qs.toString()}`, undefined, signal)
   }
 
   /** Paginate a paper's citations / references / related works. */
-  listPaperRelations(args: { unique_id: string; relation: string; page?: number; page_size?: number }): Promise<unknown> {
+  listPaperRelations(args: { unique_id: string; relation: string; page?: number; page_size?: number }, signal?: AbortSignal): Promise<unknown> {
     return this.json('list_paper_relations', '/meta-paper-relations', {
       method: 'POST',
       body: JSON.stringify(args),
-    })
+    }, signal)
   }
 
-  /** Byte-range slice of a paper's full text (extend RAG context). */
-  readContent(args: { doc_id: string; offset?: number; limit?: number }): Promise<unknown> {
+  /** Character-offset slice of a paper's full text (extend RAG context). */
+  readContent(args: { doc_id: string; offset?: number; limit?: number }, signal?: AbortSignal): Promise<unknown> {
     const qs = new URLSearchParams()
     qs.set('doc_id', args.doc_id)
     if (args.offset !== undefined) qs.set('offset', String(args.offset))
     if (args.limit !== undefined) qs.set('limit', String(args.limit))
-    return this.json('read_content', `/content?${qs.toString()}`)
+    return this.json('read_content', `/content?${qs.toString()}`, undefined, signal)
   }
 
   /** Figure/table image bytes referenced inside read_content Markdown. */
-  async getResource(args: { file_name: string }): Promise<{ bytes: Uint8Array; mimeType: string }> {
+  async getResource(args: { file_name: string }, signal?: AbortSignal): Promise<{ bytes: Uint8Array; mimeType: string }> {
     const qs = new URLSearchParams({ file_name: args.file_name })
     const res = await timedFetch(
       `${this.baseUrl}/resource?${qs.toString()}`,
@@ -164,6 +168,7 @@ export class SciverseClient {
       {
         timeoutMs: this.timeoutMs,
         errorLabel: `sciverse get_resource: timeout after ${this.timeoutMs}ms`,
+        signal,
         fetchImpl: (url, reqInit) => fetch(url, reqInit),
       },
     )

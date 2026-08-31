@@ -15,8 +15,9 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
+import { FILTER_OP_EQ, SORT_ORDER_DESC, paperOnlyFilter, topicYearPaperFilters } from '../sciverse/payload.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
-import { buildEvidenceItem, mapS2Paper, pickEvidenceHit, rankTopicCandidates, resolveYearRange, topicIsConfident, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TopicCandidate, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
+import { buildEvidenceItem, EVIDENCE_DEFAULT_QUOTE_MAX, EVIDENCE_MAX_TOP_K, mapS2Paper, pickEvidenceHit, rankTopicCandidates, resolveYearRange, topicIsConfident, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TopicCandidate, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
 import { sleep } from '../util/async.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
@@ -63,7 +64,8 @@ const SCIVERSE_TOTAL_HITS_CAP = 10000
  * endpoints allow ~30 req/min; per-year trend scans and per-claim evidence
  * packs are multi-call loops, so they pace themselves). */
 const SCIVERSE_WORKFLOW_PACE_MS = 700
-/** sciverse_trend_scan: year-span cap (each year costs 2 calls). */
+/** sciverse_trend_scan: year-span cap (each year costs 1 call; the sciverse
+ * mode adds one topic-discovery call up front). */
 const TREND_MAX_YEARS = 10
 /** sciverse_trend_scan: per-year candidate pool (cost budget + locality: pools
  * bigger than ~100 add little and multiply latency). */
@@ -71,11 +73,13 @@ const TREND_DEFAULT_POOL = 50
 const TREND_MAX_POOL = 100
 const TREND_DEFAULT_TOP_N = 5
 const TREND_MAX_TOP_N = 20
+/** sciverse_trend_scan: venue histogram depth per year. */
+const TREND_VENUE_TOP_N = 5
 /** sciverse_evidence_pack: claims per pack (each claim costs 2 calls). */
 const EVIDENCE_MAX_CLAIMS = 5
 const EVIDENCE_DEFAULT_TOP_K = 5
 const EVIDENCE_DEFAULT_MIN_SCORE = 0.6
-/** Full-text slice read for quote verification (bytes at the chunk offset). */
+/** Full-text slice read for quote verification (characters at the chunk offset). */
 const EVIDENCE_READ_LEN = 2000
 /** Wall-clock cap for the workflow tools (multi-call loops: trend spans 10
  * years x 2 calls, evidence packs 5 claims x 2 calls, each internally paced). */
@@ -836,6 +840,19 @@ function sciverseNotConfigured(): string {
 }
 
 /**
+ * One trend row in markdown: `### year — <countLabel> papers` plus the
+ * top-cited lines and the venue histogram. Shared by the s2 and sciverse
+ * branches so the two backends render identically.
+ */
+function fmtTrendRow(row: { year: number; top: TrendPaper[]; venues: TrendVenue[] }, countLabel: string): string {
+  const topLines = row.top.length
+    ? row.top.map((p) => `  - [${p.citation_count ?? 0} cites] ${p.title ?? 'untitled'}${p.venue ? ` · ${p.venue}` : ''}\`${p.unique_id ?? ''}\``).join('\n')
+    : '  (no papers returned)'
+  const venueLine = row.venues.length ? `  venues: ${row.venues.map((v) => `${v.venue} (${v.count})`).join(', ')}` : ''
+  return `### ${row.year} — ${countLabel} papers\n${topLines}${venueLine}`
+}
+
+/**
  * Sciverse-native trend mode (`source: "sciverse"`): OpenAlex-topic-scoped
  * meta-search, which fixes both cookbook failures — exact per-year counts
  * (matched set < 10000) and on-topic top-cited (citation sort within the
@@ -852,7 +869,7 @@ function sciverseNotConfigured(): string {
  */
 async function runSciverseTrendScan(
   env: ScholarToolEnv,
-  opts: { query: string; years: number[]; yearFrom: number; yearTo: number; topN: number; pool: number; topicId?: string; topicName?: string },
+  opts: { query: string; years: number[]; yearFrom: number; yearTo: number; topN: number; pool: number; topicId?: string; topicName?: string; signal?: AbortSignal },
 ): Promise<Record<string, unknown>> {
   const key = await env.resolveSciverseKey()
   if (!key) return { ok: false, query: opts.query, source: 'sciverse', years: [], code: 'not_configured', markdown: sciverseNotConfigured() }
@@ -867,12 +884,12 @@ async function runSciverseTrendScan(
     const d = (await sc.searchPapers({
       query: opts.query,
       fields: ['title', 'primary_topic'],
-      filters_advanced: [{ field: 'metadata_type', operator: 'FILTER_OP_EQ', value: 'paper' }],
+      filters_advanced: [paperOnlyFilter()],
       page: 1,
       page_size: opts.pool,
-    })) as any
+    }, opts.signal)) as any
     const hits = Array.isArray(d?.results) ? (d.results as Record<string, unknown>[]) : []
-    const candidates: TopicCandidate[] = rankTopicCandidates(hits, 5)
+    const candidates: TopicCandidate[] = rankTopicCandidates(hits)
     if (!candidates.length) {
       return {
         ok: true, query: opts.query, source: 'sciverse', years: [], code: 'no_topic_found', candidates: [],
@@ -892,20 +909,18 @@ async function runSciverseTrendScan(
   if (!topicName) topicName = topicId
 
   const years: Array<{ year: number; total: number; capped: boolean; top: TrendPaper[]; venues: TrendVenue[] }> = []
-  for (const y of opts.years) {
+  for (const [i, y] of opts.years.entries()) {
+    // Pace the per-year loop (~30 req/min endpoint budget) and stay cancellable.
+    if (i > 0) await sleep(SCIVERSE_WORKFLOW_PACE_MS, opts.signal)
     // One topic-scoped call per year: citation-sorted page serves BOTH the
     // top-cited papers and the venue histogram; `total_count` is the year count
     // (exact while the matched set stays below the server cap).
     const r = (await sc.searchPapers({
-      filters_advanced: [
-        { field: 'primary_topic.id', operator: 'FILTER_OP_EQ', value: topicId },
-        { field: 'publication_published_year', operator: 'FILTER_OP_EQ', value: y },
-        { field: 'metadata_type', operator: 'FILTER_OP_EQ', value: 'paper' },
-      ],
-      sort_advanced: [{ field: 'citation_count', order: 'SORT_ORDER_DESC' }],
+      filters_advanced: topicYearPaperFilters(topicId, y),
+      sort_advanced: [{ field: 'citation_count', order: SORT_ORDER_DESC }],
       page: 1,
       page_size: opts.pool,
-    })) as any
+    }, opts.signal)) as any
     const results = Array.isArray(r?.results) ? (r.results as Record<string, unknown>[]) : []
     const total = typeof r?.total_count === 'number' ? r.total_count : results.length
     years.push({
@@ -913,18 +928,11 @@ async function runSciverseTrendScan(
       total,
       capped: total >= SCIVERSE_TOTAL_HITS_CAP,
       top: topByCitation(results, opts.topN),
-      venues: topVenues(results, 5),
+      venues: topVenues(results, TREND_VENUE_TOP_N),
     })
   }
   const anyCapped = years.some((row) => row.capped)
-  const lines = years.map((row) => {
-    const count = row.capped ? `≥${SCIVERSE_TOTAL_HITS_CAP} (capped — not an exact count)` : `${row.total}`
-    const topLines = row.top.length
-      ? row.top.map((p) => `  - [${p.citation_count ?? 0} cites] ${p.title ?? 'untitled'}${p.venue ? ` · ${p.venue}` : ''}\`${p.unique_id ?? ''}\``).join('\n')
-      : '  (no papers returned)'
-    const venueLine = row.venues.length ? `  venues: ${row.venues.map((v) => `${v.venue} (${v.count})`).join(', ')}` : ''
-    return `### ${row.year} — ${count} papers\n${topLines}${venueLine}`
-  })
+  const lines = years.map((row) => fmtTrendRow(row, row.capped ? `≥${SCIVERSE_TOTAL_HITS_CAP} (capped — not an exact count)` : `${row.total}`))
   const markdown =
     `**Trend: "${opts.query}" (${opts.yearFrom}-${opts.yearTo})** — Sciverse topic-scoped (topic: ${topicName}, \`${topicId}\`); ` +
     `counts are exact while below ${SCIVERSE_TOTAL_HITS_CAP}, top-cited are citation-sorted WITHIN the topic pool. ` +
@@ -957,7 +965,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, markdown: sciverseNotConfigured(), fields: [] } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string })) as any
+      const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string }, exec.signal)) as any
       const fields = Array.isArray(r?.fields) ? r.fields : []
       return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${fields.map((f: any) => `- \`${f.field_name ?? f.name ?? f.field}\` — ${f.description ?? ''}`).join('\n')}` }
     },
@@ -967,7 +975,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_search_papers',
-    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: reported hit totals are capped at 10000 by the server whenever the matched set is larger (keyword query or broad filter); narrow the query/filters for an exact count. \`abstract_contains\` is folded into the full-text \`query\`. The keyword \`query\` is for relevance-ranked discovery, not precise counting; exact counts require the matched set below 10000 — narrow with field filters (\`authors\` / \`journals\` / \`subjects\`) so the matched set falls below 10000; year filters alone do NOT narrow the cap. \`title_contains\` is near-exact token matching (it under-matches: e.g. CONTAINS "high-entropy alloys" 2020-24 → only 6 records, mostly book chapters) — not a topical filter. Top-cited lists: \`query\` + \`sort_advanced\` (e.g. citation_count desc), plus \`filters_advanced\` \`metadata_type=paper\` to exclude books/ebooks — but never trust citation-sorted keyword pools for topical claims: the hard sort surfaces the corpus's all-time most-cited papers regardless of topic (verified live), so verify every title is on-topic before quoting.`,
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: reported hit totals are capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server whenever the matched set is larger (keyword query or broad filter); narrow the query/filters for an exact count. \`abstract_contains\` is folded into the full-text \`query\`. The keyword \`query\` is for relevance-ranked discovery, not precise counting; exact counts require the matched set below ${SCIVERSE_TOTAL_HITS_CAP} — narrow with field filters (\`authors\` / \`journals\` / \`subjects\`) so the matched set falls below ${SCIVERSE_TOTAL_HITS_CAP}; year filters alone do NOT narrow the cap. \`title_contains\` is near-exact token matching (it under-matches: e.g. CONTAINS "high-entropy alloys" 2020-24 → only 6 records, mostly book chapters) — not a topical filter. Top-cited lists: \`query\` + \`sort_advanced\` (e.g. citation_count desc), plus \`filters_advanced\` \`metadata_type=paper\` to exclude books/ebooks — but never trust citation-sorted keyword pools for topical claims: the hard sort surfaces the corpus's all-time most-cited papers regardless of topic (verified live), so verify every title is on-topic before quoting.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
       query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
@@ -1005,7 +1013,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         delete payload.abstract_contains
         payload.query = [typeof payload.query === 'string' ? payload.query : '', abstractTerm].filter(Boolean).join(' ').trim()
       }
-      const r = (await sc.searchPapers(payload)) as any
+      const r = (await sc.searchPapers(payload, exec.signal)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const total = r.total_count ?? results.length
       // The backend caps reported hit counts at 10000 whenever the matched set is
@@ -1027,7 +1035,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_semantic_search',
-    description: `Natural-language semantic retrieval over the Sciverse corpus (RAG): returns the most relevant passage chunks (title, chunk text, byte offset, score). Follow up with sciverse_read_content (doc_id + offset) to extend context, and sciverse_get_resource for figures/tables.`,
+    description: `Natural-language semantic retrieval over the Sciverse corpus (RAG): returns the most relevant passage chunks (title, chunk text, character offset, score). Follow up with sciverse_read_content (doc_id + offset) to extend context, and sciverse_get_resource for figures/tables.`,
     parameters: {
       query: { type: 'string', description: 'Natural-language question, 1-200 chars is best', required: true },
       top_k: { type: 'integer', description: 'Number of chunks to return — legal range 1-100 (default 10; ~3 chunks max per paper)' },
@@ -1043,7 +1051,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, hits: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters })) as any
+      const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters }, exec.signal)) as any
       const hits = Array.isArray(r?.hits) ? r.hits : []
       return { ok: true, hits, markdown: hits.length ? `**${hits.length} passage chunk(s)**\n\n${fmtChunks(hits)}` : 'No passages found.' }
     },
@@ -1068,7 +1076,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size })) as any
+      const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size }, exec.signal)) as any
       const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
       const total = r.total_count ?? items.length
       return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtRelationItems(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
@@ -1079,21 +1087,21 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_read_content',
-    description: `Read a byte-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned + next_offset for continued reading.`,
+    description: `Read a character-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned (characters, per the API) + next_offset for continued reading.`,
     parameters: {
       doc_id: { type: 'string', description: 'Full-text artifact id (sha256) from a sciverse search/semantic hit', required: true },
-      offset: { type: 'integer', description: 'Byte offset to start reading from (default 0)' },
-      limit: { type: 'integer', description: 'Max bytes to read (server-enforced cap)' },
+      offset: { type: 'integer', description: 'Character offset (Unicode code points) to start reading from (default 0)' },
+      limit: { type: 'integer', description: 'Max characters to read (Unicode code points; server-enforced cap)' },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: { file_name: { type: 'string' }, caption: { type: 'string' } }, additionalProperties: true } } },
-      (value) => `${value.bytes_returned ?? 0} bytes at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
+      (value) => `${value.bytes_returned ?? 0} chars at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
     ),
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, doc_id: args.doc_id, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit })) as any
+      const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit }, exec.signal)) as any
       const text = String(r?.text ?? '')
       // Surfaces figure/table references as ![alt](file_name) in this slice, with
       // BOTH the file_name (for sciverse_get_resource) and the alt caption (the
@@ -1102,7 +1110,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const figs = extractFigureRefs(text)
       return {
         ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images: figs,
-        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} bytes)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} bytes). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
+        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} chars)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} chars). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
@@ -1136,7 +1144,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
       let bytes: Uint8Array
       try {
-        const r = (await sc.getResource({ file_name: args.file_name })) as { bytes?: Uint8Array }
+        const r = (await sc.getResource({ file_name: args.file_name }, exec.signal)) as { bytes?: Uint8Array }
         bytes = r.bytes ?? new Uint8Array(0)
       } catch (e) {
         const err = mapGetResourceError(e)
@@ -1183,7 +1191,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_trend_scan',
-    description: `Run the research-trend pipeline in one call: per-year publication counts, top-cited papers and top venues for a topic. Two backends. \`source:"s2"\` (default) = Semantic Scholar counts and citations (real values; boolean + year filters; minCitationCount/publicationTypes noise filters) — reliable for any topic size. \`source:"sciverse"\` = OpenAlex-topic-scoped Sciverse meta-search: exact per-year counts (matched set < 10000) and in-topic top-cited. For sciverse mode pass \`topic_id\` (OpenAlex topic URL, e.g. https://openalex.org/T11143) or let the tool discover it from the query: a clear plurality auto-selects; an ambiguous discovery returns \`code:"topic_ambiguous"\` with the TOP-5 candidate topic ids — ask the user via \`ask_user_question\` (they may also type their own topic) and re-run with that \`topic_id\`. The Sciverse keyword index caps counts at 10000 and its raw citation data is unreliable for broad queries — topic-scoping fixes the garbage, but verify top-cited titles are on-topic before quoting. Returns table-ready rows; the model formats the final report. Use sciverse_semantic_search / sciverse_evidence_pack for content and evidence.`,
+    description: `Run the research-trend pipeline in one call: per-year publication counts, top-cited papers and top venues for a topic. Two backends. \`source:"s2"\` (default) = Semantic Scholar counts and citations (real values; boolean + year filters; minCitationCount/publicationTypes noise filters) — reliable for any topic size. \`source:"sciverse"\` = OpenAlex-topic-scoped Sciverse meta-search: exact per-year counts (matched set < ${SCIVERSE_TOTAL_HITS_CAP}) and in-topic top-cited. For sciverse mode pass \`topic_id\` (OpenAlex topic URL, e.g. https://openalex.org/T11143) or let the tool discover it from the query: a clear plurality auto-selects; an ambiguous discovery returns \`code:"topic_ambiguous"\` with the TOP-5 candidate topic ids — ask the user via \`ask_user_question\` (they may also type their own topic) and re-run with that \`topic_id\`. The Sciverse keyword index caps counts at ${SCIVERSE_TOTAL_HITS_CAP} and its raw citation data is unreliable for broad queries — topic-scoping fixes the garbage, but verify top-cited titles are on-topic before quoting. Returns table-ready rows; the model formats the final report. Use sciverse_semantic_search / sciverse_evidence_pack for content and evidence.`,
     parameters: {
       query: { type: 'string', description: 'Topic keywords; used as the Semantic Scholar query (s2) and as the discovery query (sciverse). Required.' },
       source: { type: 'string', enum: ['s2', 'sciverse'], description: 'Count/citation backend: s2 (default) = Semantic Scholar; sciverse = OpenAlex-topic-scoped Sciverse meta-search (topic_id or auto-discovery; ambiguous discovery → topic_ambiguous with top-5 candidates)' },
@@ -1213,7 +1221,6 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
     ),
     async execute(args, exec) {
       const source = args.source === 'sciverse' ? 'sciverse' : 's2'
-      const { s2: client } = runtimeOf(ctx, env, exec)
       const builtQuery = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
       const q = (builtQuery ?? '').trim() || String(args.query ?? '').trim()
       if (!q) return { ok: false, query: q, source, years: [], code: 'validation_error', markdown: 'sciverse_trend_scan needs a non-empty `query` (or a `boolean` with at least one term).' } as any
@@ -1231,8 +1238,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           pool,
           topicId: args.topic_id,
           topicName: args.topic_name,
+          signal: exec.signal,
         })
       }
+      // S2 runtime is only needed on the s2 path — the sciverse mode must not
+      // create (or fail on) the Semantic Scholar client.
+      const { s2: client } = runtimeOf(ctx, env, exec)
       const years: Array<{ year: number; total: number; top: TrendPaper[]; venues: TrendVenue[] }> = []
       for (const y of range.years) {
         // One bulk call per year: citation-sorted page serves BOTH the top-cited
@@ -1246,19 +1257,13 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           },
         })
         const shaped = r.papers.map(mapS2Paper)
-        years.push({ year: y, total: r.total ?? r.papers.length, top: topByCitation(shaped, topN), venues: topVenues(shaped, 5) })
+        years.push({ year: y, total: r.total ?? r.papers.length, top: topByCitation(shaped, topN), venues: topVenues(shaped, TREND_VENUE_TOP_N) })
       }
-      const lines = years.map((row) => {
-        const topLines = row.top.length
-          ? row.top.map((p) => `  - [${p.citation_count ?? 0} cites] ${p.title ?? 'untitled'}${p.venue ? ` · ${p.venue}` : ''}\`${p.unique_id ?? ''}\``).join('\n')
-          : '  (no papers returned)'
-        const venueLine = row.venues.length ? `  venues: ${row.venues.map((v) => `${v.venue} (${v.count})`).join(', ')}` : ''
-        return `### ${row.year} — ${row.total} papers\n${topLines}${venueLine}`
-      })
+      const lines = years.map((row) => fmtTrendRow(row, `${row.total}`))
       const markdown = `**Trend: "${q}" (${range.yearFrom}-${range.yearTo})** — counts and top-cited from Semantic Scholar (real citation counts, citation-sorted; venue distribution over the top ${pool} hits per year).\n\n${lines.join('\n\n')}`
-      return { ok: true, query: q, source: 'semantic-scholar', years, markdown }
+      return { ok: true, query: q, source: 's2', years, markdown }
     },
-    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    timeoutMs: SCIVERSE_WORKFLOW_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
   }))
 
@@ -1267,10 +1272,10 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
     description: `Build a verifiable citation pack for a list of claims (≤${EVIDENCE_MAX_CLAIMS}): per claim, semantic search for the best passage, then read the full-text slice at its offset to verify the quote is in the source. Returns {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} per claim; quotes are verbatim source text, never rewritten.`,
     parameters: {
       claims: { type: 'array', items: { type: 'string' }, description: `Claims to ground (1-${EVIDENCE_MAX_CLAIMS}); each is used as the semantic query`, required: true },
-      top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap 20)` },
+      top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap ${EVIDENCE_MAX_TOP_K})` },
       min_score: { type: 'number', description: `Minimum score to count as a match (default ${EVIDENCE_DEFAULT_MIN_SCORE})` },
       mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'Semantic search mode: fast=keyword (~200ms); balanced=hybrid (~600ms); quality=LLM-rewrite (~2-4s)' },
-      quote_max: { type: 'integer', description: 'Max quote length per item in chars (default 600, cap 2000)' },
+      quote_max: { type: 'integer', description: `Max quote length per item in chars (default ${EVIDENCE_DEFAULT_QUOTE_MAX}, cap 2000)` },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, total: { type: 'integer' }, verified: { type: 'integer' }, matched: { type: 'integer' }, items: { type: 'array', items: { type: 'json' } } },
@@ -1282,22 +1287,22 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const claims = (Array.isArray(args.claims) ? args.claims : []).map((c: unknown) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
       if (!claims.length) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: 'sciverse_evidence_pack needs at least one `claim`.' } as any
       if (claims.length > EVIDENCE_MAX_CLAIMS) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: `sciverse_evidence_pack accepts at most ${EVIDENCE_MAX_CLAIMS} claims (got ${claims.length}); split into multiple calls.` } as any
-      const topK = Math.min(Math.max(Math.trunc(args.top_k ?? EVIDENCE_DEFAULT_TOP_K), 1), 20)
+      const topK = Math.min(Math.max(Math.trunc(args.top_k ?? EVIDENCE_DEFAULT_TOP_K), 1), EVIDENCE_MAX_TOP_K)
       const minScore = Number.isFinite(args.min_score) ? Math.min(Math.max(args.min_score as number, 0), 1) : EVIDENCE_DEFAULT_MIN_SCORE
-      const quoteMax = Math.min(Math.max(Math.trunc(args.quote_max ?? 600), 100), 2000)
+      const quoteMax = Math.min(Math.max(Math.trunc(args.quote_max ?? EVIDENCE_DEFAULT_QUOTE_MAX), 100), 2000)
       const mode = typeof args.mode === 'string' ? args.mode : undefined
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
       const items: EvidenceItem[] = []
       for (const [i, claim] of claims.entries()) {
         if (i > 0) await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
-        const res = (await sc.semanticSearch({ query: claim, top_k: topK, ...(mode ? { mode } : {}) })) as any
+        const res = (await sc.semanticSearch({ query: claim, top_k: topK, ...(mode ? { mode } : {}) }, exec.signal)) as any
         const hits = Array.isArray(res?.hits) ? (res.hits as Record<string, unknown>[]) : []
         const { hit, matched } = pickEvidenceHit(hits, minScore)
         let verified = false
         if (hit && typeof hit.doc_id === 'string' && typeof hit.offset === 'number') {
           await sleep(SCIVERSE_WORKFLOW_PACE_MS, exec.signal)
           try {
-            const slice = (await sc.readContent({ doc_id: hit.doc_id as string, offset: hit.offset as number, limit: EVIDENCE_READ_LEN })) as any
+            const slice = (await sc.readContent({ doc_id: hit.doc_id as string, offset: hit.offset as number, limit: EVIDENCE_READ_LEN }, exec.signal)) as any
             verified = verifyQuoteInSlice(String(slice?.text ?? ''), String(hit.chunk ?? ''))
           } catch {
             // Full text unavailable at this offset — keep the semantic hit but

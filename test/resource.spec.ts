@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, parseFigureCaption, safeImageBasename, sniffImageType } from '../src/sciverse/resource.js'
+import { SciverseHttpError } from '../src/sciverse/client.js'
 
 describe('sniffImageType', () => {
   it('detects PNG, JPEG, GIF and WebP from magic bytes', () => {
@@ -73,6 +74,17 @@ describe('mapGetResourceError', () => {
     const r = mapGetResourceError(new TypeError('fetch failed'))
     expect(r.code).toBe('network_error')
     expect(r.retryable).toBe(true)
+  })
+
+  it('prefers the structured SciverseHttpError verdict over message sniffing', () => {
+    // 400/401/409/422 must NOT be labelled retryable even when the body text
+    // contains none of the words the regex heuristic looks for.
+    expect(mapGetResourceError(new SciverseHttpError(400, 'INVALID_REQUEST', 'bad file_name'))).toMatchObject({ code: 'validation_error', retryable: false })
+    expect(mapGetResourceError(new SciverseHttpError(401, 'UNAUTHORIZED', 'token expired'))).toMatchObject({ code: 'validation_error', retryable: false })
+    expect(mapGetResourceError(new SciverseHttpError(429, 'RATE_LIMITED', 'slow down'))).toMatchObject({ code: 'rate_limited', retryable: true })
+    expect(mapGetResourceError(new SciverseHttpError(404, 'NOT_FOUND', 'no such asset'))).toMatchObject({ code: 'not_found', retryable: false })
+    expect(mapGetResourceError(new SciverseHttpError(403, 'PERMISSION_DENIED', 'nope'))).toMatchObject({ code: 'forbidden', retryable: false })
+    expect(mapGetResourceError(new SciverseHttpError(503, 'UPSTREAM_UNAVAILABLE', 'busy'))).toMatchObject({ code: 'server_error', retryable: true })
   })
 })
 

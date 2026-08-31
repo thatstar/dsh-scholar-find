@@ -128,7 +128,7 @@ incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`,
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **166 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **171 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
