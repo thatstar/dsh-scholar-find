@@ -19,11 +19,11 @@ function makeScope(overrides: { value?: Record<string, unknown>; base?: Record<s
   } as unknown as ScholarScopeLike
 }
 
-function makeCredentials(describeResult?: (req: { refs: readonly string[] }) => Promise<{ result: { ok: boolean; value: { credentials: Record<string, { configured?: boolean; writable?: boolean }> } } }>): ScholarCredentialsApi {
-  const describe = describeResult ?? (async () => ({ result: { ok: true, value: { credentials: {} } } }))
+function makeCredentials(describeResult?: (refs: readonly string[]) => Promise<{ ok: boolean; value: Record<string, { configured?: boolean; writable?: boolean }> }>): ScholarCredentialsApi {
+  const describe = describeResult ?? (async () => ({ ok: true, value: {} }))
   return {
     describe: vi.fn(describe),
-    set: vi.fn(async () => ({})),
+    set: vi.fn(async () => undefined),
   }
 }
 
@@ -36,20 +36,20 @@ describe('ScholarCardController credentials-domain keys', () => {
     const c = new ScholarCardController(scope, SPECS, (k) => k, { credentials })
     c.edit('s2ApiKey', 'secret-value')
     await c.save()
-    expect(credentials.set).toHaveBeenCalledWith({ ref: 'S2_API_KEY', value: 'secret-value' })
+    expect(credentials.set).toHaveBeenCalledWith('S2_API_KEY', 'secret-value')
     expect(scope.set).not.toHaveBeenCalled()
   })
 
   it('reads configured/writable from the credentials domain', async () => {
     const scope = makeScope({ value: { s2ApiKeyRef: 'S2_API_KEY' }, base: { s2ApiKeyRef: 'S2_API_KEY' } })
-    const credentials = makeCredentials(async () => ({ result: { ok: true, value: { credentials: { S2_API_KEY: { configured: true, writable: true } } } } }))
+    const credentials = makeCredentials(async () => ({ ok: true, value: { S2_API_KEY: { configured: true, writable: true } } }))
     const c = new ScholarCardController(scope, SPECS, (k) => k, { credentials })
     await vi.waitFor(() => {
       const field = c.inject().hooks.scholarCard.getSnapshot().fields['s2ApiKey']
       expect(field?.configured).toBe(true)
       expect(field?.writable).toBe(true)
     })
-    expect(credentials.describe).toHaveBeenCalledWith({ refs: ['S2_API_KEY'] })
+    expect(credentials.describe).toHaveBeenCalledWith(['S2_API_KEY'])
   })
 
   it('keeps the key write-only (blank draft, never an override)', async () => {
@@ -67,6 +67,6 @@ describe('ScholarCardController credentials-domain keys', () => {
     const c = new ScholarCardController(scope, SPECS, (k) => k, { credentials })
     c.edit('s2ApiKey', 'value')
     await c.save()
-    expect(credentials.set).toHaveBeenCalledWith({ ref: 'S2_API_KEY', value: 'value' })
+    expect(credentials.set).toHaveBeenCalledWith('S2_API_KEY', 'value')
   })
 })

@@ -23,8 +23,13 @@ import { NS, en, zh } from './locales.js'
 
 export const name = 'dsh-scholar-find-client'
 
-/** Required client services (cordis fiber inject). */
-export const inject = ['slots', 'settingsScope', 'locale'] as const
+/**
+ * Required client services (cordis fiber inject). `remote` + `remote.credentials`
+ * follow the current harness contract for the credentials domain (the same
+ * namespaced-remote seam the shipped plugin cards use); the old
+ * `connection.api.credentials` seam no longer exists.
+ */
+export const inject = ['slots', 'settingsScope', 'locale', 'remote', 'remote.credentials'] as const
 
 /**
  * Fields the card edits — kept in sync with the host-side settings schema. The
@@ -51,8 +56,8 @@ const FIELD_SPECS: readonly ScholarFieldSpec[] = [
 /**
  * Mount the card. `settingsScope` is provided by the settings domain bundle
  * (the same service the shipped plugin cards bind). The credentials domain
- * (`api.credentials`) drives the two write-only key controls, so a key change
- * goes to DSH key management rather than the settings section.
+ * (`remote.credentials`) drives the three write-only key controls, so a key
+ * change goes to DSH key management rather than the settings section.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -60,14 +65,18 @@ export function apply(ctx: ClientContext): void {
 
   const t = ctx.locale.bind(NS)
   const scope = ctx.settingsScope.bind({ namespace: NS }) as unknown as ScholarScopeLike
-  const connection = ctx.get('connection') as { api?: { credentials: ScholarCredentialsApi } } | undefined
-  const credentials = connection?.api?.credentials
+  const remote = ctx.get('remote') as { credentials?: ScholarCredentialsApi; $on?: (event: string, fn: (ref: string) => void) => void } | undefined
+  const credentials = remote?.credentials
   const controller = new ScholarCardController(
     scope,
     FIELD_SPECS,
     (key: string) => t(key as never),
     credentials ? { credentials } : undefined,
   )
+
+  // A key can be written from elsewhere (e.g. the Models page addresses the
+  // same references) — refresh the badge when the Host reports a change.
+  remote?.$on?.('credentials/reference-updated', (ref) => controller.refreshCredential(ref))
 
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
     name: 'settings.plugin.item',

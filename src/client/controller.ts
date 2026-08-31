@@ -74,8 +74,10 @@ export interface ScholarScopeLike {
 
 /** Minimal structural view of the wire credentials domain (native key management). */
 export interface ScholarCredentialsApi {
-  describe(req: { refs: readonly string[] }): Promise<{ result: { ok: boolean; value: { credentials: Record<string, { configured?: boolean; writable?: boolean }> } } }>
-  set(req: { ref: string; value: string }): Promise<unknown>
+  /** `describe(refs)` → `{ok, value: {[ref]: {configured?, writable?}}}` — value keyed by ref. */
+  describe(refs: readonly string[]): Promise<{ ok: boolean; value: Record<string, { configured?: boolean; writable?: boolean }> }>
+  /** `set(ref, value)` — positional, per the current remote.credentials contract. */
+  set(ref: string, value: string): Promise<unknown>
 }
 
 /**
@@ -267,9 +269,9 @@ export class ScholarCardController {
     const api = this.api?.credentials
     if (!api || !ref) return
     try {
-      const response = await api.describe({ refs: [ref] })
-      if (!response.result.ok || ref !== this.refOf(field)) return
-      const view = response.result.value.credentials[ref]
+      const response = await api.describe([ref])
+      if (!response.ok || ref !== this.refOf(field)) return
+      const view = response.value[ref]
       const next = { configured: view?.configured ?? false, writable: view?.writable ?? true }
       const prev = this.credentialState[field]
       if (prev && prev.configured === next.configured && prev.writable === next.writable) return
@@ -281,6 +283,19 @@ export class ScholarCardController {
       })
     } catch {
       // A read failure leaves the control usable with its last-known state.
+    }
+  }
+
+  /**
+   * Re-read a key control's badge after the Host reports its reference changed
+   * (a key can be written from elsewhere, e.g. the Models page).
+   * @param ref - the reference the Host reports as changed.
+   */
+  refreshCredential(ref: string): void {
+    for (const spec of this.specs) {
+      if (this.isSecret(spec.key) && this.refOf(spec.key) === ref) {
+        void this.readCredential(spec.key)
+      }
     }
   }
 
@@ -328,7 +343,7 @@ export class ScholarCardController {
               const ref = this.refOf(spec.key)
               const api = this.api?.credentials
               if (api && ref) {
-                apiWrites.push(api.set({ ref, value: field.raw }).catch(() => undefined))
+                apiWrites.push(api.set(ref, field.raw).catch(() => undefined))
               }
             }
             continue
