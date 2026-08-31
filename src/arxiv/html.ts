@@ -24,6 +24,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { timedFetch } from '../fetch/transport.js'
 import { resolveRootDir, resolveSubDir } from '../outdir.js'
+import { buildFigureFilename, sniffImageType } from '../sciverse/resource.js'
 
 /** Base of the official arXiv HTML service. */
 export const ARXIV_HTML_BASE = 'https://arxiv.org/html'
@@ -453,15 +454,89 @@ export function articleToHtml(article: ArxivElement): string {
 
 export type ArxivFulltextFormat = 'markdown' | 'html'
 
+/** Figure cap per call (download + inline cost is bounded). */
+export const ARXIV_MAX_FIGURES = 10
+/** Per-figure download cap (each figure is one more proxied GET). */
+export const ARXIV_FIGURE_TIMEOUT_MS = 20_000
+
+/** One figure discovered in the article (absolute URL + caption). */
+export interface ArxivFigureRef {
+  n: number
+  url: string
+  caption: string
+}
+
+/** One figure after download/validation, with its delivery outcome. */
+export interface ArxivFigure extends ArxivFigureRef {
+  ext: string
+  mimeType: string
+  bytes: number
+  /** Saved file path (save mode) or the admitted attachment ref (inline). */
+  path?: string
+  attachment?: unknown
+  /** Download/validation failure — the markdown keeps the URL placeholder. */
+  error?: string
+}
+
+/**
+ * Collect the article's figures in document order: for every `<figure>`
+ * (incl. table-figures, which carry no image) find the first `<img>` or
+ * `<object data>` and pair it with the figcaption text.
+ */
+export function collectArticleFigures(article: ArxivElement): ArxivFigureRef[] {
+  const out: ArxivFigureRef[] = []
+  const walk = (nodes: ArxivNode[]) => {
+    for (const n of nodes) {
+      if (!isElement(n)) continue
+      if (n.tag === 'figure') {
+        let url = ''
+        let caption = ''
+        const stack = [...n.children]
+        while (stack.length && !url) {
+          const c = stack.shift()!
+          if (isElement(c)) {
+            if (c.tag === 'img' || c.tag === 'object') url = imageMarkdownUrl(c)
+            else stack.push(...c.children)
+          }
+        }
+        for (const c of n.children) {
+          if (isElement(c) && c.tag === 'figcaption') caption = squeeze(renderInline(c, { footnotes: [] }))
+        }
+        if (url) out.push({ n: out.length + 1, url, caption })
+      } else {
+        walk(n.children)
+      }
+    }
+  }
+  walk(article.children)
+  return out
+}
+
+function imageMarkdownUrl(node: ArxivElement): string {
+  const src = node.attrs.src ?? node.attrs.data ?? ''
+  if (!src) return ''
+  return /^https?:/i.test(src) ? src : `${ARXIV_HTML_BASE}/${src.replace(/^\.?\//, '')}`
+}
+
+/** Extension from a URL path, when sniffing does not recognise the bytes. */
+function extOfUrl(url: string): string {
+  const m = /\.([A-Za-z0-9]{1,5})$/.exec(new URL(url).pathname)
+  return m?.[1]?.toLowerCase() ?? 'bin'
+}
+
 export interface ArxivFulltextInput {
   /** The arXiv id / URL as supplied by the caller. */
   arxivId: string
-  /** Persist under the library dirs (`md/` or `html/`); false → inline content. */
+  /** Persist under the library dirs (`md/`/`html/`) + figures under `figs/`;
+   * false → inline content, figures admitted as image attachments. */
   save: boolean
   /** `true` → Markdown; `false` → article-scoped raw HTML. */
   md: boolean
   /** Optional inline truncation cap (characters); no cap when absent. */
   maxChars?: number
+  /** Admit one raster image to the attachment service (inline mode);
+   * absent → figures stay URL placeholders. Returns the durable ref. */
+  admitImage?: (img: { data: Uint8Array; mediaType: string; name?: string }) => Promise<unknown>
   timeoutMs: number
   signal?: AbortSignal
   /** Session workspace base (for resolving `defaultOutputDir`). */
@@ -482,6 +557,11 @@ export type ArxivFulltextResult =
       path?: string
       content?: string
       truncated?: boolean
+      /** Downloaded figures (path in save mode, attachment in inline mode). */
+      figures?: ArxivFigure[]
+      /** Inline-mode raster figures admitted as image attachments (for the
+       * renderer to emit `{type:'image'}` blocks). */
+      images?: Array<{ n: number; caption: string; attachment: unknown }>
       markdown: string
     }
   | { ok: false; code: string; retryable: boolean; message: string; markdown: string }
@@ -551,6 +631,19 @@ export async function arxivGetFulltext(input: ArxivFulltextInput): Promise<Arxiv
   const version = pageVersion(fetched.html) ?? arxivId
   const head = `**arXiv:${arxivId}**${version && version !== arxivId ? ` (resolved ${version})` : ''}${page.title ? ` — ${page.title}` : ''}\n**Format:** ${format} · **${content.length.toLocaleString()} chars**`
 
+  // Figures: downloaded for every successful call; saved under figs/ when
+  // `save`, admitted as image attachments (inline mode) when `admitImage` is
+  // available. Failures degrade to the URL placeholders already in the text.
+  const figures = await fetchArticleFigures(page.article, {
+    save: input.save,
+    baseDir: input.baseDir,
+    defaultOutputDir: input.defaultOutputDir,
+    arxivId,
+    admitImage: input.admitImage,
+    timeoutMs: input.timeoutMs,
+    signal: input.signal,
+  })
+
   if (input.save) {
     const root = resolveRootDir(input.defaultOutputDir, input.baseDir)
     const sub = format === 'markdown' ? 'md' : 'html'
@@ -558,6 +651,9 @@ export async function arxivGetFulltext(input: ArxivFulltextInput): Promise<Arxiv
     const path = join(dir, arxivFileName(arxivId, format))
     await mkdir(dir, { recursive: true })
     await writeFile(path, content, 'utf8')
+    const figureLine = figures.length
+      ? `\n**Figures saved:** ${figures.filter((f) => f.path).length}/${figures.length} (${figures.filter((f) => f.path).map((f) => `\`${f.path}\``).join(', ')})`
+      : ''
     return {
       ok: true,
       available: true,
@@ -567,7 +663,8 @@ export async function arxivGetFulltext(input: ArxivFulltextInput): Promise<Arxiv
       format,
       chars: content.length,
       path,
-      markdown: `${head}\n**Saved:** \`${path}\``,
+      figures,
+      markdown: `${head}\n**Saved:** \`${path}\`${figureLine}`,
     }
   }
 
@@ -578,6 +675,12 @@ export async function arxivGetFulltext(input: ArxivFulltextInput): Promise<Arxiv
     out = out.slice(0, cap)
     truncated = true
   }
+  const images = figures
+    .filter((f) => f.attachment !== undefined)
+    .map((f) => ({ n: f.n, caption: f.caption, attachment: f.attachment }))
+  const imageLine = images.length
+    ? `\n**Figures attached (${images.length}):** ${images.map((f) => `Fig ${f.n}${f.caption ? ` (${f.caption.slice(0, 40)})` : ''}`).join(', ')}`
+    : ''
   return {
     ok: true,
     available: true,
@@ -588,6 +691,65 @@ export async function arxivGetFulltext(input: ArxivFulltextInput): Promise<Arxiv
     chars: content.length,
     content: out,
     truncated,
-    markdown: `${head}\n${truncated ? `**Truncated to ${cap} chars (inline); full length ${content.length}.**\n\n` : '\n'}\`\`\`\n${out.slice(0, 600)}${out.length > 600 ? '…' : ''}\n\`\`\``,
+    figures,
+    images,
+    markdown: `${head}${imageLine}\n${truncated ? `**Truncated to ${cap} chars (inline); full length ${content.length}.**\n\n` : '\n'}\`\`\`\n${out.slice(0, 600)}${out.length > 600 ? '…' : ''}\n\`\`\``,
   }
+}
+
+/** Download, validate and deliver the article figures (see {@link ArxivFigure}). */
+async function fetchArticleFigures(
+  article: ArxivElement,
+  opts: {
+    save: boolean
+    baseDir: string
+    defaultOutputDir: string
+    arxivId: string
+    admitImage?: (img: { data: Uint8Array; mediaType: string; name?: string }) => Promise<unknown>
+    timeoutMs: number
+    signal?: AbortSignal
+  },
+): Promise<ArxivFigure[]> {
+  const refs = collectArticleFigures(article).slice(0, ARXIV_MAX_FIGURES)
+  const out: ArxivFigure[] = []
+  for (const f of refs) {
+    try {
+      const res = await timedFetch(f.url, { headers: { accept: 'image/*,*/*' } }, {
+        timeoutMs: Math.min(opts.timeoutMs, ARXIV_FIGURE_TIMEOUT_MS),
+        signal: opts.signal,
+        errorLabel: 'arxiv figure timeout',
+      })
+      if (!res.ok) {
+        out.push({ ...f, ext: 'bin', mimeType: '', bytes: 0, error: `HTTP ${res.status}` })
+        continue
+      }
+      const data = new Uint8Array(await res.arrayBuffer())
+      const sniff = sniffImageType(data)
+      const ext = sniff?.ext ?? extOfUrl(f.url)
+      const entry: ArxivFigure = {
+        n: f.n, url: f.url, caption: f.caption,
+        ext, mimeType: sniff?.mimeType ?? '', bytes: data.length,
+      }
+      if (opts.save) {
+        const root = resolveRootDir(opts.defaultOutputDir, opts.baseDir)
+        const dir = resolveSubDir(root, 'figs')
+        await mkdir(dir, { recursive: true })
+        const name = buildFigureFilename({ doi: opts.arxivId, fignum: f.n, caption: f.caption, ext })
+        const path = join(dir, name)
+        await writeFile(path, data)
+        entry.path = path
+      } else if (sniff && opts.admitImage) {
+        // Only sniffed raster formats can be admitted (SVG is not supported).
+        entry.attachment = await opts.admitImage({
+          data,
+          mediaType: sniff.mimeType,
+          name: buildFigureFilename({ doi: opts.arxivId, fignum: f.n, caption: f.caption, ext }),
+        })
+      }
+      out.push(entry)
+    } catch (e) {
+      out.push({ ...f, ext: 'bin', mimeType: '', bytes: 0, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  return out
 }

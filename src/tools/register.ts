@@ -9,6 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { admitEncodedImages, type AttachmentStore, type ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { SEARCH_RESULT_CAP, timeoutMsOf, type ScholarSettings } from '../settings.js'
 import * as s2 from '../s2/client.js'
 import * as fmt from '../s2/format.js'
@@ -47,9 +48,9 @@ const FETCH_DOWNLOAD_TIMEOUT_MS = 300_000
 const FETCH_BATCH_TIMEOUT_MS = 600_000
 /** Margin on top of the MinerU parse timeout for the full paper_pdf2md run. */
 const MINERU_TOOL_TIMEOUT_MARGIN_MS = 20_000
-/** arxiv_get_fulltext run cap (one HTML GET + local conversion — fast, but the
- * page fetch is proxied and the page can be large). */
-const ARXIV_TOOL_TIMEOUT_MS = 120_000
+/** arxiv_get_fulltext run cap (one HTML GET + local conversion + up to 10
+ * figure downloads — the page fetch is proxied and the page can be large). */
+const ARXIV_TOOL_TIMEOUT_MS = 180_000
 /** paper_pdf2md `timeoutSec` clamp: the lightweight parser is slow, so a floor
  * avoids a 0/negative deadline (instant "poll timeout"), and the tool cap is
  * derived from the MAX so a large user request isn't killed by a fixed tool
@@ -760,16 +761,16 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'arxiv_get_fulltext',
-    description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (https://arxiv.org/html/<id>; LaTeXML-converted, "experimental" — a subset of papers have no HTML version and the tool reports available:false). Returns Markdown by default (math as LaTeX $...$ from the page's alttext); md:false returns article-scoped raw HTML (chrome stripped). save:true (default) writes the file under the library dir (.scholar/md/<id>.md or .scholar/html/<id>.html) and returns its path; save:false returns the full content inline (cap with maxChars). No API key needed; fetched through the configured proxy.`,
+    description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (https://arxiv.org/html/<id>; LaTeXML-converted, "experimental" — a subset of papers have no HTML version and the tool reports available:false). Returns Markdown by default (math as LaTeX $...$ from the page's alttext); md:false returns article-scoped raw HTML (chrome stripped). save:true (default) writes the file under the library dir (.scholar/md/<id>.md or .scholar/html/<id>.html) and saves the paper's figures under .scholar/figs/ (returning their paths); save:false returns the full content inline (cap with maxChars) with the figures attached as inline images for vision models (text-only models receive the URL placeholders). No API key needed; fetched through the configured proxy.`,
     parameters: {
       arxivId: { type: 'string', description: 'arXiv id (e.g. 2402.08954, 2402.08954v2, hep-ex/0307015) or an abs/pdf/html URL', required: true },
-      save: { type: 'boolean', description: 'Save under the library dir (default true). When false, the full content is returned inline instead of a file path.' },
+      save: { type: 'boolean', description: 'Save under the library dir (default true). When false, the full content is returned inline instead of a file path, and the figures are attached as inline images (for vision models).' },
       md: { type: 'boolean', description: 'Markdown output (default true); when false, article-scoped raw HTML is returned/saved instead.' },
       maxChars: { type: 'integer', description: 'Optional truncation cap (characters) for the inline content when save=false; default: no cap.' },
     },
     // The model-facing result is the RENDERED content (the JSON value is the
     // presentation payload) — so with save:false the render must carry the
-    // FULL inline text, not a preview.
+    // FULL inline text (plus the admitted figure images as image blocks).
     output: {
       schema: {
         type: 'object',
@@ -779,12 +780,19 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
           path: { type: 'string' },
           content: { type: 'string' },
           truncated: { type: 'boolean' },
+          figures: { type: 'array', items: { type: 'json' } },
+          images: { type: 'array', items: { type: 'json' } },
         },
         additionalProperties: true,
       },
       render(_args, value: any) {
-        if (typeof value.content === 'string' && value.content) return text(value.content)
-        return text(value.markdown ?? `arxiv_get_fulltext: ${value.available === false ? 'no HTML version' : 'done'}.`)
+        const blocks: ContentBlock[] = []
+        if (typeof value.content === 'string' && value.content) blocks.push(...text(value.content))
+        else blocks.push(...text(value.markdown ?? `arxiv_get_fulltext: ${value.available === false ? 'no HTML version' : 'done'}.`))
+        for (const img of Array.isArray(value.images) ? value.images : []) {
+          if (img?.attachment) blocks.push({ type: 'image', attachment: img.attachment } as ContentBlock)
+        }
+        return blocks
       },
     },
     async execute(args, exec) {
@@ -792,11 +800,26 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const maxChars = typeof args.maxChars === 'number' && Number.isFinite(args.maxChars) && args.maxChars > 0
         ? Math.floor(args.maxChars)
         : undefined
+      // Admit downloaded raster figures through the deployment attachment
+      // store when available, so vision models see them inline (text-only
+      // routes degrade to placeholders). Absent store → URLs only.
+      const attachments = ctx.get('attachments') as AttachmentStore | undefined
+      const admitImage = attachments
+        ? async (img: { data: Uint8Array; mediaType: string; name?: string }): Promise<unknown> => {
+            const refs = await admitEncodedImages(attachments, [{
+              mediaType: img.mediaType as ImageMediaType,
+              data: Buffer.from(img.data).toString('base64'),
+              name: img.name,
+            }])
+            return refs[0] ?? null
+          }
+        : undefined
       return (await arxivGetFulltext({
         arxivId: String(args.arxivId ?? ''),
         save: args.save !== false,
         md: args.md !== false,
         maxChars,
+        admitImage,
         timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec),
         signal: exec.signal,
         baseDir: rt.baseDir,

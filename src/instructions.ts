@@ -47,9 +47,11 @@ Four tool families are available for academic paper research:
   "experimental" — some papers have no HTML version and it reports
   \`available:false\`). Returns Markdown by default (math as LaTeX \`$...$\`;
   \`md:false\` gives article-scoped raw HTML); \`save:true\` (default) writes
-  \`.scholar/md/<id>.md\` or \`.scholar/html/<id>.html\` and returns the path,
-  \`save:false\` returns the full content inline (cap with \`maxChars\`). No API
-  key needed; fetched through the configured proxy.
+  \`.scholar/md/<id>.md\` or \`.scholar/html/<id>.html\` and saves the paper's
+  figures under \`.scholar/figs/\` (paths returned); \`save:false\` returns the
+  full content inline (cap with \`maxChars\`) with the figures attached as
+  inline images for vision models (text-only models get URL placeholders). No
+  API key needed; fetched through the configured proxy.
 
 Usage rules:
 
@@ -127,9 +129,10 @@ Usage rules:
 13. \`arxiv_get_fulltext\` gives the paper's own HTML rendering (official arXiv
     HTML, no key) — prefer it over PDF→Markdown when the paper is on arXiv and
     an HTML version exists (404 → \`available:false\`, fall back to
-    \`paper_fetch_*\` or \`sciverse_*\`). Default \`save:true\` writes the file and
-    returns the path; use \`save:false\` when you need the content inline (mind
-    token budget — cap with \`maxChars\`).
+    \`paper_fetch_*\` or \`sciverse_*\`). Default \`save:true\` writes the file
+    and the figures (paths returned); use \`save:false\` when you need the
+    content inline (mind token budget — cap with \`maxChars\`); as a vision
+    model you will then also receive the figures as inline images.
 
 ## Workflow recipes (Sciverse)
 

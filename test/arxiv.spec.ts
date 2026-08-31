@@ -10,6 +10,7 @@ import {
   articleToHtml,
   arxivGetFulltext,
   arxivFileName,
+  collectArticleFigures,
   ArxivInputError,
   ARXIV_HTML_BASE,
 } from '../src/arxiv/html.js'
@@ -169,6 +170,29 @@ describe('articleToHtml', () => {
   })
 })
 
+/** A mock that serves the fixture page PLUS its two figure files. */
+function pageAndFiguresMock() {
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+  fetchMock.mockImplementation((url: string) => {
+    if (url === 'https://arxiv.org/html/2402.08954') return Promise.resolve(htmlResponse(FIXTURE_PAGE, 200))
+    if (url === `${ARXIV_HTML_BASE}/2402.08954v1/fig.png`) return Promise.resolve(new Response(PNG, { status: 200, headers: { 'Content-Type': 'image/png' } }))
+    if (url === `${ARXIV_HTML_BASE}/2402.08954v1/fig.svg`) return Promise.resolve(new Response(SVG, { status: 200, headers: { 'Content-Type': 'image/svg+xml' } }))
+    throw new Error(`unexpected ${url}`)
+  })
+}
+
+describe('collectArticleFigures', () => {
+  it('collects img and object figures with captions, skipping table-figures', () => {
+    const page = parseArxivPage(FIXTURE_PAGE)
+    const figures = collectArticleFigures(page.article)
+    expect(figures).toEqual([
+      { n: 1, url: `${ARXIV_HTML_BASE}/2402.08954v1/fig.png`, caption: 'Figure 1: Architecture' },
+      { n: 2, url: `${ARXIV_HTML_BASE}/2402.08954v1/fig.svg`, caption: 'Figure 2: SVG figure' },
+    ])
+  })
+})
+
 describe('arxivGetFulltext — pipeline', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'arxiv-'))
   const baseInput = {
@@ -236,6 +260,63 @@ describe('arxivGetFulltext — pipeline', () => {
   it('maps invalid input to a non-retryable validation envelope', async () => {
     const r = await arxivGetFulltext({ ...baseInput, arxivId: '10.1038/foo', save: true, md: true })
     expect(r).toMatchObject({ ok: false, code: 'validation_error', retryable: false })
+  })
+
+  it('saves figures under <root>/figs/ with self-describing names when save=true', async () => {
+    pageAndFiguresMock()
+    vi.stubGlobal('fetch', fetchMock)
+    const r = await arxivGetFulltext({ ...baseInput, arxivId: '2402.08954', save: true, md: true })
+    if (!('figures' in r)) throw new Error('expected figures')
+    const figPng = r.figures?.find((f) => f.n === 1)
+    const figSvg = r.figures?.find((f) => f.n === 2)
+    expect(figPng).toMatchObject({ ext: 'png', mimeType: 'image/png' })
+    expect(figPng?.path).toBe(join(tmp, '.scholar', 'figs', '2402.08954_Fig_1_Caption_architecture.png'))
+    expect(figSvg).toMatchObject({ ext: 'svg' })
+    expect(figSvg?.path).toBe(join(tmp, '.scholar', 'figs', '2402.08954_Fig_2_Caption_svg_figure.svg'))
+    expect(existsSync(figPng!.path!)).toBe(true)
+    expect(existsSync(figSvg!.path!)).toBe(true)
+    expect(readFileSync(figPng!.path!)[0]).toBe(0x89) // real PNG magic byte
+  })
+
+  it('admits raster figures as image attachments when save=false (SVG skipped)', async () => {
+    pageAndFiguresMock()
+    vi.stubGlobal('fetch', fetchMock)
+    const admitted: Array<{ mediaType: string; name?: string }> = []
+    const r = await arxivGetFulltext({
+      ...baseInput,
+      arxivId: '2402.08954',
+      save: false,
+      md: true,
+      admitImage: async (img) => {
+        admitted.push({ mediaType: img.mediaType, name: img.name })
+        return { attachmentId: `att-${admitted.length}`, mediaType: img.mediaType, bytes: img.data.length, width: 1, height: 1 }
+      },
+    })
+    expect(admitted).toHaveLength(1)
+    expect(admitted[0]).toMatchObject({ mediaType: 'image/png' })
+    if (!('images' in r)) throw new Error('expected images')
+    expect(r.images).toHaveLength(1)
+    expect(r.images![0]).toMatchObject({ n: 1, caption: 'Figure 1: Architecture' })
+    expect(r.images![0]?.attachment).toMatchObject({ attachmentId: 'att-1' })
+    // SVG figure present in figures but not admitted
+    const figSvg = r.figures?.find((f) => f.n === 2)
+    expect(figSvg?.attachment).toBeUndefined()
+  })
+
+  it('degrades gracefully when a figure download fails (URL placeholder stays)', async () => {
+    pageAndFiguresMock()
+    fetchMock.mockImplementation((url: string) => {
+      if (url === 'https://arxiv.org/html/2402.08954') return Promise.resolve(htmlResponse(FIXTURE_PAGE, 200))
+      if (url === `${ARXIV_HTML_BASE}/2402.08954v1/fig.png`) return Promise.reject(new Error('figure fetch failed'))
+      if (url === `${ARXIV_HTML_BASE}/2402.08954v1/fig.svg`) return Promise.resolve(new Response(Buffer.from('<svg/>'), { status: 200 }))
+      throw new Error(`unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const r = await arxivGetFulltext({ ...baseInput, arxivId: '2402.08954', save: false, md: true })
+    expect(r).toMatchObject({ ok: true, available: true })
+    if (!('figures' in r)) throw new Error('expected figures')
+    expect(r.figures?.find((f) => f.n === 1)?.error).toMatch(/figure fetch failed/)
+    expect(r.figures?.find((f) => f.n === 2)).toMatchObject({ ext: 'svg' })
   })
 })
 

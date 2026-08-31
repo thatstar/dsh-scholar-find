@@ -40,8 +40,11 @@ instructions:
    mapping is hand-rolled with deliberate degradation (unknown elements → text,
    math alttext → annotation → inner text, no `<article>` → whole-body text).
    `save:true` (default) writes `.scholar/md/<id>.md` / `.scholar/html/<id>.html`
-   and returns the path; `save:false` returns the full content inline (cap with
-   `maxChars`). No API key; fetched through the proxy (arXiv is international).
+   and saves the figures under `.scholar/figs/` (paths returned); `save:false`
+   returns the full content inline (cap with `maxChars`) and attaches the
+   figures as inline images via the attachment service (`ctx.attachments` +
+   `admitEncodedImages`) for vision models — text-only routes degrade to URL
+   placeholders. No API key; fetched through the proxy (arXiv is international).
 
 5. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
@@ -141,7 +144,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **199 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **205 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
