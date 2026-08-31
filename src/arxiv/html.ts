@@ -34,8 +34,18 @@ const CHROME_TAGS = new Set([
   'select', 'option', 'textarea', 'noscript', 'iframe', 'template', 'svg',
 ])
 
-/** Class markers whose whole subtree is dropped from the rendered output. */
-const DROP_CLASS_MARKERS = ['ltx_author_notes', 'ltx_tag_note', 'ltx_role_refnote']
+/** Class markers whose whole subtree is dropped from the rendered output.
+ * Frontmatter notes (author thanks/dedications) are boilerplate; note marks
+ * (†) and type labels ("thanks: ") are conversion chrome — body footnotes
+ * keep their content as plain inline text. */
+const DROP_CLASS_MARKERS = [
+  'ltx_author_notes',
+  'ltx_tag_note',
+  'ltx_role_refnote',
+  'ltx_note_frontmatter',
+  'ltx_note_mark',
+  'ltx_note_type',
+]
 
 /** Thrown when the input is not a recognisable arXiv id / URL. */
 export class ArxivInputError extends Error {}
@@ -350,6 +360,9 @@ function renderBlock(node: ArxivNode): string {
   if (tag === 'math') return mathMarkdown(node)
   let out = ''
   for (const c of node.children) out += renderBlock(c)
+  // Block containers (div/section/…) must terminate their text with a line
+  // break so the next sibling block does not glue onto it ("Alice## 0.1").
+  if (out && !out.endsWith('\n') && (tag === 'div' || tag === 'section' || tag === 'main' || tag === 'aside')) out += '\n'
   return out
 }
 

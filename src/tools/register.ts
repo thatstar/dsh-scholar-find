@@ -767,10 +767,26 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       md: { type: 'boolean', description: 'Markdown output (default true); when false, article-scoped raw HTML is returned/saved instead.' },
       maxChars: { type: 'integer', description: 'Optional truncation cap (characters) for the inline content when save=false; default: no cap.' },
     },
-    output: markdownOutput(
-      { available: { type: 'boolean' }, format: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' } },
-      (value) => `arxiv_get_fulltext: ${value.available === false ? 'no HTML version' : 'done'}.`,
-    ),
+    // The model-facing result is the RENDERED content (the JSON value is the
+    // presentation payload) — so with save:false the render must carry the
+    // FULL inline text, not a preview.
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          available: { type: 'boolean' },
+          format: { type: 'string' },
+          path: { type: 'string' },
+          content: { type: 'string' },
+          truncated: { type: 'boolean' },
+        },
+        additionalProperties: true,
+      },
+      render(_args, value: any) {
+        if (typeof value.content === 'string' && value.content) return text(value.content)
+        return text(value.markdown ?? `arxiv_get_fulltext: ${value.available === false ? 'no HTML version' : 'done'}.`)
+      },
+    },
     async execute(args, exec) {
       const rt = runtimeOf(ctx, env, exec).fetch
       const maxChars = typeof args.maxChars === 'number' && Number.isFinite(args.maxChars) && args.maxChars > 0
