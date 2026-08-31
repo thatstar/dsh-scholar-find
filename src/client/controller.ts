@@ -362,6 +362,10 @@ export class ScholarCardController {
             const f = draft.fields[field]
             if (f) f.raw = ''
           }
+          // Secret writes never touch the settings scope, so no rebase fires to
+          // recompute the dirty flag — without this the "unsaved" badge would
+          // stick forever after a key save.
+          this.refreshValidity(draft)
         })
         for (const field of secretFields) await this.readCredential(field)
       } catch (e) {
