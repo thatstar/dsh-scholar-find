@@ -40,6 +40,7 @@ const FIXTURE_PAGE = `<!doctype html>
 <p class="ltx_p">We show <math class="ltx_Math" alttext="\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}" display="block"><semantics><mrow><mo>∑</mo></mrow><annotation encoding="application/x-tex">\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}</annotation></semantics></math> here.</p>
 <ul class="ltx_list"><li class="ltx_item"><p class="ltx_p">• First point</p></li><li class="ltx_item"><p class="ltx_p">Second point</p></li></ul>
 <figure id="Ch0.F1" class="ltx_figure"><img src="2402.08954v1/fig.png" id="F1.g1" class="ltx_graphics" alt="A figure" width="300" height="200"/><figcaption class="ltx_caption"><span class="ltx_tag">Figure 1:</span> Architecture</figcaption></figure>
+<figure id="A1" class="ltx_figure"><object type="image/svg+xml" data="2402.08954v1/fig.svg"></object><figcaption class="ltx_caption"><span class="ltx_tag">Figure 2:</span> SVG figure</figcaption></figure>
 <table class="ltx_tabular"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
 <figure id="S4.T1" class="ltx_table"><figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_table">Table 1: </span> Data caption</figcaption><table class="ltx_tabular"><tr><th>X</th><th>Y</th></tr><tr><td>10</td><td>20</td></tr></table></figure>
 <table class="ltx_equation ltx_eqn_table"><tr><td class="ltx_eqn_cell"><math class="ltx_Math" alttext="E=mc^2" display="block"><semantics><mrow><mi>E</mi></mrow></semantics></math></td><td class="ltx_eqn_cell"><span class="ltx_tag">(1)</span></td></tr></table>
@@ -122,6 +123,11 @@ describe('articleToMarkdown', () => {
   it('renders figures with absolute image URLs and the caption', () => {
     expect(md).toContain(`![A figure](${ARXIV_HTML_BASE}/2402.08954v1/fig.png)`)
     expect(md).toContain('*Figure 1: Architecture*')
+  })
+
+  it('renders object-embedded figures (SVG) from their data attribute', () => {
+    expect(md).toContain(`![](${ARXIV_HTML_BASE}/2402.08954v1/fig.svg)`)
+    expect(md).toContain('*Figure 2: SVG figure*')
   })
 
   it('renders real tables as markdown tables', () => {

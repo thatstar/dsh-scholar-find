@@ -231,9 +231,11 @@ function annotationTex(node: ArxivElement): string {
   return ''
 }
 
-/** Markdown image with the src resolved to an absolute arXiv URL. */
+/** Markdown image with the src resolved to an absolute arXiv URL. Works for
+ * `<img src>` and for `<object data>` (LaTeXML embeds some figures — e.g.
+ * appendix SVGs — as `<object type="image/svg+xml" data="…svg">`). */
 export function imageMarkdown(node: ArxivElement): string {
-  const src = node.attrs.src ?? ''
+  const src = node.attrs.src ?? node.attrs.data ?? ''
   if (!src) return ''
   const url = /^https?:/i.test(src) ? src : `${ARXIV_HTML_BASE}/${src.replace(/^\.?\//, '')}`
   const alt = node.attrs.alt && node.attrs.alt !== 'Refer to caption' ? node.attrs.alt : ''
@@ -252,7 +254,10 @@ function renderInline(node: ArxivNode, ctx: MarkdownCtx): string {
   if (CHROME_TAGS.has(node.tag)) return ''
   if (dropClass(node)) return ''
   if (node.tag === 'math') return mathMarkdown(node)
-  if (node.tag === 'img') return imageMarkdown(node)
+  if (node.tag === 'img' || node.tag === 'object') {
+    const img = imageMarkdown(node)
+    if (img) return img
+  }
   if (node.tag === 'br') return '\n'
   // Body footnote: LaTeXML carries the footnote text inline in the flow —
   // collect it and emit a Markdown footnote reference instead.
@@ -302,7 +307,7 @@ function renderFigure(node: ArxivElement, ctx: MarkdownCtx): string {
   while (stack.length && !img && !table) {
     const n = stack.shift()!
     if (isElement(n)) {
-      if (n.tag === 'img') img = imageMarkdown(n)
+      if (n.tag === 'img' || n.tag === 'object') img = imageMarkdown(n)
       else if (n.tag === 'table' && !(n.attrs.class ?? '').includes('ltx_equation')) table = n
       else stack.push(...n.children)
     }
