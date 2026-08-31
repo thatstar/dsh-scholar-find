@@ -7,11 +7,17 @@
  */
 
 import z from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 
-/** Settings namespace of this plugin. */
-export const SCHOLAR_SETTINGS_NAMESPACE = settingsNamespace('dsh-scholar-find')
+/**
+ * Settings namespace of this plugin. A plain lowercase-hyphenated literal —
+ * the validation (/^[a-z][a-z0-9-]*$/) and the branding live in the installed
+ * profile's settings service (ctx.settings), not in a package import: this
+ * plugin carries ZERO runtime/type dependency on @deepseek-ai/dsh-settings, so
+ * upstream breaking changes surface as a loud activation failure instead of
+ * being silently masked by a private nested copy.
+ */
+export const SCHOLAR_SETTINGS_NAMESPACE = 'dsh-scholar-find' as const
 
 /** Hard ceiling for one search call (S2 returns at most 100 per page; the tool
  * clamp and the settings validator share this so the two boundaries cannot

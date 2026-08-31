@@ -11,7 +11,6 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-tools'
 import { assertServiceableScholarSettings, DEFAULT_SCHOLAR_SETTINGS, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
 import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
@@ -22,11 +21,58 @@ import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 
 export const name = 'dsh-scholar-find'
 
+/**
+ * Services this plugin requires before its `apply(ctx)` runs.
+ *
+ * The plugin registers a settings section (via the `settings` service), the
+ * `scholar_*` / `paper_fetch_*` / `sciverse_*` tools (via `tools`), and the
+ * companion-instructions prompt section (via `systemPrompt`); API keys are
+ * resolved lazily from the `credentials` service. Declaring these lets the
+ * loader start the plugin only once every dependency is available. Without
+ * this declaration `apply` runs during the parallel bundle load and
+ * `ctx.settings` throws "cannot get property \"settings\" without inject".
+ */
+export const inject = ['settings', 'tools', 'systemPrompt', 'credentials']
+
+/**
+ * Minimal mirror of the settings service the installed profile provides
+ * (ctx.settings, @deepseek-ai/dsh-settings' SettingsProvider) — the ONE method
+ * this plugin uses. Deliberately local: the plugin ships NO import of
+ * @deepseek-ai/dsh-settings (runtime or types), so the namespace, the schema,
+ * and the registration are all validated by the profile's copy at runtime.
+ * An upstream API change therefore fails loudly at plugin activation instead
+ * of being silently masked by a private nested copy of the package. If the
+ * deployed profile upgrades and this mirror's shape no longer matches, that IS
+ * the intended signal.
+ */
+export interface ScholarSettingsService {
+  installSection<const Namespace extends string, T>(
+    owner: unknown,
+    ns: Namespace,
+    schema: unknown,
+    entry: T,
+    hooks: {
+      setSource(current: () => T): void
+      onChange(): void
+      validate?(value: T): void
+    },
+  ): void
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    settings: ScholarSettingsService
+  }
+}
+
 export function apply(ctx: Context): void {
   let source: () => ScholarSettings = () => DEFAULT_SCHOLAR_SETTINGS
 
   // 1. Settings section -----------------------------------------------------
-  installSettingsSection(ctx, SCHOLAR_SETTINGS_NAMESPACE, ScholarSettingsSchema, DEFAULT_SCHOLAR_SETTINGS, {
+  // Service call (not a package import): the profile's dsh-settings registers
+  // the namespace, applies the schema defaults, and validates the stored
+  // section; our hooks mirror the old installSettingsSection contract exactly.
+  ctx.settings.installSection(ctx, SCHOLAR_SETTINGS_NAMESPACE, ScholarSettingsSchema, DEFAULT_SCHOLAR_SETTINGS, {
     validate: assertServiceableScholarSettings,
     setSource: (current) => {
       source = current

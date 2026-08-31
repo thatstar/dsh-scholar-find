@@ -37,6 +37,12 @@ The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
 toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
 Plugin configuration**; values persist to `$DSH_HOME/settings.yaml`.
 
+Settings registration is a **runtime service call** (`ctx.settings.installSection`)
+— the plugin imports nothing from `@deepseek-ai/dsh-settings` (no runtime import,
+no type import, no direct dependency). The namespace/schema are validated by the
+installed profile's copy, so an upstream dsh API change fails **loudly at plugin
+activation** instead of being silently masked by a private nested copy.
+
 ## Implementation rules (mandatory)
 
 - **TypeScript only.** The whole plugin is implemented in TypeScript for the
