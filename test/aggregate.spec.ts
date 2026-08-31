@@ -4,7 +4,9 @@ import {
   mapS2Paper,
   normalizeText,
   pickEvidenceHit,
+  rankTopicCandidates,
   resolveYearRange,
+  topicIsConfident,
   topByCitation,
   topVenues,
   verifyQuoteInSlice,
@@ -178,5 +180,54 @@ describe('mapS2Paper', () => {
 describe('normalizeText', () => {
   it('collapses whitespace and lower-cases', () => {
     expect(normalizeText('  AlphaFold2\n\tachieves ACCURACY  ')).toBe('alphafold2 achieves accuracy')
+  })
+})
+
+describe('rankTopicCandidates', () => {
+  const hit = (id: string, name: string) => ({ title: name, primary_topic: { id, display_name: name } })
+
+  it('frequency-ranks primary topics and caps at topN', () => {
+    const r = rankTopicCandidates(
+      [hit('https://openalex.org/T11143', 'High Entropy Alloys Studies'), hit('https://openalex.org/T11143', 'High Entropy Alloys Studies'), hit('https://openalex.org/T99999', 'Other'), hit('https://openalex.org/T2', 'Two')],
+      2,
+    )
+    expect(r).toEqual([
+      { topic_id: 'https://openalex.org/T11143', display_name: 'High Entropy Alloys Studies', votes: 2 },
+      { topic_id: 'https://openalex.org/T99999', display_name: 'Other', votes: 1 },
+    ])
+  })
+
+  it('skips hits without a primary_topic object or id', () => {
+    const r = rankTopicCandidates([
+      hit('https://openalex.org/T1', 'A'),
+      { title: 'no topic' },
+      { title: 'empty id', primary_topic: {} },
+      { title: 'string topic', primary_topic: 'just a name' },
+    ])
+    expect(r).toEqual([{ topic_id: 'https://openalex.org/T1', display_name: 'A', votes: 1 }])
+  })
+
+  it('ties break by display name; falls back to the id as name', () => {
+    const r = rankTopicCandidates([hit('https://openalex.org/T2', 'B'), hit('https://openalex.org/T1', 'A')])
+    expect(r[0]?.topic_id).toBe('https://openalex.org/T1')
+    const unnamed = rankTopicCandidates([{ title: 'x', primary_topic: { id: 'https://openalex.org/T9' } }])
+    expect(unnamed[0]).toEqual({ topic_id: 'https://openalex.org/T9', display_name: 'https://openalex.org/T9', votes: 1 })
+  })
+})
+
+describe('topicIsConfident', () => {
+  const c = (topic_id: string, votes: number) => ({ topic_id, display_name: topic_id, votes })
+
+  it('confident when the plurality has ≥3 votes and doubles the runner-up', () => {
+    expect(topicIsConfident([c('T1', 5), c('T2', 2)])).toBe(true)
+    expect(topicIsConfident([c('T1', 3), c('T2', 1)])).toBe(true)
+    expect(topicIsConfident([c('T1', 3)])).toBe(true)
+  })
+
+  it('ambiguous when flat or with a weak plurality', () => {
+    expect(topicIsConfident([c('T1', 3), c('T2', 2)])).toBe(false) // 3 vs 2
+    expect(topicIsConfident([c('T1', 2)])).toBe(false) // < 3 votes
+    expect(topicIsConfident([c('T1', 1), c('T2', 1), c('T3', 1)])).toBe(false)
+    expect(topicIsConfident([])).toBe(false)
   })
 })

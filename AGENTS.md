@@ -26,9 +26,11 @@ instructions:
    RAG search, field catalog, citation relations, full-text slices, and
    figures. **Fetched DIRECTLY — no proxy** (China-hosted service; routed
    around `proxyUrl` on purpose). Each endpoint is rate-limited to ~30
-   requests/minute. The SDK (`sciverse` npm package) is bundled by esbuild
-   (`scripts/build-sciverse.mjs`) because its published ESM entry uses
-   extensionless imports that plain Node cannot resolve.
+   requests/minute. Implemented as a **clean-room direct REST client**
+   (`src/sciverse/client.ts` + `src/sciverse/payload.ts`) against the public
+   HTTP API at `https://api.sciverse.space` — **no SDK dependency** (the
+   `sciverse` npm package is not used; requests are socket-timeout bounded via
+   `timedFetch` with the global fetch, so the proxy dispatcher never applies).
 
 4. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
@@ -122,10 +124,11 @@ Implementation is **complete** and committed:
 The repository root is the pure-TypeScript DSH plugin (**26 tools**: `scholar_search_*`
 incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`, and
 `sciverse_*` via the Sciverse Open Platform — including the two workflow tools
-`sciverse_trend_scan` (trend counts + citations from Semantic Scholar, real
-values — the Sciverse keyword index caps counts at 10000 and its citation data
-is unreliable for broad queries) and `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **152 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+`sciverse_trend_scan` (dual-source: default Semantic Scholar counts/citations,
+real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
+with exact counts below the server's 10000 cap and in-topic top-cited) and
+`sciverse_evidence_pack`),
+settings section, companion instructions, client-half settings card. **166 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

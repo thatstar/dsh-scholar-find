@@ -43,24 +43,3 @@ export async function bestEffort<T>(label: string, fn: () => Promise<T>): Promis
     return undefined
   }
 }
-
-/**
- * Bound a promise by a wall-clock timeout (for SDKs/APIs that accept no
- * AbortSignal, e.g. the Sciverse client). Rejects with a labeled timeout error;
- * the underlying call is not aborted, only abandoned.
- */
-export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms)
-    promise.then(
-      (v) => {
-        clearTimeout(timer)
-        resolve(v)
-      },
-      (e) => {
-        clearTimeout(timer)
-        reject(e)
-      },
-    )
-  })
-}

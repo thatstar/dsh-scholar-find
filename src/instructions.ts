@@ -37,7 +37,9 @@ Three tool families are available for academic paper research:
   figure is self-describing (e.g. \`10.1038_xxx_Fig_2_Caption_architecture.png\`).
   Two workflow tools run multi-call pipelines in one call:
   \`sciverse_trend_scan\` (per-year paper counts + top-cited papers + venues for
-  a topic — counts and citation data from Semantic Scholar, real values) and
+  a topic — \`source:"s2"\` default: Semantic Scholar counts/citations, real
+  values; \`source:"sciverse"\`: OpenAlex-topic-scoped Sciverse meta-search
+  with exact counts for topics < 10000/yr) and
   \`sciverse_evidence_pack\` (verifiable per-claim citation packs,
   quote verified against the full text). One Bearer token (\`sciverseApiKeyRef\`).
 
@@ -68,17 +70,21 @@ Usage rules:
    Pace consecutive \`sciverse_*\` calls (plan/batch queries), keep \`top_k\` /
    \`page_size\` modest, and on a 429 back off instead of retrying in a burst.
    Paginate \`sciverse_search_papers\` with \`page\` / \`page_size\`. Reported hit
-   totals are **capped at 10000** by the server whenever the matched set is larger
-   (keyword query or broad structured filter); narrow the query/filters for an
-   exact count. \`abstract_contains\` is folded into the full-text \`query\` (the
-   abstract field is not filterable). The keyword \`query\` is for relevance-ranked
-   *discovery*, not precise counting; \`title_contains\` is token/field-level and may
-   not substring-match every phrase — for exact counts prefer \`authors\` /
-   \`journals\` / \`year_from\` / \`year_to\` / \`filters_advanced\`. For per-year
-   counts and citation trends use \`sciverse_trend_scan\` (Semantic Scholar-backed:
-   real citations) or boolean \`scholar_search_papers\`; Sciverse keyword counts
-   cap at 10000 and its citation data is unreliable for broad queries — verify
-   any top-cited list is on-topic before quoting it.
+   totals are **capped at 10000** whenever the matched set is larger (any keyword
+   \`query\` — even year-filtered — and broad structured filters alike; verified
+   live against the official trend cookbook recipe, whose example per-year counts
+   are unreachable). Only a matched set below 10000 gives an exact count: narrow
+   with field filters (\`authors\` / \`journals\` / \`subjects\`) — year filters
+   alone do NOT narrow the cap, and \`title_contains\` is near-exact token
+   matching (under-matches; not a topical filter). \`abstract_contains\`
+   is folded into the full-text \`query\` (the abstract field is not filterable).
+   The keyword \`query\` is for relevance-ranked *discovery*, not precise counting.
+   For per-year counts and citation trends use \`sciverse_trend_scan\`
+   (Semantic Scholar-backed: real citations) or boolean \`scholar_search_papers\`.
+   Sciverse's own citation data is unreliable for broad queries — when a top-cited
+   list is wanted, use \`query\` + \`sort_advanced\` (citation_count desc) +
+   \`filters_advanced\` \`metadata_type=paper\`, then verify titles are on-topic
+   before quoting.
 5. Prefer \`scholar_search_papers\` with a precise boolean query and filters
    over many broad relevance calls. Keep \`maxResults\` modest (default 20;
    cap 100 per call). Request abstracts/TLDR inline only when the user needs
@@ -123,6 +129,6 @@ S=\`sciverse_semantic_search\` · X=\`sciverse_read_content\`.
 | scientific-rag | a question answered with evidence | S(query) → keep hits with score ≥ 0.6 → answer with numbered citations |
 | systematic-screen | PRISMA-style screening / include-exclude | C → M(broad: year + type, paginate) → S re-rank candidates → LLM include/exclude with reasons → PRISMA counts |
 | evidence-pack | citation packs / ground a draft | \`sciverse_evidence_pack\` (per-claim S + X verify; quote verbatim, never rewritten) |
-| trend-scan | field trends / hotness / top-cited | \`sciverse_trend_scan\` (S2-backed: real counts + citations; pass \`boolean\` for precision) |
+| trend-scan | field trends / hotness / top-cited | \`sciverse_trend_scan\` — default \`source:"s2"\` (real counts + citations; pass \`boolean\` for precision); \`source:"sciverse"\` = OpenAlex-topic-scoped (pass \`topic_id\`; on \`code:"topic_ambiguous"\` ask via \`ask_user_question\` with the top-5 candidates, then re-run with the chosen \`topic_id\`) |
 
 Caps: ≤5 claims per pack; S top_k ≤ 100; page M; pace to ~30 calls/min.`

@@ -21,6 +21,53 @@ export interface TrendVenue {
   count: number
 }
 
+/** One OpenAlex topic candidate from the discovery pool. */
+export interface TopicCandidate {
+  /** OpenAlex topic URL, e.g. https://openalex.org/T11143. */
+  topic_id: string
+  /** Canonical display name from the index. */
+  display_name: string
+  /** How many discovery hits carry this primary topic. */
+  votes: number
+}
+
+/**
+ * Frequency-rank the OpenAlex primary topics found in a discovery pool
+ * (meta-search results projected with `fields: ['primary_topic']`). Hits
+ * without a primary_topic object/id are skipped. Returns the top `topN`
+ * candidates, votes descending (ties by name).
+ */
+export function rankTopicCandidates(hits: readonly Record<string, unknown>[], topN = 5): TopicCandidate[] {
+  const counts = new Map<string, { display_name: string; votes: number }>()
+  for (const p of hits) {
+    const t = p.primary_topic
+    if (!t || typeof t !== 'object') continue
+    const topic = t as Record<string, unknown>
+    if (typeof topic.id !== 'string' || !topic.id) continue
+    const name = typeof topic.display_name === 'string' && topic.display_name ? topic.display_name : topic.id
+    const cur = counts.get(topic.id)
+    if (cur) cur.votes++
+    else counts.set(topic.id, { display_name: name, votes: 1 })
+  }
+  return [...counts.entries()]
+    .map(([topic_id, c]) => ({ topic_id, display_name: c.display_name, votes: c.votes }))
+    .sort((a, b) => b.votes - a.votes || a.display_name.localeCompare(b.display_name))
+    .slice(0, Math.max(0, topN))
+}
+
+/**
+ * A single topic is "inferable" (no need to ask the user) when the plurality
+ * is real: at least 3 votes AND at least double the runner-up. Anything flatter
+ * (3 vs 2, 2 vs 0, 1/1/1/…) is ambiguous — surface the candidates instead of
+ * guessing.
+ */
+export function topicIsConfident(candidates: readonly TopicCandidate[]): boolean {
+  const top = candidates[0]
+  if (!top) return false
+  const second = candidates[1]?.votes ?? 0
+  return top.votes >= 3 && top.votes >= 2 * second
+}
+
 /** One processed claim for sciverse_evidence_pack. */
 export interface EvidenceItem {
   claim: string
