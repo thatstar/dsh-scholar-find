@@ -7,7 +7,7 @@
 
 export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar-find)
 
-Three tool families are available for academic paper research:
+Four tool families are available for academic paper research:
 
 - \`scholar_search_*\` — discover and inspect papers through Semantic Scholar:
   ranked search with filters and boolean queries, exact title match, paper
@@ -42,6 +42,14 @@ Three tool families are available for academic paper research:
   with exact counts for topics < 10000/yr) and
   \`sciverse_evidence_pack\` (verifiable per-claim citation packs,
   quote verified against the full text). One Bearer token (\`sciverseApiKeyRef\`).
+- \`arxiv_*\` — official arXiv HTML full text: \`arxiv_get_fulltext\` fetches
+  \`https://arxiv.org/html/<id>\` (arXiv's own HTML rendering of the paper,
+  "experimental" — some papers have no HTML version and it reports
+  \`available:false\`). Returns Markdown by default (math as LaTeX \`$...$\`;
+  \`md:false\` gives article-scoped raw HTML); \`save:true\` (default) writes
+  \`.scholar/md/<id>.md\` or \`.scholar/html/<id>.html\` and returns the path,
+  \`save:false\` returns the full content inline (cap with \`maxChars\`). No API
+  key needed; fetched through the configured proxy.
 
 Usage rules:
 
@@ -116,6 +124,12 @@ Usage rules:
     the proxy). Give either an
     \`https://…pdf\` URL or a local file path; it saves the .md into the library
     directory and returns the path + a short excerpt.
+13. \`arxiv_get_fulltext\` gives the paper's own HTML rendering (official arXiv
+    HTML, no key) — prefer it over PDF→Markdown when the paper is on arXiv and
+    an HTML version exists (404 → \`available:false\`, fall back to
+    \`paper_fetch_*\` or \`sciverse_*\`). Default \`save:true\` writes the file and
+    returns the path; use \`save:false\` when you need the content inline (mind
+    token budget — cap with \`maxChars\`).
 
 ## Workflow recipes (Sciverse)
 

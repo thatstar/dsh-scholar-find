@@ -11,12 +11,13 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 
 /**
  * One subdir per tool/family under the root. Names are kept short and stable:
- * `pdfs` (open-access PDFs), `md` (Markdown conversions), `figs`
- * (sciverse figures), `idem` (batch-idempotency sidecar).
+ * `pdfs` (open-access PDFs), `md` (Markdown conversions), `html` (arXiv HTML
+ * pages), `figs` (sciverse figures), `idem` (batch-idempotency sidecar).
  */
 export const OUTPUT_SUBDIRS = {
   pdfs: 'pdfs',
   md: 'md',
+  html: 'html',
   figs: 'figs',
   idem: 'idem',
 } as const

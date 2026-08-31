@@ -3,7 +3,7 @@
 ## Mission
 
 Build a **scholar plugin** for DSH that offers **tools to the LLM** — not a
-predefined work loop. The plugin has three tool families plus companion
+predefined work loop. The plugin has four tool families plus companion
 instructions:
 
 1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
@@ -31,8 +31,19 @@ instructions:
    HTTP API at `https://api.sciverse.space` — **no SDK dependency** (the
    `sciverse` npm package is not used; requests are socket-timeout bounded via
    `timedFetch` with the global fetch, so the proxy dispatcher never applies).
+4. **`arxiv_*`** — official arXiv HTML full text: `arxiv_get_fulltext` fetches
+   `https://arxiv.org/html/<id>` (arXiv's own LaTeXML-converted HTML,
+   "experimental" — a subset of papers have no HTML version → `available:false`)
+   and renders Markdown (default; math as LaTeX `$...$` from the page's
+   `alttext`) or article-scoped raw HTML (`md:false`). Parsing uses **parse5**
+   (WHATWG-spec, the only new dependency for this family); the LaTeXML→Markdown
+   mapping is hand-rolled with deliberate degradation (unknown elements → text,
+   math alttext → annotation → inner text, no `<article>` → whole-body text).
+   `save:true` (default) writes `.scholar/md/<id>.md` / `.scholar/html/<id>.html`
+   and returns the path; `save:false` returns the full content inline (cap with
+   `maxChars`). No API key; fetched through the proxy (arXiv is international).
 
-4. **Companion instructions** — a prompt section telling the LLM when and how
+5. **Companion instructions** — a prompt section telling the LLM when and how
    to use each tool (parameter hygiene, envelope interpretation, retry policy).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
@@ -115,20 +126,22 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the card's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
-| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar). |
+| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
 ## Code policy
 
 Implementation is **complete** and committed:
-The repository root is the pure-TypeScript DSH plugin (**26 tools**: `scholar_search_*`
-incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`, and
+The repository root is the pure-TypeScript DSH plugin (**27 tools**: `scholar_search_*`
+incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`,
+`arxiv_*` (`arxiv_get_fulltext` — official arXiv HTML full text as Markdown or
+article-scoped HTML, parse5-based), and
 `sciverse_*` via the Sciverse Open Platform — including the two workflow tools
 `sciverse_trend_scan` (dual-source: default Semantic Scholar counts/citations,
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **171 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **199 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

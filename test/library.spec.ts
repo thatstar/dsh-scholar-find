@@ -5,11 +5,12 @@ const files: LibraryFile[] = [
   { sub: 'pdfs', file: 'bond-2021-a.pdf', path: '/ws/.scholar/pdfs/bond-2021-a.pdf' },
   { sub: 'figs', file: 'fig1.png', path: '/ws/.scholar/figs/fig1.png' },
   { sub: 'md', file: 'bond-2021-a.md', path: '/ws/.scholar/md/bond-2021-a.md' },
+  { sub: 'html', file: '2402.08954.html', path: '/ws/.scholar/html/2402.08954.html' },
   { sub: 'pdfs', file: 'alpha-2020-b.pdf', path: '/ws/.scholar/pdfs/alpha-2020-b.pdf' },
 ]
 
 describe('pickSubdirs', () => {
-  it('returns all three for absent / unknown / "all"', () => {
+  it('returns all four for absent / unknown / "all"', () => {
     expect(pickSubdirs(undefined)).toEqual(LIBRARY_SUBS)
     expect(pickSubdirs('all')).toEqual(LIBRARY_SUBS)
     expect(pickSubdirs('nope')).toEqual(LIBRARY_SUBS)
@@ -18,6 +19,7 @@ describe('pickSubdirs', () => {
   it('restricts to a single named subdir', () => {
     expect(pickSubdirs('pdfs')).toEqual(['pdfs'])
     expect(pickSubdirs('md')).toEqual(['md'])
+    expect(pickSubdirs('html')).toEqual(['html'])
     expect(pickSubdirs('figs')).toEqual(['figs'])
   })
 })
@@ -25,10 +27,11 @@ describe('pickSubdirs', () => {
 describe('groupLibraryFiles', () => {
   it('groups by subdir in display order and sorts each', () => {
     const groups = groupLibraryFiles(files)
-    expect(groups.map((g) => g.sub)).toEqual(['pdfs', 'md', 'figs'])
+    expect(groups.map((g) => g.sub)).toEqual(['pdfs', 'md', 'html', 'figs'])
     expect(groups[0]?.files).toEqual(['alpha-2020-b.pdf', 'bond-2021-a.pdf'])
     expect(groups[1]?.files).toEqual(['bond-2021-a.md'])
-    expect(groups[2]?.files).toEqual(['fig1.png'])
+    expect(groups[2]?.files).toEqual(['2402.08954.html'])
+    expect(groups[3]?.files).toEqual(['fig1.png'])
   })
 
   it('yields empty lists for subs with no files', () => {
@@ -36,6 +39,7 @@ describe('groupLibraryFiles', () => {
     expect(groups).toEqual([
       { sub: 'pdfs', files: ['a.pdf'] },
       { sub: 'md', files: [] },
+      { sub: 'html', files: [] },
       { sub: 'figs', files: [] },
     ])
   })

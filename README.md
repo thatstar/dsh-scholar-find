@@ -13,6 +13,8 @@ open-access PDFs, and convert PDFs to Markdown — all from the chat.
 - **Sciverse** — search and read papers from the Sciverse corpus: structured
   and semantic (RAG) search, full-text slices, citation relations, and
   figures (`sciverse_*`).
+- **arXiv HTML** — official arXiv HTML full text by arXiv id, rendered as
+  Markdown (or article-scoped raw HTML) (`arxiv_get_fulltext`).
 
 ## Installation
 
@@ -31,13 +33,14 @@ Restart the deployment afterwards.
 - Set it up in **Settings → Plugins → Plugin configuration**: your email
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
-  `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`figs/` subfolders
-  per tool). Everything else has safe defaults.
+  `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`html/`/`figs/`
+  subfolders per tool). Everything else has safe defaults.
 
 ## References
 
 - [Agents365-ai/semanticscholar-skill](https://github.com/Agents365-ai/semanticscholar-skill)
 - [Agents365-ai/paper-fetch](https://github.com/Agents365-ai/paper-fetch)
+- [arXiv: HTML as an accessible format for papers](https://info.arxiv.org/about/accessible_HTML.html)
 
 ## License
 

@@ -87,7 +87,7 @@ export const ScholarSettingsSchema: z<ScholarSettings> = z.object({
   /** HTTP/HTTPS proxy for outbound OA/PDF fetches, e.g. `http://127.0.0.1:10808`. Empty = off / fall back to env. */
   proxyUrl: z.string().default(DEFAULT_SCHOLAR_SETTINGS.proxyUrl),
   /** Root output directory; relative values resolve against the session
-   * workspace. Each tool owns a subdirectory below it (pdfs/md/figs/idem). */
+   * workspace. Each tool owns a subdirectory below it (pdfs/md/html/figs/idem). */
   defaultOutputDir: z.string().default(DEFAULT_SCHOLAR_SETTINGS.defaultOutputDir),
   /** Default result cap for scholar search tools (per-call ceiling is 100). */
   maxResultsPerSearch: z.number().default(DEFAULT_SCHOLAR_SETTINGS.maxResultsPerSearch),

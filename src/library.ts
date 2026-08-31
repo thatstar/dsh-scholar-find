@@ -10,7 +10,7 @@ import type { OutputSubdir } from './outdir.js'
 
 /** One output artifact discovered under the library root. */
 export type LibraryFile = {
-  /** Which subdirectory the file lives in (`pdfs`/`md`/`figs`). */
+  /** Which subdirectory the file lives in (`pdfs`/`md`/`html`/`figs`). */
   sub: OutputSubdir
   /** Base filename. */
   file: string
@@ -19,14 +19,14 @@ export type LibraryFile = {
 }
 
 /** The subdirectories a user can ask to list, and the display order. */
-export const LIBRARY_SUBS: OutputSubdir[] = ['pdfs', 'md', 'figs']
+export const LIBRARY_SUBS: OutputSubdir[] = ['pdfs', 'md', 'html', 'figs']
 
 /**
  * Parse the tool's `subdir` argument into the subdirectories to list.
  * An unrecognised/absent value means "all".
  */
 export function pickSubdirs(want: string | undefined): OutputSubdir[] {
-  if (want === 'pdfs' || want === 'md' || want === 'figs') return [want]
+  if (want === 'pdfs' || want === 'md' || want === 'html' || want === 'figs') return [want]
   return LIBRARY_SUBS
 }
 

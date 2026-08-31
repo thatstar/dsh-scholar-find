@@ -20,12 +20,13 @@ describe('resolveSubDir', () => {
     const root = resolveRootDir('.scholar', '/tmp/ws')
     expect(resolveSubDir(root, 'pdfs')).toBe('/tmp/ws/.scholar/pdfs')
     expect(resolveSubDir(root, 'md')).toBe('/tmp/ws/.scholar/md')
+    expect(resolveSubDir(root, 'html')).toBe('/tmp/ws/.scholar/html')
     expect(resolveSubDir(root, 'figs')).toBe('/tmp/ws/.scholar/figs')
     expect(resolveSubDir(root, 'idem')).toBe('/tmp/ws/.scholar/idem')
   })
 
-  it('exposes exactly the four expected subdirs', () => {
-    expect(Object.keys(OUTPUT_SUBDIRS).sort()).toEqual(['figs', 'idem', 'md', 'pdfs'])
+  it('exposes exactly the five expected subdirs', () => {
+    expect(Object.keys(OUTPUT_SUBDIRS).sort()).toEqual(['figs', 'html', 'idem', 'md', 'pdfs'])
   })
 })
 

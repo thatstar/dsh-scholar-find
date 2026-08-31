@@ -21,6 +21,7 @@ import { buildEvidenceItem, EVIDENCE_DEFAULT_QUOTE_MAX, EVIDENCE_MAX_TOP_K, mapS
 import { sleep } from '../util/async.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
+import { arxivGetFulltext } from '../arxiv/html.js'
 import { resolveInsideRoot, resolveRootDir, resolveSubDir } from '../outdir.js'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -46,6 +47,9 @@ const FETCH_DOWNLOAD_TIMEOUT_MS = 300_000
 const FETCH_BATCH_TIMEOUT_MS = 600_000
 /** Margin on top of the MinerU parse timeout for the full paper_pdf2md run. */
 const MINERU_TOOL_TIMEOUT_MARGIN_MS = 20_000
+/** arxiv_get_fulltext run cap (one HTML GET + local conversion — fast, but the
+ * page fetch is proxied and the page can be large). */
+const ARXIV_TOOL_TIMEOUT_MS = 120_000
 /** paper_pdf2md `timeoutSec` clamp: the lightweight parser is slow, so a floor
  * avoids a 0/negative deadline (instant "poll timeout"), and the tool cap is
  * derived from the MAX so a large user request isn't killed by a fixed tool
@@ -750,11 +754,48 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     isConcurrencySafe: NON_CONCURRENT,
   }))
 
+  // -------------------------------------------------------------------------
+  // arxiv_* — official arXiv HTML full text
+  // -------------------------------------------------------------------------
+
+  register(defineTool({
+    name: 'arxiv_get_fulltext',
+    description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (https://arxiv.org/html/<id>; LaTeXML-converted, "experimental" — a subset of papers have no HTML version and the tool reports available:false). Returns Markdown by default (math as LaTeX $...$ from the page's alttext); md:false returns article-scoped raw HTML (chrome stripped). save:true (default) writes the file under the library dir (.scholar/md/<id>.md or .scholar/html/<id>.html) and returns its path; save:false returns the full content inline (cap with maxChars). No API key needed; fetched through the configured proxy.`,
+    parameters: {
+      arxivId: { type: 'string', description: 'arXiv id (e.g. 2402.08954, 2402.08954v2, hep-ex/0307015) or an abs/pdf/html URL', required: true },
+      save: { type: 'boolean', description: 'Save under the library dir (default true). When false, the full content is returned inline instead of a file path.' },
+      md: { type: 'boolean', description: 'Markdown output (default true); when false, article-scoped raw HTML is returned/saved instead.' },
+      maxChars: { type: 'integer', description: 'Optional truncation cap (characters) for the inline content when save=false; default: no cap.' },
+    },
+    output: markdownOutput(
+      { available: { type: 'boolean' }, format: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' } },
+      (value) => `arxiv_get_fulltext: ${value.available === false ? 'no HTML version' : 'done'}.`,
+    ),
+    async execute(args, exec) {
+      const rt = runtimeOf(ctx, env, exec).fetch
+      const maxChars = typeof args.maxChars === 'number' && Number.isFinite(args.maxChars) && args.maxChars > 0
+        ? Math.floor(args.maxChars)
+        : undefined
+      return (await arxivGetFulltext({
+        arxivId: String(args.arxivId ?? ''),
+        save: args.save !== false,
+        md: args.md !== false,
+        maxChars,
+        timeoutMs: timeoutMsOf(rt.settings.fetchTimeoutSec),
+        signal: exec.signal,
+        baseDir: rt.baseDir,
+        defaultOutputDir: rt.settings.defaultOutputDir,
+      })) as any
+    },
+    timeoutMs: ARXIV_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
   register(defineTool({
     name: 'scholar_list_library',
-    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/figs). Optionally restrict to one subdirectory.`,
+    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs). Optionally restrict to one subdirectory.`,
     parameters: {
-      subdir: { type: 'string', enum: ['pdfs', 'md', 'figs', 'all'], description: 'Which subdirectory to list (default all).' },
+      subdir: { type: 'string', enum: ['pdfs', 'md', 'html', 'figs', 'all'], description: 'Which subdirectory to list (default all).' },
     },
     output: markdownOutput(
       { root: { type: 'string' }, files: { type: 'array', items: { type: 'json' } } },
