@@ -35,9 +35,10 @@ const CHROME_TAGS = new Set([
 ])
 
 /** Class markers whose whole subtree is dropped from the rendered output.
- * Frontmatter notes (author thanks/dedications) are boilerplate; note marks
- * (†) and type labels ("thanks: ") are conversion chrome — body footnotes
- * keep their content as plain inline text. */
+ * Frontmatter notes (author thanks/dedications) and affiliation footnotemark
+ * markers are boilerplate; note marks (†), type labels ("thanks: ") and the
+ * in-note number tags are conversion chrome — body footnotes (`ltx_role_footnote`)
+ * are collected and rendered as real Markdown footnotes instead. */
 const DROP_CLASS_MARKERS = [
   'ltx_author_notes',
   'ltx_tag_note',
@@ -45,6 +46,7 @@ const DROP_CLASS_MARKERS = [
   'ltx_note_frontmatter',
   'ltx_note_mark',
   'ltx_note_type',
+  'ltx_role_footnotemark',
 ]
 
 /** Thrown when the input is not a recognisable arXiv id / URL. */
@@ -89,7 +91,14 @@ function convertParse5(node: any): ArxivNode[] {
   const nodes: ArxivNode[] = []
   for (const child of node.childNodes ?? []) {
     if (child.nodeName === '#text') {
-      if (child.value && child.value.trim()) nodes.push({ text: child.value })
+      const v = child.value ?? ''
+      if (v.trim()) {
+        nodes.push({ text: v })
+      } else if (v && !v.includes('\n')) {
+        // Single-line whitespace runs are inline separators (e.g. the spaces
+        // between author names) — keep them; block-level newlines are dropped.
+        nodes.push({ text: v })
+      }
       continue
     }
     if (child.nodeName === '#comment' || child.nodeName === '#documentType') continue
@@ -231,16 +240,31 @@ export function imageMarkdown(node: ArxivElement): string {
   return `![${alt}](${url})`
 }
 
-/** Inline rendering: text, `$…$` math, images; everything else recurses. */
-function renderInline(node: ArxivNode): string {
+/** Per-render state: body footnotes collected while walking the article. */
+interface MarkdownCtx {
+  footnotes: Array<{ n: number; text: string }>
+}
+
+/** Inline rendering: text, `$…$` math, images, `[^n]` footnotes; everything
+ * else recurses. */
+function renderInline(node: ArxivNode, ctx: MarkdownCtx): string {
   if (!isElement(node)) return node.text
   if (CHROME_TAGS.has(node.tag)) return ''
   if (dropClass(node)) return ''
   if (node.tag === 'math') return mathMarkdown(node)
   if (node.tag === 'img') return imageMarkdown(node)
   if (node.tag === 'br') return '\n'
+  // Body footnote: LaTeXML carries the footnote text inline in the flow —
+  // collect it and emit a Markdown footnote reference instead.
+  if ((node.attrs.class ?? '').includes('ltx_role_footnote')) {
+    const text = squeeze(renderInline({ tag: 'span', attrs: {}, children: node.children }, ctx))
+    if (!text) return ''
+    const n = ctx.footnotes.length + 1
+    ctx.footnotes.push({ n, text })
+    return `[^${n}]`
+  }
   let out = ''
-  for (const c of node.children) out += renderInline(c)
+  for (const c of node.children) out += renderInline(c, ctx)
   return out
 }
 
@@ -254,39 +278,45 @@ function squeeze(s: string): string {
   return s.replace(/[ \t]+/g, ' ').trim()
 }
 
-function renderList(node: ArxivElement): string {
+function renderList(node: ArxivElement, ctx: MarkdownCtx): string {
   let out = ''
   for (const c of node.children) {
     if (!isElement(c)) continue
     if (c.tag === 'li') {
-      const body = squeeze(renderInline(c)).replace(/^[•·]\s*/, '')
+      const body = squeeze(renderInline(c, ctx)).replace(/^[•·]\s*/, '')
       if (body) out += `- ${body}\n`
     } else {
-      out += renderBlock(c)
+      out += renderBlock(c, ctx)
     }
   }
   return out
 }
 
-function renderFigure(node: ArxivElement): string {
+/** Figures and tables: LaTeXML wraps BOTH in `<figure class="ltx_figure">`
+ * and `<figure class="ltx_table">`. Images render as markdown images; a
+ * table-figure (or a figure containing a table) renders the table body. */
+function renderFigure(node: ArxivElement, ctx: MarkdownCtx): string {
   let img = ''
+  let table: ArxivElement | null = null
   const stack = [...node.children]
-  while (stack.length && !img) {
+  while (stack.length && !img && !table) {
     const n = stack.shift()!
     if (isElement(n)) {
       if (n.tag === 'img') img = imageMarkdown(n)
+      else if (n.tag === 'table' && !(n.attrs.class ?? '').includes('ltx_equation')) table = n
       else stack.push(...n.children)
     }
   }
   let cap = ''
   for (const c of node.children) {
-    if (isElement(c) && c.tag === 'figcaption') cap = squeeze(renderInline(c))
+    if (isElement(c) && c.tag === 'figcaption') cap = squeeze(renderInline(c, ctx))
   }
-  return `${img ? `${img}\n\n` : ''}*${cap}*\n\n`
+  const body = img ? `${img}\n\n` : table ? renderTable(table, ctx) : ''
+  return `${body}*${cap}*\n\n`
 }
 
 /** Markdown table; skipped when the table has no rows or only empty cells. */
-function renderTable(node: ArxivElement): string {
+function renderTable(node: ArxivElement, ctx: MarkdownCtx): string {
   const rows: string[][] = []
   const collect = (list: ArxivNode[]) => {
     for (const n of list) {
@@ -294,7 +324,7 @@ function renderTable(node: ArxivElement): string {
       if (n.tag === 'tr') {
         const cells: string[] = []
         for (const td of n.children) {
-          if (isElement(td) && (td.tag === 'td' || td.tag === 'th')) cells.push(squeeze(renderInline(td)))
+          if (isElement(td) && (td.tag === 'td' || td.tag === 'th')) cells.push(squeeze(renderInline(td, ctx)))
         }
         rows.push(cells)
       } else {
@@ -315,24 +345,34 @@ function renderTable(node: ArxivElement): string {
 }
 
 /**
- * LaTeXML renders equations as `<table class="ltx_equation…">` wrappers —
- * render them as display math (plus the equation number tag), not as tables.
+ * LaTeXML renders equations as `<table class="ltx_equation…">` wrappers and
+ * splits long equations across several `<math>` elements — join all the math
+ * pieces into ONE display block (plus the equation number tag), not tables.
  */
-function renderEquationTable(node: ArxivElement): string {
-  let out = ''
+function renderEquationTable(node: ArxivElement, ctx: MarkdownCtx): string {
+  const pieces: string[] = []
+  const tags: string[] = []
   const stack = [...node.children]
   while (stack.length) {
     const n = stack.shift()!
     if (!isElement(n)) continue
-    if (n.tag === 'math') out += mathMarkdown(n)
-    else if ((n.attrs.class ?? '').includes('ltx_tag')) out += ` ${squeeze(renderInline(n))}`
-    else stack.push(...n.children)
+    const cls = n.attrs.class ?? ''
+    if (n.tag === 'math') {
+      const tex = (n.attrs.alttext ?? '').trim() || annotationTex(n) || textContent(n).trim()
+      if (tex) pieces.push(tex)
+    } else if (cls.includes('ltx_tag')) {
+      const t = squeeze(renderInline(n, ctx))
+      if (t) tags.push(t)
+    } else {
+      stack.push(...n.children)
+    }
   }
-  return `${out}\n\n`
+  if (!pieces.length) return ''
+  return `$$\n${pieces.join('  ')}${tags.length ? `  ${tags.join(' ')}` : ''}\n$$\n\n`
 }
 
 /** Block-level rendering; unknown/container elements recurse generically. */
-function renderBlock(node: ArxivNode): string {
+function renderBlock(node: ArxivNode, ctx: MarkdownCtx): string {
   if (!isElement(node)) return node.text
   if (CHROME_TAGS.has(node.tag)) return ''
   if (dropClass(node)) return ''
@@ -341,25 +381,25 @@ function renderBlock(node: ArxivNode): string {
 
   if (/^h[1-6]$/.test(tag) && cls.includes('ltx_title')) {
     const level = Math.min(6, Math.max(1, parseInt(tag.slice(1), 10)))
-    const body = squeeze(renderInline(node))
+    const body = squeeze(renderInline(node, ctx))
     return body ? `${'#'.repeat(level)} ${body}\n` : ''
   }
   if (tag === 'p' && !cls.includes('ltx_title')) {
-    const body = squeeze(renderInline(node))
+    const body = squeeze(renderInline(node, ctx))
     return body ? `${body}\n\n` : ''
   }
-  if (tag === 'ul' || tag === 'ol' || tag === 'dl') return renderList(node)
-  if (tag === 'figure') return renderFigure(node)
+  if (tag === 'ul' || tag === 'ol' || tag === 'dl') return renderList(node, ctx)
+  if (tag === 'figure') return renderFigure(node, ctx)
   if (tag === 'table') {
-    return cls.includes('ltx_equation') ? renderEquationTable(node) : renderTable(node)
+    return cls.includes('ltx_equation') ? renderEquationTable(node, ctx) : renderTable(node, ctx)
   }
   if (tag === 'blockquote') {
-    const body = squeeze(renderInline(node))
+    const body = squeeze(renderInline(node, ctx))
     return body ? `> ${body}\n\n` : ''
   }
   if (tag === 'math') return mathMarkdown(node)
   let out = ''
-  for (const c of node.children) out += renderBlock(c)
+  for (const c of node.children) out += renderBlock(c, ctx)
   // Block containers (div/section/…) must terminate their text with a line
   // break so the next sibling block does not glue onto it ("Alice## 0.1").
   if (out && !out.endsWith('\n') && (tag === 'div' || tag === 'section' || tag === 'main' || tag === 'aside')) out += '\n'
@@ -368,12 +408,17 @@ function renderBlock(node: ArxivNode): string {
 
 /**
  * Render the article as Markdown full text: headings, paragraphs, lists,
- * figures (absolute image URLs), tables, inline `$…$` and display `$$…$$`
- * math from the LaTeXML `alttext`, references kept as plain list items.
+ * figures (absolute image URLs), tables (incl. table-figures), inline `$…$`
+ * and display `$$…$$` math from the LaTeXML `alttext`, `[^n]` footnotes with
+ * a Footnotes section, references kept as plain list items.
  */
 export function articleToMarkdown(article: ArxivElement): string {
+  const ctx: MarkdownCtx = { footnotes: [] }
   let out = ''
-  for (const c of article.children) out += renderBlock(c)
+  for (const c of article.children) out += renderBlock(c, ctx)
+  if (ctx.footnotes.length) {
+    out += `\n## Footnotes\n\n${ctx.footnotes.map((f) => `[^${f.n}]: ${f.text}`).join('\n\n')}\n`
+  }
   return out.replace(/\n{3,}/g, '\n\n').trim()
 }
 

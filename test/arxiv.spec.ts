@@ -33,7 +33,7 @@ const FIXTURE_PAGE = `<!doctype html>
 <div>arXiv:2402.08954v1 [cs.DL] 14 Feb 2024</div>
 <article class="ltx_document ltx_authors_1line">
 <h1 class="ltx_title ltx_title_document">A Test Paper</h1>
-<div class="ltx_authors"><span class="ltx_creator ltx_role_author"><span class="ltx_personname">Alice</span><span id="id1" class="ltx_note ltx_note_frontmatter ltx_thanks_contribution ltx_role_thanks"><sup class="ltx_note_mark">†</sup><span class="ltx_note_outer"><span class="ltx_note_content"><sup class="ltx_note_mark">†</sup><span class="ltx_note_type">thanks: </span>Equal contribution.</span></span></span></span></span><span class="ltx_author_notes"><span class="ltx_author_notes_content">thankful footnote</span></span></div>
+<div class="ltx_authors"><span class="ltx_creator ltx_role_author"><span class="ltx_personname">Alice</span><span id="id1" class="ltx_note ltx_note_frontmatter ltx_thanks_contribution ltx_role_thanks"><sup class="ltx_note_mark">†</sup><span class="ltx_note_outer"><span class="ltx_note_content"><sup class="ltx_note_mark">†</sup><span class="ltx_note_type">thanks: </span>Equal contribution.</span></span></span></span><sup class="ltx_note_mark">1</sup><span class="ltx_note ltx_role_footnotemark"><span class="ltx_note_content">1</span></span></span> <span class="ltx_creator ltx_role_author"><span class="ltx_personname">Bob</span></span><span class="ltx_author_notes"><span class="ltx_author_notes_content">thankful footnote</span></span></div>
 <section class="ltx_section">
 <h2 class="ltx_title ltx_title_section">0.1 Introduction</h2>
 <p class="ltx_p">We study <math class="ltx_Math" alttext="f(x) = x^2" display="inline"><semantics><mi>f</mi></semantics></math> and results AT&amp;T follow <span class="ltx_note ltx_note_footnote ltx_role_footnote"><sup class="ltx_note_mark">†</sup><span class="ltx_note_outer"><span class="ltx_note_content">body footnote text</span></span></span>.</p>
@@ -41,6 +41,7 @@ const FIXTURE_PAGE = `<!doctype html>
 <ul class="ltx_list"><li class="ltx_item"><p class="ltx_p">• First point</p></li><li class="ltx_item"><p class="ltx_p">Second point</p></li></ul>
 <figure id="Ch0.F1" class="ltx_figure"><img src="2402.08954v1/fig.png" id="F1.g1" class="ltx_graphics" alt="A figure" width="300" height="200"/><figcaption class="ltx_caption"><span class="ltx_tag">Figure 1:</span> Architecture</figcaption></figure>
 <table class="ltx_tabular"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
+<figure id="S4.T1" class="ltx_table"><figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_table">Table 1: </span> Data caption</figcaption><table class="ltx_tabular"><tr><th>X</th><th>Y</th></tr><tr><td>10</td><td>20</td></tr></table></figure>
 <table class="ltx_equation ltx_eqn_table"><tr><td class="ltx_eqn_cell"><math class="ltx_Math" alttext="E=mc^2" display="block"><semantics><mrow><mi>E</mi></mrow></semantics></math></td><td class="ltx_eqn_cell"><span class="ltx_tag">(1)</span></td></tr></table>
 </section>
 </article>
@@ -102,8 +103,11 @@ describe('articleToMarkdown', () => {
     expect(md).toContain('## 0.1 Introduction')
   })
 
-  it('renders inline math as $...$ from the alttext, with footnote text inline', () => {
-    expect(md).toContain('We study $f(x) = x^2$ and results AT&T follow body footnote text.')
+  it('renders inline math as $...$ and body footnotes as [^n] references', () => {
+    expect(md).toContain('We study $f(x) = x^2$ and results AT&T follow [^1].')
+    expect(md).toContain('## Footnotes')
+    expect(md).toContain('[^1]: body footnote text')
+    expect(md).not.toContain('body footnote text.')
   })
 
   it('renders display math as a $$...$$ block', () => {
@@ -126,16 +130,22 @@ describe('articleToMarkdown', () => {
     expect(md).toContain('| 1 | 2 |')
   })
 
-  it('renders equation tables as display math (not tables)', () => {
-    expect(md).toContain('$$\nE=mc^2\n$$')
-    expect(md).toContain('(1)')
+  it('renders table-figures (figure.ltx_table) with their data rows and caption', () => {
+    expect(md).toContain('| X | Y |')
+    expect(md).toContain('| 10 | 20 |')
+    expect(md).toContain('*Table 1: Data caption*')
   })
 
-  it('drops frontmatter notes (thanks), note marks/labels, and the page chrome', () => {
-    expect(md).toContain('Alice')
+  it('renders equation tables as one display-math block with the tag', () => {
+    expect(md).toContain('$$\nE=mc^2  (1)\n$$')
+  })
+
+  it('drops frontmatter notes (thanks), footnotemarks, note marks/labels, and the page chrome', () => {
+    expect(md).toContain('Alice Bob')
     expect(md).not.toContain('thankful footnote')
     expect(md).not.toContain('thanks: ')
     expect(md).not.toContain('Equal contribution')
+    expect(md).not.toContain('footnotemark')
     expect(md).not.toContain('†')
     expect(md).not.toContain('arXiv chrome')
     expect(md).not.toContain('footer chrome')
