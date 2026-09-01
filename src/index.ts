@@ -3,7 +3,10 @@
  *   1. the `dsh-scholar-find` settings section (Web UI: Settings -> Plugins ->
  *      Plugin configuration; persisted to $DSH_HOME/settings.yaml),
  *   2. the `scholar_search_*` / `paper_fetch_*` / `sciverse_*` tools,
- *   3. the companion-instructions prompt section.
+ *   3. the resident companion-instructions prompt section (slim core: family
+ *      map + Shared behavior + skill routing map),
+ *   4. the scholar skills (on-demand: one skill per workflow + the
+ *      scholar-tools per-tool catalog) as runtime skill contributions.
  *
  * Pure TypeScript, Node host, no Python, no vendored upstream code.
  * @module dsh-scholar-find
@@ -17,6 +20,7 @@ import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } fr
 import { bestEffort } from './util/async.js'
 import { applyScholarTools } from './tools/register.js'
 import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
+import { SCHOLAR_SKILLS } from './skills/index.js'
 import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 
 export const name = 'dsh-scholar-find'
@@ -25,12 +29,12 @@ export const name = 'dsh-scholar-find'
  * Services this plugin requires before its `apply(ctx)` runs.
  *
  * The plugin registers a settings section (via the `settings` service), the
- * `scholar_*` / `paper_fetch_*` / `sciverse_*` tools (via `tools`), and the
- * companion-instructions prompt section (via `systemPrompt`); API keys are
- * resolved lazily from the `credentials` service. Declaring these lets the
- * loader start the plugin only once every dependency is available. Without
- * this declaration `apply` runs during the parallel bundle load and
- * `ctx.settings` throws "cannot get property \"settings\" without inject".
+ * `scholar_*` / `paper_fetch_*` / `sciverse_*` tools (via `tools`), the
+ * resident companion-instructions prompt section (via `systemPrompt`), and
+ * the companion skills (via `skills`, accessed guarded below — deliberately
+ * NOT declared here, see section 4); API keys are resolved lazily from the
+ * `credentials` service. Declaring these lets the loader start the plugin
+ * only once every dependency is available.
  */
 export const inject = ['settings', 'tools', 'systemPrompt', 'credentials']
 
@@ -59,9 +63,32 @@ export interface ScholarSettingsService {
   ): void
 }
 
+/**
+ * Minimal mirror of the skills registry (ctx.skills, the profile's
+ * SkillRegistry from @deepseek-ai/dsh-skill) — the ONE method this plugin
+ * uses. Deliberately local, same pattern as ScholarSettingsService: no import
+ * of dsh-skill, so an upstream shape change fails loudly at plugin activation
+ * instead of being silently masked.
+ */
+export interface ScholarSkillsService {
+  /**
+   * Runtime skill contribution. Omitted `invocation` defaults to model- and
+   * user-invocable. Returns the unregister disposer.
+   */
+  register(skill: {
+    name: string
+    description: string
+    whenToUse?: string
+    content: string
+    invocation?: { readonly modelInvocable: boolean; readonly userInvocable: boolean }
+    provider?: string
+  }): () => void
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     settings: ScholarSettingsService
+    skills: ScholarSkillsService
   }
 }
 
@@ -112,5 +139,29 @@ export function apply(ctx: Context): void {
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt) {
     ctx.effect(() => systemPrompt.section({ name: 'scholar-tools', order: 150, text: SCHOLAR_INSTRUCTIONS }))
+  }
+
+  // 4. Companion skills -----------------------------------------------------
+  // Variant C, split: one skill per workflow (recipe + output contract — the
+  // `## Output` section is the later extension point for output control) plus
+  // the scholar-tools per-tool catalog. Runtime contributions
+  // (ctx.skills.register) — no provider plumbing. 'skills' is deliberately
+  // NOT declared in `inject`: cordis holds apply() until every declared
+  // service exists, so declaring it would keep the whole plugin (settings,
+  // 27 tools, instructions) from loading on profiles without the skill
+  // service. ctx.get() returns undefined instead (service absent or not yet
+  // started — never throws); we skip then, and the resident section above
+  // remains the complete behavioral floor (fail-open). Registry duplicate
+  // names warn-and-ignore, so a name collision degrades safely.
+  const skills = ctx.get('skills')
+  if (skills) {
+    for (const skill of SCHOLAR_SKILLS) {
+      ctx.effect(() => skills.register({
+        name: skill.name,
+        description: skill.description,
+        whenToUse: skill.whenToUse,
+        content: skill.content,
+      }))
+    }
   }
 }

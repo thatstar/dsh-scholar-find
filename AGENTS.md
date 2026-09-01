@@ -46,8 +46,17 @@ instructions:
    `admitEncodedImages`) for vision models — text-only routes degrade to URL
    placeholders. No API key; fetched through the proxy (arXiv is international).
 
-5. **Companion instructions** — a prompt section telling the LLM when and how
-   to use each tool (parameter hygiene, envelope interpretation, retry policy).
+5. **Companion instructions** (variant C, split) — a slim resident prompt
+   section (one line per tool + cross-tool Shared behavior + the skill routing
+   map) plus on-demand skills registered as runtime contributions via
+   `ctx.skills.register`: the `scholar-tools` per-tool behavioral catalog
+   (Limitations / Exceptions / Prefer-when for all 27 tools — no parameter
+   rosters; tool schemas are the parameter source) and one skill per workflow
+   (`scholar-literature-review`, `scholar-scientific-rag`,
+   `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
+   each carrying its pipeline and a `## Output` section that is the extension
+   point for output control. `skills` is deliberately NOT in `inject` (a
+   profile without the skill service degrades to the resident floor).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
 toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
@@ -144,7 +153,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **205 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **220 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
