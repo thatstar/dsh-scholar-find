@@ -56,14 +56,15 @@ instructions:
    `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
    each carrying its pipeline and a `## Output` section that is the extension
    point for output control, and `scholar-memory` — the persistent DOI card
-   library (`cards/` under the output dir): append-only evidence/evaluation
-   cards per investigated paper, so final reports can recall what was
-   examined. The four investigating workflows (literature-review,
-   scientific-rag, systematic-screen, evidence-pack) hook a "persist
-   investigated DOIs as cards" line into their `## Behavior`; trend-scan is
-   deliberately excluded (it lists top-cited papers without examining them).
-   `skills` is deliberately NOT in `inject` (a profile without the skill
-   service degrades to the resident floor).
+   library (`cards/` under the output dir): append-only provenance-bound
+   evidence (doc_id/offset/page + verbatim quotes) and mandatory citation
+   back/forward-track population per investigated paper, so final reports can
+   recall what was examined and reproduce its sourcing. The four investigating
+   workflows (literature-review, scientific-rag, systematic-screen,
+   evidence-pack) hook a "persist investigated DOIs as cards" line into their
+   `## Behavior`; trend-scan is deliberately excluded (it lists top-cited
+   papers without examining them). `skills` is deliberately NOT in `inject`
+   (a profile without the skill service degrades to the resident floor).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
 toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
@@ -160,7 +161,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **231 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **241 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

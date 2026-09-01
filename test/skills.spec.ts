@@ -136,7 +136,7 @@ describe('workflow skills (output-control extension points)', () => {
     // deliberately excluded — cards are for investigated papers only.
     for (const name of WORKFLOW_SKILL_NAMES.filter((n) => n !== 'scholar-trend-scan')) {
       const content = byName.get(name)!.content
-      expect(content, name).toContain('Persist every investigated DOI as a card under `{defaultOutputDir}/cards/` (see `scholar-memory`)')
+      expect(content, name).toContain('Persist every investigated DOI as a card under `{defaultOutputDir}/cards/`, binding full-text quotes with provenance (see `scholar-memory`)')
     }
     expect(byName.get('scholar-trend-scan')!.content).not.toContain('Persist every investigated DOI')
   })
@@ -170,6 +170,28 @@ describe('scholar-memory (DOI card library invariants)', () => {
   it('resolves the Backtrack/Forwardtrack empty `-` seeds on first append', () => {
     expect(memory.content).toContain('First-append seeds')
     expect(memory.content).toContain('replace that seed with the first real entry')
+  })
+
+  it('binds evidence with full-text provenance (doc_id/offset/page + verbatim quote)', () => {
+    expect(memory.content).toContain('provenance-bound, verbatim')
+    expect(memory.content).toContain('[doc_id | offset | page if available]')
+    expect(memory.content).toContain('never rephrased')
+    expect(memory.content).toContain('sciverse_evidence_pack')
+    expect(memory.content).toContain('arxiv:2402.08954')
+  })
+
+  it('mandates citation back/forward-track population at card creation', () => {
+    expect(memory.content).toContain('Card lifecycle')
+    expect(memory.content).toContain('Populate citations (mandatory)')
+    expect(memory.content).toContain('scholar_get_references')
+    expect(memory.content).toContain('scholar_get_citations')
+    expect(memory.content).toContain('required, not optional')
+    expect(memory.content).toContain('no citation data')
+  })
+
+  it('treats a card as complete only with populated citations and provenance-bound evidence', () => {
+    expect(memory.content).toContain('A card is complete only when')
+    expect(memory.content).toContain('at least one provenance-bound line')
   })
 
   it('is triggered by DOIs and report recall', () => {

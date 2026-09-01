@@ -13,3 +13,13 @@ export const DEFAULT_S2_KEY_REF = 'S2_API_KEY'
 export const DEFAULT_ASTA_KEY_REF = 'ASTA_API_KEY'
 /** Default DSH credential record name for the Sciverse Open Platform token. */
 export const DEFAULT_SCIVERSE_KEY_REF = 'SCIVERSE_API_TOKEN'
+
+/**
+ * Trim a resolved credential value before use. API keys/tokens must not carry
+ * surrounding whitespace (a stored `" s2k-..."` would be sent verbatim);
+ * whitespace-only values degrade to undefined (fail-closed to anonymous).
+ */
+export function cleanCredentialValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}

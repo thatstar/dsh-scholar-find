@@ -31,7 +31,7 @@ S = sciverse_semantic_search.
 
 - M hit totals cap at 10000 for large matched sets; narrow with field filters when precision matters.
 - Keep S hits with score ≥ 0.6 for inclusion consideration.
-- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\`, binding full-text quotes with provenance (see \`scholar-memory\`).
 
 ## Output
 

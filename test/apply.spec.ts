@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { apply } from '../src/index.js'
+import { cleanCredentialValue } from '../src/refs.js'
 import { SCHOLAR_INSTRUCTIONS } from '../src/instructions.js'
 import { SCHOLAR_SKILLS } from '../src/skills/index.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -115,5 +116,22 @@ describe('apply() host wiring', () => {
     expect(tool).toBeDefined()
     const subdir = tool?.parameters.properties?.subdir
     expect(subdir?.enum).toEqual(['pdfs', 'md', 'html', 'figs', 'cards', 'all'])
+  })
+})
+
+describe('cleanCredentialValue', () => {
+  it('trims surrounding whitespace from a resolved credential value', () => {
+    expect(cleanCredentialValue(' s2k-abc ')).toBe('s2k-abc')
+    expect(cleanCredentialValue('\ts2k-abc\n')).toBe('s2k-abc')
+  })
+
+  it('degrades whitespace-only or missing values to undefined (fail-closed)', () => {
+    expect(cleanCredentialValue('   ')).toBeUndefined()
+    expect(cleanCredentialValue('')).toBeUndefined()
+    expect(cleanCredentialValue(undefined)).toBeUndefined()
+  })
+
+  it('leaves already-clean values untouched', () => {
+    expect(cleanCredentialValue('s2k-abc')).toBe('s2k-abc')
   })
 })

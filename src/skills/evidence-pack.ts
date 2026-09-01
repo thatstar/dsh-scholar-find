@@ -31,7 +31,7 @@ verification; internal primitives S + X).
 
 - Quotes are verbatim source text, never rewritten.
 - Unverified items stay marked unverified — report them as such.
-- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\`, binding full-text quotes with provenance (see \`scholar-memory\`).
 
 ## Output
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildBoolQuery, createScholarClient, deduplicate, resetSharedPacing, searchBulk, searchBulkWithMeta } from '../src/s2/client.js'
+import { buildBoolQuery, classifyScholarStatus, createScholarClient, deduplicate, resetSharedPacing, ScholarHttpError, searchBulk, searchBulkWithMeta } from '../src/s2/client.js'
 
 const fetchMock = vi.fn()
 
@@ -147,5 +147,31 @@ describe('searchBulkWithMeta', () => {
     const r = await searchBulkWithMeta(client, 'x', { limit: 10 })
     expect(r.total).toBeUndefined()
     expect(r.papers).toEqual([{ paperId: 'a' }])
+  })
+})
+
+describe('ScholarHttpError typed envelope', () => {
+  it('tags upstream 429 as a retryable rate limit with retry_after_hours', () => {
+    const err = new ScholarHttpError(429, 'Too Many Requests. Please wait and try again.')
+    expect(err).toMatchObject({ status: 429, code: 'rate_limited', retryable: true, retryAfterHours: 1 })
+    expect(err.message).toContain('[rate_limited|retryable|retry_after_hours=1]')
+    expect(err.message).toContain('Too Many Requests')
+  })
+
+  it('classifies 403 forbidden and 404 not_found as non-retryable', () => {
+    expect(new ScholarHttpError(403, 'x')).toMatchObject({ code: 'forbidden', retryable: false })
+    expect(new ScholarHttpError(404, 'x')).toMatchObject({ code: 'not_found', retryable: false })
+  })
+
+  it('classifies 5xx as retryable server_error and other 4xx as non-retryable api_error', () => {
+    expect(new ScholarHttpError(504, 'x')).toMatchObject({ code: 'server_error', retryable: true })
+    expect(new ScholarHttpError(500, 'x')).toMatchObject({ code: 'server_error', retryable: true })
+    expect(new ScholarHttpError(422, 'x')).toMatchObject({ code: 'api_error', retryable: false })
+  })
+
+  it('classifies via the pure helper for arbitrary statuses', () => {
+    expect(classifyScholarStatus(429)).toEqual({ code: 'rate_limited', retryable: true, retryAfterHours: 1 })
+    expect(classifyScholarStatus(200)).toEqual({ code: 'http_error', retryable: false })
+    expect(classifyScholarStatus(503)).toEqual({ code: 'server_error', retryable: true })
   })
 })

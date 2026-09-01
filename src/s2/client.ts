@@ -75,15 +75,39 @@ function globalPace(gapMs: number, signal?: AbortSignal): Promise<void> {
   return follow
 }
 
-/** A semantic-scholar HTTP error with the API message when available. */
+/** Classify an S2 HTTP status into the plugin's typed error-envelope fields. */
+export function classifyScholarStatus(status: number): { code: string; retryable: boolean; retryAfterHours?: number } {
+  if (status === 429) return { code: 'rate_limited', retryable: true, retryAfterHours: 1 }
+  if (status === 403) return { code: 'forbidden', retryable: false }
+  if (status === 404) return { code: 'not_found', retryable: false }
+  if (status >= 500 && status < 600) return { code: 'server_error', retryable: true }
+  if (status >= 400 && status < 500) return { code: 'api_error', retryable: false }
+  return { code: 'http_error', retryable: status >= 500 }
+}
+
+/**
+ * A semantic-scholar HTTP error carrying the plugin's typed envelope fields.
+ * The message is prefixed with the machine-parseable tag
+ * `[code|retryable|retry_after_hours=N]` so an upstream 429/5xx (which the
+ * client already retried with backoff) reads as a retryable rate/server
+ * signal instead of an opaque query failure.
+ */
 export class ScholarHttpError extends Error {
+  readonly code: string
+  readonly retryable: boolean
+  readonly retryAfterHours?: number
   constructor(
     readonly status: number,
     message: string,
     readonly body?: unknown,
   ) {
-    super(message)
+    const { code, retryable, retryAfterHours } = classifyScholarStatus(status)
+    const tag = `[${code}${retryable ? '|retryable' : ''}${retryAfterHours !== undefined ? `|retry_after_hours=${retryAfterHours}` : ''}]`
+    super(`${tag} ${message}`)
     this.name = 'ScholarHttpError'
+    this.code = code
+    this.retryable = retryable
+    this.retryAfterHours = retryAfterHours
   }
 }
 

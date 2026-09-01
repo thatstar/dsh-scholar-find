@@ -30,7 +30,7 @@ Primitives: S = sciverse_semantic_search, X = sciverse_read_content.
 
 - Keep semantic hits with score ≥ 0.6; below that, widen the query instead of citing.
 - Pace sciverse calls (~30 requests/minute per endpoint); batch reads where possible.
-- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\`, binding full-text quotes with provenance (see \`scholar-memory\`).
 
 ## Output
 

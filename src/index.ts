@@ -16,7 +16,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-tools'
 import { assertServiceableScholarSettings, DEFAULT_SCHOLAR_SETTINGS, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
-import { DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
+import { cleanCredentialValue, DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 import { bestEffort } from './util/async.js'
 import { applyScholarTools } from './tools/register.js'
 import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
@@ -125,7 +125,7 @@ export function apply(ctx: Context): void {
       return bestEffort(`${label} api key resolve`, async () => {
         const credentials = ctx.get('credentials')
         if (!credentials) return undefined
-        return (await credentials.resolve(credentialRef(refName)))?.value
+        return cleanCredentialValue((await credentials.resolve(credentialRef(refName)))?.value)
       })
     }
     applyScholarTools(ctx, {

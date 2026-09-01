@@ -53,7 +53,7 @@ Academic paper research tools in four families. Build every call from each tool'
 
 ## Shared behavior (cross-tool)
 
-- Error envelope (all tools): errors carry \`code\`, \`retryable\`, and \`retry_after_hours\`. Non-retryable: \`validation_error\`, \`download_not_a_pdf\`, \`download_host_not_allowed\`, \`not_found\`. Retryable: all \`*_network_error\`. A transport error is not "paper not found".
+- Error envelope (all tools): errors carry \`code\`, \`retryable\`, and \`retry_after_hours\`. Non-retryable: \`validation_error\`, \`download_not_a_pdf\`, \`download_host_not_allowed\`, \`not_found\`. Retryable: all \`*_network_error\`. A transport error is not "paper not found". An S2 upstream 429/5xx surfaces as a tagged \`[rate_limited|retryable|retry_after_hours=1]\` / \`[server_error|retryable]\` error after its internal retries — back off, do not treat it as a query error.
 - Library directory: all outputs under the library directory (\`defaultOutputDir\`, default \`.scholar/\`) with \`pdfs/\`, \`md/\`, \`html/\`, \`figs/\`, \`idem/\`, \`cards/\` subdirs; report returned paths verbatim.
 - Configuration: \`unpaywallEmail\`, the Asta key, and the Sciverse token live in Settings → Plugins → Plugin configuration; when a tool reports one missing, tell the user to set it there.
 - DOI hygiene: use the user's DOI directly; resolve titles via \`scholar_match_title\` or \`paper_fetch_resolve\`; never invent a DOI; pass DOIs, not titles, to download and batch.
