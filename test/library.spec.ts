@@ -6,11 +6,12 @@ const files: LibraryFile[] = [
   { sub: 'figs', file: 'fig1.png', path: '/ws/.scholar/figs/fig1.png' },
   { sub: 'md', file: 'bond-2021-a.md', path: '/ws/.scholar/md/bond-2021-a.md' },
   { sub: 'html', file: '2402.08954.html', path: '/ws/.scholar/html/2402.08954.html' },
+  { sub: 'cards', file: '10.1038_s41586-021-03819-2.md', path: '/ws/.scholar/cards/10.1038_s41586-021-03819-2.md' },
   { sub: 'pdfs', file: 'alpha-2020-b.pdf', path: '/ws/.scholar/pdfs/alpha-2020-b.pdf' },
 ]
 
 describe('pickSubdirs', () => {
-  it('returns all four for absent / unknown / "all"', () => {
+  it('returns all five for absent / unknown / "all"', () => {
     expect(pickSubdirs(undefined)).toEqual(LIBRARY_SUBS)
     expect(pickSubdirs('all')).toEqual(LIBRARY_SUBS)
     expect(pickSubdirs('nope')).toEqual(LIBRARY_SUBS)
@@ -21,17 +22,19 @@ describe('pickSubdirs', () => {
     expect(pickSubdirs('md')).toEqual(['md'])
     expect(pickSubdirs('html')).toEqual(['html'])
     expect(pickSubdirs('figs')).toEqual(['figs'])
+    expect(pickSubdirs('cards')).toEqual(['cards'])
   })
 })
 
 describe('groupLibraryFiles', () => {
   it('groups by subdir in display order and sorts each', () => {
     const groups = groupLibraryFiles(files)
-    expect(groups.map((g) => g.sub)).toEqual(['pdfs', 'md', 'html', 'figs'])
+    expect(groups.map((g) => g.sub)).toEqual(['pdfs', 'md', 'html', 'figs', 'cards'])
     expect(groups[0]?.files).toEqual(['alpha-2020-b.pdf', 'bond-2021-a.pdf'])
     expect(groups[1]?.files).toEqual(['bond-2021-a.md'])
     expect(groups[2]?.files).toEqual(['2402.08954.html'])
     expect(groups[3]?.files).toEqual(['fig1.png'])
+    expect(groups[4]?.files).toEqual(['10.1038_s41586-021-03819-2.md'])
   })
 
   it('yields empty lists for subs with no files', () => {
@@ -41,6 +44,7 @@ describe('groupLibraryFiles', () => {
       { sub: 'md', files: [] },
       { sub: 'html', files: [] },
       { sub: 'figs', files: [] },
+      { sub: 'cards', files: [] },
     ])
   })
 })
@@ -53,6 +57,7 @@ describe('formatLibrary', () => {
     expect(md).toContain('- `alpha-2020-b.pdf`')
     expect(md).toContain('**md (1):**')
     expect(md).toContain('**figs (1):**')
+    expect(md).toContain('**cards (1):**')
   })
 
   it('marks an empty subdir as none', () => {

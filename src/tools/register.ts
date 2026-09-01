@@ -832,9 +832,9 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_list_library',
-    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs). Optionally restrict to one subdirectory.`,
+    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs/cards). Optionally restrict to one subdirectory.`,
     parameters: {
-      subdir: { type: 'string', enum: ['pdfs', 'md', 'html', 'figs', 'all'], description: 'Which subdirectory to list (default all).' },
+      subdir: { type: 'string', enum: ['pdfs', 'md', 'html', 'figs', 'cards', 'all'], description: 'Which subdirectory to list (default all).' },
     },
     output: markdownOutput(
       { root: { type: 'string' }, files: { type: 'array', items: { type: 'json' } } },

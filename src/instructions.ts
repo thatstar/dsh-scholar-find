@@ -10,7 +10,7 @@
 
 export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar-find)
 
-Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 27 tools), and five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues). Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
+Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 27 tools); five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues); and \`scholar-memory\` maintains the persistent DOI card library (\`cards/\` under the output dir) that tracks investigated papers into final reports. Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
 
 ## scholar_search_* — Semantic Scholar discovery and graph
 
@@ -54,7 +54,7 @@ Academic paper research tools in four families. Build every call from each tool'
 ## Shared behavior (cross-tool)
 
 - Error envelope (all tools): errors carry \`code\`, \`retryable\`, and \`retry_after_hours\`. Non-retryable: \`validation_error\`, \`download_not_a_pdf\`, \`download_host_not_allowed\`, \`not_found\`. Retryable: all \`*_network_error\`. A transport error is not "paper not found".
-- Library directory: all outputs under the library directory (\`defaultOutputDir\`, default \`.scholar/\`) with \`pdfs/\`, \`md/\`, \`html/\`, \`figs/\`, \`idem/\` subdirs; report returned paths verbatim.
+- Library directory: all outputs under the library directory (\`defaultOutputDir\`, default \`.scholar/\`) with \`pdfs/\`, \`md/\`, \`html/\`, \`figs/\`, \`idem/\`, \`cards/\` subdirs; report returned paths verbatim.
 - Configuration: \`unpaywallEmail\`, the Asta key, and the Sciverse token live in Settings → Plugins → Plugin configuration; when a tool reports one missing, tell the user to set it there.
 - DOI hygiene: use the user's DOI directly; resolve titles via \`scholar_match_title\` or \`paper_fetch_resolve\`; never invent a DOI; pass DOIs, not titles, to download and batch.
 - Content chain (ranked): \`arxiv_get_fulltext\` for arXiv papers; sciverse content tools for in-platform passages and figures; \`paper_pdf2md\` for a single arbitrary PDF only if a file is wanted; \`paper_fetch_download\`/\`batch\` only if the PDF file itself is wanted. Never download or extract speculatively.

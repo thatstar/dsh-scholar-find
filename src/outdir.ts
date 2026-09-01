@@ -12,7 +12,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 /**
  * One subdir per tool/family under the root. Names are kept short and stable:
  * `pdfs` (open-access PDFs), `md` (Markdown conversions), `html` (arXiv HTML
- * pages), `figs` (sciverse figures), `idem` (batch-idempotency sidecar).
+ * pages), `figs` (sciverse figures), `idem` (batch-idempotency sidecar),
+ * `cards` (the scholar-memory DOI card library).
  */
 export const OUTPUT_SUBDIRS = {
   pdfs: 'pdfs',
@@ -20,6 +21,7 @@ export const OUTPUT_SUBDIRS = {
   html: 'html',
   figs: 'figs',
   idem: 'idem',
+  cards: 'cards',
 } as const
 
 export type OutputSubdir = keyof typeof OUTPUT_SUBDIRS

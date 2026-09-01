@@ -51,12 +51,19 @@ instructions:
    map) plus on-demand skills registered as runtime contributions via
    `ctx.skills.register`: the `scholar-tools` per-tool behavioral catalog
    (Limitations / Exceptions / Prefer-when for all 27 tools — no parameter
-   rosters; tool schemas are the parameter source) and one skill per workflow
+   rosters; tool schemas are the parameter source), one skill per workflow
    (`scholar-literature-review`, `scholar-scientific-rag`,
    `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
    each carrying its pipeline and a `## Output` section that is the extension
-   point for output control. `skills` is deliberately NOT in `inject` (a
-   profile without the skill service degrades to the resident floor).
+   point for output control, and `scholar-memory` — the persistent DOI card
+   library (`cards/` under the output dir): append-only evidence/evaluation
+   cards per investigated paper, so final reports can recall what was
+   examined. The four investigating workflows (literature-review,
+   scientific-rag, systematic-screen, evidence-pack) hook a "persist
+   investigated DOIs as cards" line into their `## Behavior`; trend-scan is
+   deliberately excluded (it lists top-cited papers without examining them).
+   `skills` is deliberately NOT in `inject` (a profile without the skill
+   service degrades to the resident floor).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
 toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
@@ -138,7 +145,7 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 | `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the card's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
-| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar). |
+| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar), `cards/` (the `scholar-memory` DOI card library, written by the model via its file tools). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
 ## Code policy
@@ -153,7 +160,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **220 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **231 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

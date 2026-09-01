@@ -79,6 +79,7 @@ export interface ScholarSkillsService {
     name: string
     description: string
     whenToUse?: string
+    source: string
     content: string
     invocation?: { readonly modelInvocable: boolean; readonly userInvocable: boolean }
     provider?: string
@@ -160,6 +161,7 @@ export function apply(ctx: Context): void {
         name: skill.name,
         description: skill.description,
         whenToUse: skill.whenToUse,
+        source: skill.source,
         content: skill.content,
       }))
     }

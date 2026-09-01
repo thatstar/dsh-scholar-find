@@ -23,10 +23,11 @@ describe('resolveSubDir', () => {
     expect(resolveSubDir(root, 'html')).toBe('/tmp/ws/.scholar/html')
     expect(resolveSubDir(root, 'figs')).toBe('/tmp/ws/.scholar/figs')
     expect(resolveSubDir(root, 'idem')).toBe('/tmp/ws/.scholar/idem')
+    expect(resolveSubDir(root, 'cards')).toBe('/tmp/ws/.scholar/cards')
   })
 
-  it('exposes exactly the five expected subdirs', () => {
-    expect(Object.keys(OUTPUT_SUBDIRS).sort()).toEqual(['figs', 'html', 'idem', 'md', 'pdfs'])
+  it('exposes exactly the six expected subdirs', () => {
+    expect(Object.keys(OUTPUT_SUBDIRS).sort()).toEqual(['cards', 'figs', 'html', 'idem', 'md', 'pdfs'])
   })
 })
 

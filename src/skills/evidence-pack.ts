@@ -10,6 +10,7 @@ export const SCHOLAR_EVIDENCE_PACK_SKILL = {
   description:
     'Verifiable per-claim citation packs via sciverse_evidence_pack: semantic hits verified against full text, quotes verbatim. Load when grounding a draft or checking claims.',
   whenToUse: 'The user wants claims grounded with checkable quotes, or a draft fact-checked.',
+  source: 'runtime',
   content: `# Scholar workflow: evidence pack
 
 Verifiable per-claim citation packs for grounding a draft or checking claims.
@@ -30,6 +31,7 @@ verification; internal primitives S + X).
 
 - Quotes are verbatim source text, never rewritten.
 - Unverified items stay marked unverified — report them as such.
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
 
 ## Output
 

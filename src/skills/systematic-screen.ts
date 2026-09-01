@@ -9,6 +9,7 @@ export const SCHOLAR_SYSTEMATIC_SCREEN_SKILL = {
   description:
     'PRISMA-style systematic screening: field catalog, broad structured search, semantic re-ranking, include/exclude with reasons, PRISMA counts. Load for screening, inclusion/exclusion, or review-protocol tasks.',
   whenToUse: 'The user asks for systematic screening, inclusion/exclusion, or a review protocol.',
+  source: 'runtime',
   content: `# Scholar workflow: systematic screening
 
 PRISMA-style screening / include-exclude over the Sciverse corpus. Cross-tool
@@ -30,6 +31,7 @@ S = sciverse_semantic_search.
 
 - M hit totals cap at 10000 for large matched sets; narrow with field filters when precision matters.
 - Keep S hits with score ≥ 0.6 for inclusion consideration.
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
 
 ## Output
 

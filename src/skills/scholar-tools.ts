@@ -10,6 +10,7 @@ export const SCHOLAR_TOOLS_SKILL = {
     'Per-tool behavioral catalog for all 27 dsh-scholar-find tools: Limitations / Exceptions / Prefer-when for every search, fetch, arXiv, and sciverse tool. Load when tool choice, call behavior, or error recovery matters.',
   whenToUse:
     'Any scholarly task where per-tool behavioral detail is needed: choosing between overlapping tools, error recovery, rate-limit or cap semantics.',
+  source: 'runtime',
   content: `# Scholar tool catalog (dsh-scholar-find)
 
 Per-tool behavioral catalog for all 27 dsh-scholar-find tools: selection,

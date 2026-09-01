@@ -33,8 +33,10 @@ Restart the deployment afterwards.
 - Set it up in **Settings → Plugins → Plugin configuration**: your email
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
-  `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`html/`/`figs/`
-  subfolders per tool). Everything else has safe defaults.
+  `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`html/`/`figs/`/
+  `idem/`/`cards/` subfolders per tool — `cards/` holds the DOI card library
+  the assistant maintains for investigated papers). Everything else has safe
+  defaults.
 
 ## References
 

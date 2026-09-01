@@ -11,6 +11,8 @@ export interface ScholarSkill {
   readonly name: string
   readonly description: string
   readonly whenToUse: string
+  /** Origin bucket required by the DSH skill contract (runtime registrations use 'runtime'). */
+  readonly source: string
   readonly content: string
 }
 
@@ -20,6 +22,7 @@ import { SCHOLAR_SCIENTIFIC_RAG_SKILL } from './scientific-rag.js'
 import { SCHOLAR_SYSTEMATIC_SCREEN_SKILL } from './systematic-screen.js'
 import { SCHOLAR_EVIDENCE_PACK_SKILL } from './evidence-pack.js'
 import { SCHOLAR_TREND_SCAN_SKILL } from './trend-scan.js'
+import { SCHOLAR_MEMORY_SKILL } from './memory.js'
 
 /** All skills this plugin contributes, in catalog order. */
 export const SCHOLAR_SKILLS: ScholarSkill[] = [
@@ -29,4 +32,5 @@ export const SCHOLAR_SKILLS: ScholarSkill[] = [
   SCHOLAR_SYSTEMATIC_SCREEN_SKILL,
   SCHOLAR_EVIDENCE_PACK_SKILL,
   SCHOLAR_TREND_SCAN_SKILL,
+  SCHOLAR_MEMORY_SKILL,
 ]

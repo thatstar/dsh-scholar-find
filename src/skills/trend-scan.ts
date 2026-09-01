@@ -9,6 +9,7 @@ export const SCHOLAR_TREND_SCAN_SKILL = {
   description:
     'Per-year publication counts, top-cited papers, and venues for a topic via sciverse_trend_scan (s2 default; OpenAlex-topic-scoped option). Load for field trends, hotness, or bibliometric counts.',
   whenToUse: 'The user asks for field trends, hotness, per-year counts, or top-cited papers.',
+  source: 'runtime',
   content: `# Scholar workflow: trend scan
 
 Per-year publication counts, top-cited papers, and venues for a topic.

@@ -9,6 +9,7 @@ export const SCHOLAR_SCIENTIFIC_RAG_SKILL = {
   description:
     'Answer a question with quoted evidence from the Sciverse corpus: semantic retrieval, score filtering, numbered citations. Load before answering scholarly questions that need sourced passages.',
   whenToUse: 'The user asks a scholarly question that should be answered with sourced passages.',
+  source: 'runtime',
   content: `# Scholar workflow: scientific RAG
 
 A question answered with quoted evidence from the Sciverse corpus. Cross-tool
@@ -27,6 +28,7 @@ Primitives: S = sciverse_semantic_search.
 
 - One focused query per sub-question; extend context with sciverse_read_content when a chunk is truncated mid-argument.
 - Pace sciverse calls (~30 requests/minute per endpoint).
+- Persist every investigated DOI as a card under \`{defaultOutputDir}/cards/\` (see \`scholar-memory\`).
 
 ## Output
 

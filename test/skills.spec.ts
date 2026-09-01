@@ -44,11 +44,11 @@ const WORKFLOW_SKILL_NAMES = [
 const byName = new Map(SCHOLAR_SKILLS.map(skill => [skill.name, skill]))
 
 describe('scholar skills registry shape', () => {
-  it('registers exactly the six expected skills with unique names', () => {
-    expect(SCHOLAR_SKILLS).toHaveLength(6)
-    expect(new Set(SCHOLAR_SKILLS.map(skill => skill.name)).size).toBe(6)
+  it('registers exactly the seven expected skills with unique names', () => {
+    expect(SCHOLAR_SKILLS).toHaveLength(7)
+    expect(new Set(SCHOLAR_SKILLS.map(skill => skill.name)).size).toBe(7)
     expect([...byName.keys()].sort()).toEqual(
-      ['scholar-evidence-pack', 'scholar-literature-review', 'scholar-scientific-rag', 'scholar-systematic-screen', 'scholar-tools', 'scholar-trend-scan'].sort(),
+      ['scholar-evidence-pack', 'scholar-literature-review', 'scholar-memory', 'scholar-scientific-rag', 'scholar-systematic-screen', 'scholar-tools', 'scholar-trend-scan'].sort(),
     )
   })
 
@@ -64,6 +64,16 @@ describe('scholar skills registry shape', () => {
       expect(skill.description.length, skill.name).toBeLessThanOrEqual(500)
       expect(skill.description.length, skill.name).toBeGreaterThan(0)
       expect(skill.whenToUse.length, skill.name).toBeGreaterThan(0)
+    }
+  })
+
+  it('carries a string source on every skill — the DSH validateDefinition contract', () => {
+    for (const skill of SCHOLAR_SKILLS) {
+      expect(typeof skill.source, skill.name).toBe('string')
+      expect(skill.source.length, skill.name).toBeGreaterThan(0)
+      // All seven are runtime registrations; DSH's registry requires the source
+      // bucket and rejects undefined at load time (see .notes/62).
+      expect(skill.source, skill.name).toBe('runtime')
     }
   })
 })
@@ -102,7 +112,7 @@ describe('scholar-tools catalog (selection-bias invariants)', () => {
 
 describe('workflow skills (output-control extension points)', () => {
   it('registers exactly the five workflow skills', () => {
-    expect(SCHOLAR_SKILLS.filter(skill => skill.name !== 'scholar-tools').map(skill => skill.name).sort())
+    expect(SCHOLAR_SKILLS.filter(skill => skill.name !== 'scholar-tools' && skill.name !== 'scholar-memory').map(skill => skill.name).sort())
       .toEqual([...WORKFLOW_SKILL_NAMES].sort())
   })
 
@@ -120,6 +130,52 @@ describe('workflow skills (output-control extension points)', () => {
       expect(byName.get(name)!.content.length, name).toBeLessThan(2000)
     }
   })
+
+  it('hooks the investigating workflows to the card library (scholar-memory)', () => {
+    // trend-scan only lists top-cited papers (never examines them), so it is
+    // deliberately excluded — cards are for investigated papers only.
+    for (const name of WORKFLOW_SKILL_NAMES.filter((n) => n !== 'scholar-trend-scan')) {
+      const content = byName.get(name)!.content
+      expect(content, name).toContain('Persist every investigated DOI as a card under `{defaultOutputDir}/cards/` (see `scholar-memory`)')
+    }
+    expect(byName.get('scholar-trend-scan')!.content).not.toContain('Persist every investigated DOI')
+  })
+})
+
+describe('scholar-memory (DOI card library invariants)', () => {
+  const memory = byName.get('scholar-memory')!
+
+  it('targets the dynamic cards/ subfolder under the plugin output dir', () => {
+    expect(memory.content).toContain('`cards/`')
+    expect(memory.content).toContain('`defaultOutputDir`')
+    expect(memory.content).toContain('`.scholar/`')
+  })
+
+  it('keeps the DOI filename rule (slash replaced by underscore)', () => {
+    expect(memory.content).toContain('`/` replaced by `_`')
+    expect(memory.content).toContain('`10.1038_s41586-021-03819-2.md`')
+  })
+
+  it('carries the operation guidelines, append-only core, and the card template', () => {
+    expect(memory.content).toContain('## Operation guidelines')
+    expect(memory.content).toContain('Never overwrite')
+    expect(memory.content).toContain('## Card template')
+    expect(memory.content).toContain('## Evidence List')
+    expect(memory.content).toContain('## Evaluation Log')
+    expect(memory.content).toContain('## Citation Backtrack')
+    expect(memory.content).toContain('## Citation Forwardtrack')
+    expect(memory.content).toContain('## Basic Information')
+  })
+
+  it('resolves the Backtrack/Forwardtrack empty `-` seeds on first append', () => {
+    expect(memory.content).toContain('First-append seeds')
+    expect(memory.content).toContain('replace that seed with the first real entry')
+  })
+
+  it('is triggered by DOIs and report recall', () => {
+    expect(memory.whenToUse).toContain('DOI')
+    expect(memory.whenToUse).toContain('report')
+  })
 })
 
 describe('resident instructions (slim core invariants)', () => {
@@ -129,7 +185,7 @@ describe('resident instructions (slim core invariants)', () => {
     }
   })
 
-  it('routes to all six on-demand skills by name', () => {
+  it('routes to all seven on-demand skills by name', () => {
     for (const skill of SCHOLAR_SKILLS) {
       expect(SCHOLAR_INSTRUCTIONS).toContain(`\`${skill.name}\``)
     }
