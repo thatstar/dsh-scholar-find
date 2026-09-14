@@ -349,6 +349,34 @@ describe('scholar_format_references', () => {
     expect(out.warnings.join(' ')).toContain('10.9/missing')
   })
 
+  it('refuses to format a batch row that is a different paper', async () => {
+    // The batch endpoint mirrors request order, but a shifted row would attach
+    // another paper's authors/title to this id — a fabricated citation.
+    stubFetch((url) => (url.includes('/paper/batch')
+      ? jsonResponse([{ paperId: 'z', title: 'A completely different work', externalIds: { DOI: '10.9999/other' } }])
+      : jsonResponse({ error: 'x' }, 404)))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_format_references', { ids: ['DOI:10.1038/wanted'], style: 'apa-7' })
+    expect(out.count).toBe(1)
+    expect(out.entries[0].text).not.toContain('A completely different work')
+    expect(out.entries[0].text).toContain('10.1038/wanted')
+    expect(out.warnings.join(' ')).toContain('different record')
+  })
+
+  it('accepts a batch row whose identifier matches, and skips the check for unverifiable id forms', async () => {
+    stubFetch((url) => (url.includes('/paper/batch')
+      ? jsonResponse([
+          { paperId: 'p1', title: 'Right paper', externalIds: { DOI: '10.1038/wanted' } },
+          { paperId: 'p2', title: 'Corpus row', externalIds: {} },
+        ])
+      : jsonResponse({ error: 'x' }, 404)))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_format_references', { ids: ['DOI:10.1038/wanted', 'CorpusId:123'], style: 'ieee' })
+    expect(out.warnings).toEqual([])
+    expect(out.entries[0].text).toContain('Right paper')
+    expect(out.entries[1].text).toContain('Corpus row')
+  })
+
   it('validates the input and defaults the style', async () => {
     const h = makeScholarContext()
     const empty = await runTool(h, 'scholar_format_references', {})

@@ -761,8 +761,8 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
           // the exact failure this work removes — so verify the record's own
           // identifiers before trusting it.
           if (record && !recordMatchesId(record, id)) {
-            warnings.push(`Semantic Scholar returned a different record for \`${id}\` (got "${record.title ?? 'untitled'}") — that id is formatted from the identifier alone; verify it before citing.`)
-            return { note: id } as ReferenceMeta & { note?: string }
+            warnings.push(`Semantic Scholar returned a different record for \`${id}\` (got "${record.title ?? 'untitled'}") — the entry below carries the identifier only; verify it before citing.`)
+            return { title: id }
           }
           const meta = referenceMetaFromS2Paper(record)
           if (!meta.title) warnings.push(`No Semantic Scholar record for \`${id}\` — formatted from the identifier alone; verify it before citing.`)
@@ -1101,18 +1101,26 @@ function normalizeIdToken(value: string): string {
 
 /**
  * Does the record S2 returned for a batch request actually correspond to the id
- * that was asked for? Compares the DOI, arXiv id and paperId; a record without
- * any of them is accepted (nothing to contradict) — only a positive mismatch
- * (a different identifier present) rejects it.
+ * that was asked for?
+ *
+ * Only DOI and arXiv forms are checked strictly: those are what reference lists
+ * are built from, and their identifiers are unambiguous in the response. A
+ * CorpusId/PMID/sha request returns `true` (that id form has no comparable
+ * field here) — a false warning would be worse than the check it buys. A record
+ * carrying none of the comparable identifiers also passes: only a POSITIVE
+ * mismatch rejects.
  */
 function recordMatchesId(record: Record<string, any>, requestedId: string): boolean {
-  const want = normalizeIdToken(requestedId)
+  const raw = requestedId.trim()
+  const want = normalizeIdToken(raw)
+  const arxivForm = /^arxiv:/i.test(raw) || /^\d{4}\.\d{4,5}(v\d+)?$/.test(want)
+  const doiForm = /^10\.\d{4,9}\//.test(want)
+  if (!doiForm && !arxivForm) return true
   const ext = (record.externalIds ?? {}) as Record<string, unknown>
-  const candidates = [
-    typeof record.paperId === 'string' ? record.paperId : '',
-    typeof ext.DOI === 'string' ? ext.DOI : '',
-    typeof ext.ArXiv === 'string' ? ext.ArXiv : '',
-  ].map(normalizeIdToken).filter(Boolean)
+  const candidates = (doiForm
+    ? [typeof ext.DOI === 'string' ? ext.DOI : '']
+    : [typeof ext.ArXiv === 'string' ? ext.ArXiv : '', typeof record.paperId === 'string' ? record.paperId : '']
+  ).map(normalizeIdToken).filter(Boolean)
   if (!candidates.length) return true
   return candidates.some((c) => c === want)
 }
