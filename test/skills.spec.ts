@@ -44,11 +44,11 @@ const WORKFLOW_SKILL_NAMES = [
 const byName = new Map(SCHOLAR_SKILLS.map(skill => [skill.name, skill]))
 
 describe('scholar skills registry shape', () => {
-  it('registers exactly the seven expected skills with unique names', () => {
-    expect(SCHOLAR_SKILLS).toHaveLength(7)
-    expect(new Set(SCHOLAR_SKILLS.map(skill => skill.name)).size).toBe(7)
+  it('registers exactly the eight expected skills with unique names', () => {
+    expect(SCHOLAR_SKILLS).toHaveLength(8)
+    expect(new Set(SCHOLAR_SKILLS.map(skill => skill.name)).size).toBe(8)
     expect([...byName.keys()].sort()).toEqual(
-      ['scholar-evidence-pack', 'scholar-literature-review', 'scholar-memory', 'scholar-scientific-rag', 'scholar-systematic-screen', 'scholar-tools', 'scholar-trend-scan'].sort(),
+      ['scholar-citation-style', 'scholar-evidence-pack', 'scholar-literature-review', 'scholar-memory', 'scholar-scientific-rag', 'scholar-systematic-screen', 'scholar-tools', 'scholar-trend-scan'].sort(),
     )
   })
 
@@ -117,7 +117,8 @@ describe('scholar-tools catalog (selection-bias invariants)', () => {
 
 describe('workflow skills (output-control extension points)', () => {
   it('registers exactly the five workflow skills', () => {
-    expect(SCHOLAR_SKILLS.filter(skill => skill.name !== 'scholar-tools' && skill.name !== 'scholar-memory').map(skill => skill.name).sort())
+    const nonWorkflow = new Set(['scholar-tools', 'scholar-memory', 'scholar-citation-style'])
+    expect(SCHOLAR_SKILLS.filter(skill => !nonWorkflow.has(skill.name)).map(skill => skill.name).sort())
       .toEqual([...WORKFLOW_SKILL_NAMES].sort())
   })
 
@@ -156,9 +157,17 @@ describe('scholar-memory (DOI card library invariants)', () => {
     expect(memory.content).toContain('`.scholar/`')
   })
 
-  it('keeps the DOI filename rule (slash replaced by underscore)', () => {
-    expect(memory.content).toContain('`/` replaced by `_`')
-    expect(memory.content).toContain('`10.1038_s41586-021-03819-2.md`')
+  it('documents the canonical card-filename slug (all unsafe characters)', () => {
+    expect(memory.content).toContain('canonical slug')
+    expect(memory.content).toContain('[A-Za-z0-9._-]')
+    expect(memory.content).toContain('`10.1063_1.3506838.md`')
+    expect(memory.content).toContain('`10.1103_jwmw-3lds.md`')
+    expect(memory.content).toContain('`arXiv_2402.08954.md`')
+  })
+
+  it('points the model at the tool-supplied cardPath', () => {
+    expect(memory.content).toContain('cardPath')
+    expect(memory.content).toContain('scholar_get_paper')
   })
 
   it('carries the operation guidelines, append-only core, and the card template', () => {
@@ -208,6 +217,39 @@ describe('scholar-memory (DOI card library invariants)', () => {
   it('is triggered by DOIs and report recall', () => {
     expect(memory.whenToUse).toContain('DOI')
     expect(memory.whenToUse).toContain('report')
+  })
+})
+
+describe('scholar-citation-style (bibliography contract)', () => {
+  const style = byName.get('scholar-citation-style')!
+
+  it('targets footnote markers and blank-line-separated definitions', () => {
+    expect(style.content).toContain('[^n]')
+    expect(style.content).toContain('[^n]: <full entry>')
+    expect(style.content).toContain('blank line')
+  })
+
+  it('explains the renderer behaviour the rules come from', () => {
+    expect(style.content).toContain('first-reference position')
+    expect(style.content).toContain('back-reference')
+    expect(style.content).toContain('never referenced is dropped')
+  })
+
+  it('forbids the invented marker form and marker restatement in tables', () => {
+    expect(style.content).toContain('Never invent a marker form')
+    expect(style.content).toContain('No markers in appendix/summary tables')
+  })
+
+  it('ships the style templates including GB/T 7714-2015', () => {
+    for (const token of ['GB/T 7714-2015', 'APA 7', 'IEEE', 'Nature', 'BibTeX']) {
+      expect(style.content, token).toContain(token)
+    }
+    expect(style.content).toContain('[J]')
+  })
+
+  it('covers Chinese-report punctuation', () => {
+    expect(style.content).toContain('full-width')
+    expect(style.content).toContain('ASCII superscript')
   })
 })
 

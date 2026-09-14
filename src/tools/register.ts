@@ -31,6 +31,7 @@ import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
 import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
+import { cardIdentifier, cardPath } from '../cards.js'
 
 /**
  * Tool-level wall-clock caps. These bound the WHOLE tool run (including model-
@@ -403,7 +404,14 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
           markdown: `**No confident match for "${args.title}".**\n\nThe best Semantic Scholar hit is a different work (${describeTitleCheck(check)}):\n\n- returned: ${paper.title ?? 'untitled'}${fmt.doiOfPaper(paper) ? ` (DOI: ${fmt.doiOfPaper(paper)})` : ''}\n\nAsk the user for the DOI, or re-query with the exact published title — do not use this record.`,
         } as any
       }
-      return { matched: true, titleCheck: check, markdown: fmt.formatResults([paper], args.title), paper: fmt.compactPapers([paper])[0] } as any
+      const card = cardIdentifier(paper)
+      return {
+        matched: true,
+        titleCheck: check,
+        ...(card ? { cardPath: cardPath(env.settings().defaultOutputDir, card) } : {}),
+        markdown: `${fmt.formatResults([paper], args.title)}${card ? `\n> Card path for the memory library: \`${cardPath(env.settings().defaultOutputDir, card)}\`` : ''}`,
+        paper: fmt.compactPapers([paper])[0],
+      } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -433,10 +441,13 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
           ? `> ⚠️ **Title mismatch for \`${args.paperId}\`** — ${describeTitleCheck(check)}.\n> - expected: ${check.expected}\n> - returned: ${check.actual ?? '(no title)'}\n> Do **not** cite this identifier or write it into a card; re-resolve with \`scholar_match_title\` or ask the user for the correct DOI.\n\n`
           : `> ${describeTitleCheck(check)}\n\n`
         : ''
+      const card = cardIdentifier(paper)
+      const cardFile = card ? cardPath(env.settings().defaultOutputDir, card) : undefined
       return {
         paperId: args.paperId,
         ...(check && checkJson ? { titleCheck: checkJson, verification: check.verdict } : { verification: 'unverified' }),
-        markdown: `${warning}${fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120))}`,
+        ...(cardFile ? { cardPath: cardFile } : {}),
+        markdown: `${warning}${fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120))}${cardFile ? `\n> Card path for the memory library: \`${cardFile}\`` : ''}`,
         paper: fmt.compactPapers([paper])[0] ?? null,
       }
     },

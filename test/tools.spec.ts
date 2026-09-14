@@ -251,6 +251,24 @@ describe('sciverse_semantic_search — doc_id_index', () => {
   })
 })
 
+describe('card library path', () => {
+  it('returns the canonical card path for a DOI', async () => {
+    stubFetch(() => jsonResponse({ paperId: 'p1', title: 'Array programming with NumPy', externalIds: { DOI: '10.1038/s41586-020-2649-2' } }))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_get_paper', { paperId: 'DOI:10.1038/s41586-020-2649-2' })
+    expect(out.cardPath).toBe('.scholar/cards/10.1038_s41586-020-2649-2.md')
+    expect(out.markdown).toContain('.scholar/cards/10.1038_s41586-020-2649-2.md')
+  })
+
+  it('follows the configured output dir and falls back to the arXiv id', async () => {
+    stubFetch(() => jsonResponse({ data: [{ paperId: 'p2', title: 'A preprint', externalIds: { ArXiv: '2402.08954' } }] }))
+    const h = makeScholarContext({ defaultOutputDir: 'notes/lib' })
+    const out = await runTool(h, 'scholar_match_title', { title: 'A preprint' })
+    expect(out.matched).toBe(true)
+    expect(out.cardPath).toBe('notes/lib/cards/arXiv_2402.08954.md')
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))

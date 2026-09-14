@@ -23,6 +23,7 @@ import { SCHOLAR_SYSTEMATIC_SCREEN_SKILL } from './systematic-screen.js'
 import { SCHOLAR_EVIDENCE_PACK_SKILL } from './evidence-pack.js'
 import { SCHOLAR_TREND_SCAN_SKILL } from './trend-scan.js'
 import { SCHOLAR_MEMORY_SKILL } from './memory.js'
+import { SCHOLAR_CITATION_STYLE_SKILL } from './citation-style.js'
 
 /** All skills this plugin contributes, in catalog order. */
 export const SCHOLAR_SKILLS: ScholarSkill[] = [
@@ -33,4 +34,5 @@ export const SCHOLAR_SKILLS: ScholarSkill[] = [
   SCHOLAR_EVIDENCE_PACK_SKILL,
   SCHOLAR_TREND_SCAN_SKILL,
   SCHOLAR_MEMORY_SKILL,
+  SCHOLAR_CITATION_STYLE_SKILL,
 ]

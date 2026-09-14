@@ -20,8 +20,15 @@ plugin's configured output directory (\`defaultOutputDir\`, default
 \`.scholar/\`, resolved against the current session workspace — see Shared
 behavior). Confirm the actual root from \`scholar_list_library\`'s reported
 root or from a path returned by a scholar tool before writing; do not assume
-\`.scholar/\`. One card per paper, named after its DOI with \`/\` replaced by \`_\` (e.g. \`10.1038_s41586-021-03819-2.md\`) under
-\`{defaultOutputDir}/cards/\`. Create cards only for papers that are actually
+\`.scholar/\`. One card per paper under \`{defaultOutputDir}/cards/\`, named by
+the canonical slug: every character outside \`[A-Za-z0-9._-]\` becomes \`_\`
+(so \`/ : < > " | ? *\` and spaces are all covered), runs collapse, and leading/
+trailing \`_\`/\`.\` are trimmed — \`10.1063/1.3506838\` →
+\`10.1063_1.3506838.md\`, \`10.1103/jwmw-3lds\` → \`10.1103_jwmw-3lds.md\`,
+\`arXiv:2402.08954\` → \`arXiv_2402.08954.md\`. **Prefer the \`cardPath\`
+returned by \`scholar_get_paper\` / \`scholar_match_title\`** — the plugin
+already applied that rule, including for non-DOI identifiers; only slug by hand
+when no tool returned it. Create cards only for papers that are actually
 investigated (fetched, read in depth, or cited into a report) — not for every
 search hit. Papers without a DOI (e.g. arXiv-only) may be carded under the
 arXiv id instead, or skipped. Note: the model's file tools are scoped to the
