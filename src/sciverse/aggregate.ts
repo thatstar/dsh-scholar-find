@@ -73,6 +73,40 @@ export function topicIsConfident(candidates: readonly TopicCandidate[]): boolean
   return top.votes >= 3 && top.votes >= 2 * second
 }
 
+/** One paper's distinct full-text artifacts, as seen across a semantic hit set. */
+export interface DocIdGroup {
+  /** stable grouping key: the paper's unique_id, else `title:<normalized>`. */
+  paper_key: string
+  title?: string
+  unique_id?: string
+  /** Every distinct doc_id this paper appeared under, first-seen order. */
+  doc_ids: string[]
+}
+
+/**
+ * Group semantic hits by the paper they belong to and collect the distinct
+ * `doc_id`s per paper. The SAME paper is routinely indexed under more than one
+ * doc_id (with differing accessibility) — when one returns CONTENT_NOT_FOUND,
+ * another is the recovery path, and this is what tells the model it exists.
+ */
+export function groupDocIds(hits: readonly Record<string, unknown>[]): DocIdGroup[] {
+  const groups = new Map<string, DocIdGroup>()
+  for (const h of hits) {
+    const docId = typeof h.doc_id === 'string' && h.doc_id ? h.doc_id : undefined
+    if (!docId) continue
+    const uniqueId = typeof h.unique_id === 'string' && h.unique_id ? h.unique_id : undefined
+    const title = typeof h.title === 'string' && h.title ? h.title : undefined
+    const key = uniqueId ?? (title ? `title:${title.toLowerCase().replace(/\s+/g, ' ').trim()}` : `doc:${docId}`)
+    const existing = groups.get(key)
+    if (existing) {
+      if (!existing.doc_ids.includes(docId)) existing.doc_ids.push(docId)
+    } else {
+      groups.set(key, { paper_key: key, ...(title ? { title } : {}), ...(uniqueId ? { unique_id: uniqueId } : {}), doc_ids: [docId] })
+    }
+  }
+  return [...groups.values()]
+}
+
 /** One processed claim for sciverse_evidence_pack. */
 export interface EvidenceItem {
   claim: string

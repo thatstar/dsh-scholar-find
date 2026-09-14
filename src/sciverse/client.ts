@@ -21,6 +21,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { timedFetch } from '../fetch/transport.js'
+import { sleep } from '../util/async.js'
+import { isRetryableSciverseError } from './errors.js'
 import { buildAgenticSearchPayload, buildMetaSearchPayload } from './payload.js'
 
 /** Public gateway endpoint (override for tests via the constructor baseUrl). */
@@ -30,7 +32,19 @@ export const SCIVERSE_DEFAULT_ENDPOINT = 'https://api.sciverse.space'
 const CHANNEL = 'typescript-sdk'
 const SOURCE = `${process.platform}-${CHANNEL}`
 
-/** JSON-ish error body → structured error with the documented `code`. */
+/** Attempts per request (1 try + 2 retries) for transient failures. */
+export const SCIVERSE_MAX_ATTEMPTS = 3
+/** Backoff between those attempts, ms (index = attempt - 1). */
+export const SCIVERSE_RETRY_BACKOFF_MS = [600, 1800]
+
+/**
+ * JSON-ish error body → structured error with the documented `code`.
+ *
+ * The gateway nests the real payload in `error`
+ * (`{"error":{"biz_code":12633,"code":"CONTENT_NOT_FOUND","message":"…"}}`,
+ * live-verified), so both the nested and the flat shape are read — missing the
+ * nested one silently dropped the business code from every real failure.
+ */
 export async function httpErrorFromResponse(res: Response): Promise<SciverseHttpError> {
   const raw = await res.text()
   let code: string | undefined
@@ -38,9 +52,12 @@ export async function httpErrorFromResponse(res: Response): Promise<SciverseHttp
   try {
     const j = JSON.parse(raw) as Record<string, unknown>
     if (j && typeof j === 'object') {
-      code = typeof j.code === 'string' ? j.code : typeof j.biz_code === 'string' ? j.biz_code : undefined
-      if (typeof j.message === 'string') message = j.message
-      else if (typeof j.error === 'string') message = j.error
+      const nested = j.error && typeof j.error === 'object' ? (j.error as Record<string, unknown>) : undefined
+      const pick = (o: Record<string, unknown> | undefined, key: string): string | undefined => (typeof o?.[key] === 'string' ? (o[key] as string) : undefined)
+      code = pick(nested, 'code') ?? pick(nested, 'biz_code') ?? pick(j, 'code') ?? pick(j, 'biz_code')
+      if (typeof nested?.message === 'string') message = nested.message
+      else if (typeof j.message === 'string') message = j.message
+      else if (j.error && typeof j.error === 'string') message = j.error
     }
   } catch {
     // Non-JSON body: keep the raw text as the message.
@@ -68,44 +85,70 @@ export class SciverseHttpError extends Error {
   }
 }
 
+/** Retry policy override (tests use a no-wait policy). */
+export interface SciverseRetryPolicy {
+  readonly maxAttempts?: number
+  readonly backoffMs?: readonly number[]
+}
+
 /** One call on any of the six Sciverse tools, timeout-bounded and direct. */
 export class SciverseClient {
   private readonly baseUrl: string
   private readonly token: string
   private readonly timeoutMs: number
+  private readonly maxAttempts: number
+  private readonly backoffMs: readonly number[]
 
-  constructor(token: string, timeoutMs: number, baseUrl?: string) {
+  constructor(token: string, timeoutMs: number, baseUrl?: string, retry?: SciverseRetryPolicy) {
     this.token = token
     this.timeoutMs = timeoutMs
     this.baseUrl = (baseUrl ?? SCIVERSE_DEFAULT_ENDPOINT).replace(/\/$/, '')
+    this.maxAttempts = Math.max(1, retry?.maxAttempts ?? SCIVERSE_MAX_ATTEMPTS)
+    this.backoffMs = retry?.backoffMs ?? SCIVERSE_RETRY_BACKOFF_MS
   }
 
   /** JSON request with the common headers; real socket timeout via AbortSignal.
    *  An optional outer `signal` (e.g. the tool's `exec.signal`) composes with
-   *  the timeout, so a cancelled tool run aborts the in-flight request. */
+   *  the timeout, so a cancelled tool run aborts the in-flight request.
+   *
+   *  Retries the transient failures (429/5xx/timeout/socket) with backoff —
+   *  `502 FETCH_FAILED` is the documented answer for full text the platform
+   *  could not fetch on the first attempt. A 4xx never retries, and an outer
+   *  cancellation stops immediately. */
   private async json<T>(label: string, path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
-    const res = await timedFetch(
-      `${this.baseUrl}${path}`,
-      {
-        ...init,
-        headers: {
-          ...(init.headers ?? {}),
-          authorization: `Bearer ${this.token}`,
-          'content-type': 'application/json',
-          'x-request-id': randomUUID(),
-          'x-sciverse-source': SOURCE,
-        },
-      },
-      {
-        timeoutMs: this.timeoutMs,
-        errorLabel: `sciverse ${label}: timeout after ${this.timeoutMs}ms`,
-        signal,
-        // Global undici fetch: NO proxy dispatcher, NO plugin browser UA.
-        fetchImpl: (url, reqInit) => fetch(url, reqInit),
-      },
-    )
-    if (!res.ok) throw await httpErrorFromResponse(res)
-    return (await res.json()) as T
+    let lastError: unknown
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      try {
+        const res = await timedFetch(
+          `${this.baseUrl}${path}`,
+          {
+            ...init,
+            headers: {
+              ...(init.headers ?? {}),
+              authorization: `Bearer ${this.token}`,
+              'content-type': 'application/json',
+              'x-request-id': randomUUID(),
+              'x-sciverse-source': SOURCE,
+            },
+          },
+          {
+            timeoutMs: this.timeoutMs,
+            errorLabel: `sciverse ${label}: timeout after ${this.timeoutMs}ms`,
+            signal,
+            // Global undici fetch: NO proxy dispatcher, NO plugin browser UA.
+            fetchImpl: (url, reqInit) => fetch(url, reqInit),
+          },
+        )
+        if (!res.ok) throw await httpErrorFromResponse(res)
+        return (await res.json()) as T
+      } catch (e) {
+        lastError = e
+        if (!isRetryableSciverseError(e) || attempt === this.maxAttempts || signal?.aborted) throw e
+        const wait = this.backoffMs[attempt - 1] ?? this.backoffMs[this.backoffMs.length - 1] ?? 0
+        if (wait > 0) await sleep(wait, signal)
+      }
+    }
+    throw lastError
   }
 
   /** Structured metadata search over papers/authors/sources. */
@@ -181,6 +224,6 @@ export class SciverseClient {
 
 /** Create the facade for the six sciverse_* tools (token required; the caller
  * guards on the configured DSH credential first). */
-export function createSciverseClient(token: string, timeoutMs: number): SciverseClient {
-  return new SciverseClient(token, timeoutMs)
+export function createSciverseClient(token: string, timeoutMs: number, retry?: SciverseRetryPolicy): SciverseClient {
+  return new SciverseClient(token, timeoutMs, undefined, retry)
 }

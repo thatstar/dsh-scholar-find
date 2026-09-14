@@ -117,15 +117,15 @@ scholar-* workflow skills.
   - Prefer when: structured screening (year, type, venue) or top-cited lists are wanted.
 - sciverse_semantic_search: natural-language RAG over passage chunks.
   - Limitations: chunk-based, not full documents; scores matter for thresholds.
-  - Exceptions: low-score hits — keep score ≥ 0.6 for evidence use; extend context via sciverse_read_content.
+  - Exceptions: low-score hits — keep score ≥ 0.6 for evidence use; the returned doc_id_index lists every doc_id a paper appears under (pass the others to sciverse_read_content via alt_doc_ids when one has no stored text).
   - Prefer when: a question should be answered with quoted evidence passages.
 - sciverse_list_paper_relations: paginated CITATIONS / REFERENCES / RELATED_WORKS for one paper.
   - Limitations: relations above 10000 return 429 on this endpoint.
   - Exceptions: 429 — switch to the references_unique_id filter in sciverse_search_papers.
   - Prefer when: deep pagination through one paper's citation relations is needed.
 - sciverse_read_content: character-range slice of a paper's full text by doc_id.
-  - Limitations: slices only — compose multiple reads for long spans.
-  - Exceptions: never guess offsets — re-read from the returned next_offset.
+  - Limitations: slices only — compose multiple reads for long spans; a doc_id can be missing even when semantic search just returned it.
+  - Exceptions: content_not_found means that artifact has no stored text (pass alt_doc_ids — non-retryable); content_fetch_failed/rate_limited/server_error are retryable and already backoff-retried once; report doc_id_used, never assume the first id worked.
   - Prefer when: verifying or reading around a passage found by sciverse_semantic_search.
 - sciverse_get_resource: fetch one figure or table image by file name; saves to disk.
   - Limitations: returns a saved path, never base64; refuses non-image bytes.

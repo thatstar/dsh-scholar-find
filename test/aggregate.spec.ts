@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEvidenceItem,
+  groupDocIds,
   mapS2Paper,
   normalizeText,
   pickEvidenceHit,
@@ -229,5 +230,38 @@ describe('topicIsConfident', () => {
     expect(topicIsConfident([c('T1', 2)])).toBe(false) // < 3 votes
     expect(topicIsConfident([c('T1', 1), c('T2', 1), c('T3', 1)])).toBe(false)
     expect(topicIsConfident([])).toBe(false)
+  })
+})
+
+describe('groupDocIds', () => {
+  it('collects the distinct doc_ids a paper appears under', () => {
+    const hits = [
+      { unique_id: 'paper:10.1/a', title: 'A', doc_id: 'd1' },
+      { unique_id: 'paper:10.1/a', title: 'A', doc_id: 'd2' },
+      { unique_id: 'paper:10.1/b', title: 'B', doc_id: 'd3' },
+    ]
+    expect(groupDocIds(hits)).toEqual([
+      { paper_key: 'paper:10.1/a', title: 'A', unique_id: 'paper:10.1/a', doc_ids: ['d1', 'd2'] },
+      { paper_key: 'paper:10.1/b', title: 'B', unique_id: 'paper:10.1/b', doc_ids: ['d3'] },
+    ])
+  })
+
+  it('groups by normalized title when no unique_id is present', () => {
+    const hits = [
+      { title: 'Same  Paper', doc_id: 'd1' },
+      { title: 'same paper', doc_id: 'd2' },
+    ]
+    const groups = groupDocIds(hits)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.doc_ids).toEqual(['d1', 'd2'])
+  })
+
+  it('deduplicates repeated doc_ids and skips hits without one', () => {
+    const hits = [
+      { title: 'X', doc_id: 'd1' },
+      { title: 'X', doc_id: 'd1' },
+      { title: 'X' },
+    ]
+    expect(groupDocIds(hits)[0]!.doc_ids).toEqual(['d1'])
   })
 })

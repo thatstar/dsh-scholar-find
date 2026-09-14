@@ -101,7 +101,7 @@ describe('SciverseClient (direct REST, no SDK)', () => {
         signal?.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), { once: true })
       })
     })
-    const sc = createSciverseClient('tk', 60)
+    const sc = createSciverseClient('tk', 60, { maxAttempts: 3, backoffMs: [1, 1] })
     await expect(sc.listCatalog()).rejects.toThrow('timeout after 60ms')
   })
 
@@ -126,14 +126,50 @@ describe('SciverseClient (direct REST, no SDK)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('throws a structured SciverseHttpError on an error status', async () => {
+  it('throws a structured SciverseHttpError on an error status (after retrying a retryable one)', async () => {
     stubFetch(() => new Response('rate limited', { status: 429 }))
-    const sc = createSciverseClient('tk', 5000)
+    const sc = createSciverseClient('tk', 5000, { maxAttempts: 3, backoffMs: [1, 1] })
     const err = (await sc.searchPapers({}).catch((e) => e)) as SciverseHttpError
     expect(err).toBeInstanceOf(SciverseHttpError)
     expect(err.status).toBe(429)
     expect(err.retryable).toBe(true)
     expect(err.message).toContain('Sciverse API 429')
+    expect(fetchMock).toHaveBeenCalledTimes(3) // 1 try + 2 retries
+  })
+
+  it('retries a transient 5xx and succeeds without surfacing the failure', async () => {
+    let calls = 0
+    stubFetch(() => {
+      calls++
+      return calls === 1 ? new Response('bad gateway', { status: 502 }) : jsonResponse({ results: [], total_count: 0 })
+    })
+    const sc = createSciverseClient('tk', 5000, { maxAttempts: 3, backoffMs: [1, 1] })
+    await expect(sc.searchPapers({ query: 'x' })).resolves.toEqual({ results: [], total_count: 0 })
+    expect(calls).toBe(2)
+  })
+
+  it('never retries a non-retryable 4xx', async () => {
+    stubFetch(() => new Response(JSON.stringify({ error: { code: 'INVALID_REQUEST', message: 'bad field' } }), { status: 400, headers: { 'Content-Type': 'application/json' } }))
+    const sc = createSciverseClient('tk', 5000, { maxAttempts: 3, backoffMs: [1, 1] })
+    const err = (await sc.searchPapers({}).catch((e) => e)) as SciverseHttpError
+    expect(err.status).toBe(400)
+    expect(err.retryable).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the business code from the nested error body the gateway actually sends', async () => {
+    stubFetch(() =>
+      new Response(JSON.stringify({ error: { biz_code: 12633, code: 'CONTENT_NOT_FOUND', message: '原文不存在' } }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const sc = createSciverseClient('tk', 5000)
+    const err = (await sc.readContent({ doc_id: 'x' }).catch((e) => e)) as SciverseHttpError
+    expect(err.code).toBe('CONTENT_NOT_FOUND')
+    expect(err.status).toBe(404)
+    expect(err.retryable).toBe(false)
+    expect(err.message).toContain('原文不存在')
   })
 
   it('parses the documented code from a JSON error body', async () => {

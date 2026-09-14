@@ -239,3 +239,22 @@ describe('resident instructions (slim core invariants)', () => {
     expect(SCHOLAR_INSTRUCTIONS).toContain('Settings → Plugins → Plugin configuration')
   })
 })
+
+describe('sciverse failure handling (typed envelope + content fallbacks)', () => {
+  it('names the typed sciverse error codes in the resident Shared behavior', () => {
+    expect(SCHOLAR_INSTRUCTIONS).toContain('content_not_found')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('content_fetch_failed')
+  })
+
+  it('carries the ranked content chain with the Asta step and alt_doc_ids recovery', () => {
+    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar_get_paper_snippets')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('alt_doc_ids')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('doc_id_index')
+  })
+
+  it('catalog documents the doc_id alternates on the content tools', () => {
+    const catalog = byName.get('scholar-tools')!
+    expect(catalog.content).toContain('alt_doc_ids')
+    expect(catalog.content).toContain('doc_id_index')
+  })
+})

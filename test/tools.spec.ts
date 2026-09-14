@@ -195,6 +195,62 @@ describe('citation/reference coverage + second source', () => {
   })
 })
 
+describe('sciverse_read_content — doc_id fallback', () => {
+  const CRED = { resolve: async () => ({ value: 'sciverse-token' }) }
+
+  it('walks alternate doc_ids and reports which one answered', async () => {
+    stubFetch((url) => {
+      if (url.includes('/content?')) {
+        const docId = new URL(url).searchParams.get('doc_id')
+        if (docId === 'missing') return jsonResponse({ error: { biz_code: 12633, code: 'CONTENT_NOT_FOUND', message: '原文不存在' } }, 404)
+        return jsonResponse({ text: 'The real full text.', bytes_returned: 19, next_offset: 19 })
+      }
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_read_content', { doc_id: 'missing', alt_doc_ids: ['good'] })
+    expect(out.ok).toBe(true)
+    expect(out.doc_id_used).toBe('good')
+    expect(out.text).toBe('The real full text.')
+    expect(out.attempts).toEqual([{ doc_id: 'missing', code: 'content_not_found', retryable: false }])
+    expect(out.markdown).toContain('alternate doc_id')
+  })
+
+  it('returns the typed envelope (not a bare error) when every doc_id fails', async () => {
+    stubFetch((url) => {
+      if (url.includes('/content?')) return jsonResponse({ error: { code: 'CONTENT_NOT_FOUND', message: 'nope' } }, 404)
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_read_content', { doc_id: 'a', alt_doc_ids: ['b'] })
+    expect(out.ok).toBe(false)
+    expect(out.code).toBe('content_not_found')
+    expect(out.retryable).toBe(false)
+    expect(out.attempts).toHaveLength(2)
+    expect(out.markdown).toContain('Tried 2 doc_ids')
+  })
+})
+
+describe('sciverse_semantic_search — doc_id_index', () => {
+  it('groups a paper that appears under several doc_ids', async () => {
+    stubFetch((url) => {
+      if (url.includes('/agentic-search')) {
+        return jsonResponse({
+          hits: [
+            { title: 'Paper A', unique_id: 'paper:10.1/a', doc_id: 'd1', chunk: 'one', score: 0.9, offset: 0 },
+            { title: 'Paper A', unique_id: 'paper:10.1/a', doc_id: 'd2', chunk: 'two', score: 0.8, offset: 10 },
+          ],
+        })
+      }
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
+    const out = await runTool(h, 'sciverse_semantic_search', { query: 'x' })
+    expect(out.doc_id_index).toEqual([{ paper_key: 'paper:10.1/a', title: 'Paper A', unique_id: 'paper:10.1/a', doc_ids: ['d1', 'd2'] }])
+    expect(out.markdown).toContain('alt_doc_ids')
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))

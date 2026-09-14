@@ -18,7 +18,8 @@ import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
 import { FILTER_OP_EQ, SORT_ORDER_DESC, paperOnlyFilter, topicYearPaperFilters } from '../sciverse/payload.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
-import { buildEvidenceItem, EVIDENCE_DEFAULT_QUOTE_MAX, EVIDENCE_MAX_TOP_K, mapS2Paper, pickEvidenceHit, rankTopicCandidates, resolveYearRange, topicIsConfident, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TopicCandidate, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
+import { sciverseEnvelope, shouldTryAlternateDocId, type SciverseErrorEnvelope } from '../sciverse/errors.js'
+import { buildEvidenceItem, groupDocIds, EVIDENCE_DEFAULT_QUOTE_MAX, EVIDENCE_MAX_TOP_K, mapS2Paper, pickEvidenceHit, rankTopicCandidates, resolveYearRange, topicIsConfident, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TopicCandidate, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
 import { sleep } from '../util/async.js'
 import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippet } from '../asta/client.js'
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
@@ -1058,6 +1059,19 @@ function fmtChunks(hits: readonly Record<string, unknown>[]): string {
     .join('\n\n')
 }
 
+/**
+ * Run a sciverse tool body and turn a thrown error into the plugin's typed
+ * envelope. Without this a 404/502 reaches the model as a bare
+ * `Error: Sciverse API 502: {…}` — no code, no retry verdict, no fallback hint.
+ */
+async function guarded<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    return sciverseEnvelope(e, label) as unknown as T
+  }
+}
+
 /** Not-configured markdown shared by all sciverse_* tools. */
 function sciverseNotConfigured(): string {
   return 'sciverse_* tools are not configured. Add a `sciverseApiKeyRef` credential (Settings -> Plugins -> Plugin configuration → "Sciverse API token") to enable them.'
@@ -1186,12 +1200,14 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       (value) => `Catalog for ${value.collection ?? 'papers'}: ${Array.isArray(value.fields) ? value.fields.length : 0} fields.`,
     ),
     async execute(args, exec) {
-      const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, markdown: sciverseNotConfigured(), fields: [] } as any
-      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string }, exec.signal)) as any
-      const fields = Array.isArray(r?.fields) ? r.fields : []
-      return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${fields.map((f: any) => `- \`${f.field_name ?? f.name ?? f.field}\` — ${f.description ?? ''}`).join('\n')}` }
+      return guarded('list_catalog', async () => {
+        const key = await env.resolveSciverseKey()
+        if (!key) return { ok: false, markdown: sciverseNotConfigured(), fields: [] } as any
+        const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+        const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string }, exec.signal)) as any
+        const fields = Array.isArray(r?.fields) ? r.fields : []
+        return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${fields.map((f: any) => `- \`${f.field_name ?? f.name ?? f.field}\` — ${f.description ?? ''}`).join('\n')}` }
+      })
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -1224,6 +1240,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       (value) => `${value.total ?? 0} papers (page ${value.page ?? 1}).`,
     ),
     async execute(args, exec) {
+      return guarded('search_papers', async () => {
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, total: 0, results: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
@@ -1252,6 +1269,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           : ''}\n\n${fmtPapers(results)}`
         : 'No papers found.'
       return { ok: true, total, page: args.page ?? 1, results, markdown }
+      })
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -1268,16 +1286,30 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       filters: { type: 'json', description: 'Approximate structured filters during retrieval, e.g. {"author":["Hinton"],"publication_published_year":{"gte":2023}}' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, hits: { type: 'array', items: { type: 'json' } } },
+      { ok: { type: 'boolean' }, hits: { type: 'array', items: { type: 'json' } }, doc_id_index: { type: 'array', items: { type: 'json' } } },
       (value) => `${Array.isArray(value.hits) ? value.hits.length : 0} passage chunks.`,
     ),
     async execute(args, exec) {
-      const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, hits: [], markdown: sciverseNotConfigured() } as any
-      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters }, exec.signal)) as any
-      const hits = Array.isArray(r?.hits) ? r.hits : []
-      return { ok: true, hits, markdown: hits.length ? `**${hits.length} passage chunk(s)**\n\n${fmtChunks(hits)}` : 'No passages found.' }
+      return guarded('semantic_search', async () => {
+        const key = await env.resolveSciverseKey()
+        if (!key) return { ok: false, hits: [], markdown: sciverseNotConfigured() } as any
+        const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+        const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters }, exec.signal)) as any
+        const hits = Array.isArray(r?.hits) ? r.hits : []
+        // The same paper is often indexed under several doc_ids; surfacing them
+        // is what makes the read_content fallback usable when one 404s.
+        const docIdIndex = groupDocIds(hits).filter((g) => g.doc_ids.length > 0)
+        const multi = docIdIndex.filter((g) => g.doc_ids.length > 1)
+        const note = multi.length
+          ? `\n\n> ${multi.length} paper(s) appear under more than one doc_id — if \`sciverse_read_content\` answers CONTENT_NOT_FOUND for one, pass another via \`alt_doc_ids\`:\n${multi.map((g) => `> - ${g.title ?? g.paper_key}: ${g.doc_ids.map((d) => `\`${d}\``).join(', ')}`).join('\n')}`
+          : ''
+        return {
+          ok: true,
+          hits,
+          doc_id_index: docIdIndex,
+          markdown: hits.length ? `**${hits.length} passage chunk(s)**\n\n${fmtChunks(hits)}${note}` : 'No passages found.',
+        }
+      })
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -1297,13 +1329,15 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       (value) => `${value.total ?? 0} ${value.relation ?? ''} entries.`,
     ),
     async execute(args, exec) {
-      const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], markdown: sciverseNotConfigured() } as any
-      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size }, exec.signal)) as any
-      const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
-      const total = r.total_count ?? items.length
-      return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtRelationItems(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
+      return guarded('list_paper_relations', async () => {
+        const key = await env.resolveSciverseKey()
+        if (!key) return { ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], markdown: sciverseNotConfigured() } as any
+        const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+        const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size }, exec.signal)) as any
+        const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
+        const total = r.total_count ?? items.length
+        return { ok: true, unique_id: args.unique_id, relation: args.relation, total, items, markdown: items.length ? `**${total} ${args.relation} entries** (page ${args.page ?? 1})\n\n${fmtRelationItems(items as Record<string, unknown>[])}` : `No ${args.relation} entries.` }
+      })
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -1311,31 +1345,54 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_read_content',
-    description: `Read a character-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned (characters, per the API) + next_offset for continued reading.`,
+    description: `Read a character-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned (characters, per the API) + next_offset for continued reading. When a doc_id has no stored full text (CONTENT_NOT_FOUND) or upstream cannot fetch it (502 FETCH_FAILED), pass \`alt_doc_ids\` — sciverse_semantic_search's \`doc_id_index\` lists every doc_id a paper appears under — and the tool walks them in order, reporting \`doc_id_used\` and \`attempts\`; failures come back as the plugin's typed envelope, not a bare error.`,
     parameters: {
       doc_id: { type: 'string', description: 'Full-text artifact id (sha256) from a sciverse search/semantic hit', required: true },
       offset: { type: 'integer', description: 'Character offset (Unicode code points) to start reading from (default 0)' },
       limit: { type: 'integer', description: 'Max characters to read (Unicode code points; server-enforced cap)' },
+      alt_doc_ids: { type: 'array', items: { type: 'string', description: 'Another doc_id for the same paper' }, description: 'Other doc_ids for the SAME paper, tried in order when this one has no stored full text (see doc_id_index from sciverse_semantic_search).' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: { file_name: { type: 'string' }, caption: { type: 'string' } }, additionalProperties: true } } },
+      { ok: { type: 'boolean' }, doc_id: { type: 'string' }, doc_id_used: { type: 'string' }, attempts: { type: 'array', items: { type: 'json' } }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: { file_name: { type: 'string' }, caption: { type: 'string' } }, additionalProperties: true } } },
       (value) => `${value.bytes_returned ?? 0} chars at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
     ),
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
-      if (!key) return { ok: false, doc_id: args.doc_id, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: sciverseNotConfigured() } as any
+      if (!key) return { ok: false, doc_id: args.doc_id, doc_id_used: null, attempts: [], bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      const r = (await sc.readContent({ doc_id: args.doc_id, offset: args.offset, limit: args.limit }, exec.signal)) as any
-      const text = String(r?.text ?? '')
-      // Surfaces figure/table references as ![alt](file_name) in this slice, with
-      // BOTH the file_name (for sciverse_get_resource) and the alt caption (the
-      // only semantic hint the model gets) so it can judge the figure content
-      // without rereading.
-      const figs = extractFigureRefs(text)
-      return {
-        ok: true, doc_id: args.doc_id, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images: figs,
-        markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} chars)\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} chars). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
+      // Walk the primary doc_id then every alternate, so one missing artifact
+      // does not end the read when the same paper has another.
+      const ids = [args.doc_id, ...(Array.isArray(args.alt_doc_ids) ? args.alt_doc_ids : [])]
+        .map((d) => (typeof d === 'string' ? d.trim() : ''))
+        .filter(Boolean)
+        .filter((d, i, all) => all.indexOf(d) === i)
+      const attempts: Array<{ doc_id: string; code: string; retryable: boolean }> = []
+      let last: SciverseErrorEnvelope | undefined
+      for (const docId of ids) {
+        try {
+          const r = (await sc.readContent({ doc_id: docId, offset: args.offset, limit: args.limit }, exec.signal)) as any
+          const text = String(r?.text ?? '')
+          // Surfaces figure/table references as ![alt](file_name) in this slice,
+          // with BOTH the file_name (for sciverse_get_resource) and the alt
+          // caption (the only semantic hint the model gets) so it can judge the
+          // figure content without rereading.
+          const figs = extractFigureRefs(text)
+          return {
+            ok: true, doc_id: args.doc_id, doc_id_used: docId, attempts, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images: figs,
+            markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} chars${docId !== args.doc_id ? `, via alternate doc_id \`${docId}\`` : ''})\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} chars). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
+          }
+        } catch (e) {
+          const envelope = sciverseEnvelope(e, 'read_content')
+          attempts.push({ doc_id: docId, code: envelope.code, retryable: envelope.retryable })
+          last = envelope
+          // A missing artifact or an upstream fetch failure is exactly the case
+          // another doc_id can fix; a bad token or a rate limit is not.
+          if (!shouldTryAlternateDocId(envelope)) break
+        }
       }
+      const failure = last ?? sciverseEnvelope(new Error('doc_id is required'), 'read_content')
+      const tried = attempts.length > 1 ? `\n\nTried ${attempts.length} doc_ids: ${attempts.map((a) => `\`${a.doc_id}\` (${a.code})`).join(', ')}.` : ''
+      return { ...failure, doc_id: args.doc_id, doc_id_used: null, attempts, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: `${failure.markdown}${tried}` } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -1453,7 +1510,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const topN = Math.min(Math.max(Math.trunc(args.top_n ?? TREND_DEFAULT_TOP_N), 1), TREND_MAX_TOP_N)
       const pool = Math.min(Math.max(Math.trunc(args.pool ?? TREND_DEFAULT_POOL), 1), TREND_MAX_POOL)
       if (source === 'sciverse') {
-        return runSciverseTrendScan(env, {
+        return guarded('trend_scan', () => runSciverseTrendScan(env, {
           query: q,
           years: range.years,
           yearFrom: range.yearFrom,
@@ -1463,7 +1520,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           topicId: args.topic_id,
           topicName: args.topic_name,
           signal: exec.signal,
-        })
+        }))
       }
       // S2 runtime is only needed on the s2 path — the sciverse mode must not
       // create (or fail on) the Semantic Scholar client.
@@ -1506,6 +1563,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       (value) => `${value.total ?? 0} claims (${value.verified ?? 0} verified).`,
     ),
     async execute(args, exec) {
+      return guarded('evidence_pack', async () => {
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, total: 0, verified: 0, matched: 0, items: [], markdown: sciverseNotConfigured() } as any
       const claims = (Array.isArray(args.claims) ? args.claims : []).map((c: unknown) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
@@ -1546,6 +1604,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       })
       const markdown = `**Evidence pack: ${items.length} claim(s), ${verifiedN} verified, ${matchedN} matched**\n\n${lines.join('\n\n')}${verifiedN < matchedN ? `\n\n> Unverified items matched semantically but the quote could not be located in the full-text slice — re-read the context before citing.` : ''}`
       return { ok: true, total: items.length, verified: verifiedN, matched: matchedN, items, markdown }
+      })
     },
     timeoutMs: SCIVERSE_WORKFLOW_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
