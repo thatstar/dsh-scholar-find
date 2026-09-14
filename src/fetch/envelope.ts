@@ -24,6 +24,8 @@ export type ErrorCode =
   | 'download_host_not_allowed'
   | 'download_size_exceeded'
   | 'download_io_error'
+  | 'title_mismatch'
+  | 'source_title_conflict'
   | 'internal_error'
 
 export interface EnvelopeError {
@@ -51,9 +53,15 @@ export interface FetchItemResult {
   error?: EnvelopeError
 }
 
+/** Codes that will not get better on a retry (bad input, or a wrong paper). */
+const NON_RETRYABLE: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
+  'validation_error', 'download_not_a_pdf', 'download_host_not_allowed',
+  'title_resolve_failed', 'title_mismatch', 'source_title_conflict', 'internal_error',
+])
+
 /** Build a standard error object with the retry map applied. */
 export function makeError(code: ErrorCode, message: string, reason?: string): EnvelopeError {
-  const retryable = code !== 'validation_error' && code !== 'download_not_a_pdf' && code !== 'download_host_not_allowed' && code !== 'title_resolve_failed' && code !== 'internal_error'
+  const retryable = !NON_RETRYABLE.has(code)
   const err: EnvelopeError = { code, message, retryable }
   if (reason) err.reason = reason
   const hours = RETRY_AFTER_HOURS[code]

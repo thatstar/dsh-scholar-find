@@ -96,6 +96,9 @@ describe('fetchOne web-search fallback', () => {
     expect(result.success).toBe(true)
     expect(result.source).toBe('web_search')
     expect(result.pdfUrl).toBe('https://example.com/found.pdf')
+    // A web-search hit is fetched but never title-checked against the paper:
+    // the download path must report it unverified, exactly like resolveOne.
+    expect(result.verified).toBe(false)
     expect(searchWeb).toHaveBeenCalledWith('Self-Paced Learning for Latent Variable Models pdf', 10, undefined)
     expect(result.sourcesTried).toContain('web_search')
   })
@@ -161,6 +164,89 @@ describe('resolveOne web-search fallback', () => {
     expect(result.verified).toBe(false)
     expect(searchWeb).toHaveBeenCalledWith('Self-Paced Learning for Latent Variable Models pdf', 10, undefined)
     expect(result.sourcesTried).toContain('web_search')
+  })
+})
+
+describe('identity gate (title mismatch)', () => {
+  /** Unpaywall reports `title` for the DOI with a direct PDF. */
+  function stubUnpaywall(title: string, pdfUrl = 'https://example.com/a.pdf'): void {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title, year: 2021, journal_name: 'JCTC', z_authors: [{ family: 'Doe' }], best_oa_location: { url_for_pdf: pdfUrl } })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      if (url === pdfUrl) return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]), { status: 200 })
+      throw new Error(`unexpected fetch ${url}`)
+    })
+  }
+
+  it('refuses a DOI that resolves to a different work than the requested title (resolve)', async () => {
+    stubUnpaywall('Colloidal gelation of hard spheres')
+    const result = await resolveOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1063/1.3506838', {
+      expectedTitle: 'Homogeneous nucleation in metal liquids',
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.code).toBe('title_mismatch')
+    expect(result.error?.retryable).toBe(false)
+    expect(result.error?.reason).toContain('pass the DOI')
+    expect(result.meta).toMatchObject({ titleCheck: { verdict: 'mismatch' } })
+  })
+
+  it('refuses the download too (no file is produced for the wrong paper)', async () => {
+    stubUnpaywall('Colloidal gelation of hard spheres')
+    const result = await fetchOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1063/1.3506838', {
+      checkDns: false,
+      expectedTitle: 'Homogeneous nucleation in metal liquids',
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.code).toBe('title_mismatch')
+    expect(result.file).toBeNull()
+  })
+
+  it('accepts the DOI when the title agrees', async () => {
+    stubUnpaywall('Homogeneous nucleation in metal liquids')
+    const result = await resolveOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1063/1.3506838', {
+      expectedTitle: 'Homogeneous nucleation in metal liquids',
+    })
+    expect(result.success).toBe(true)
+    expect(result.source).toBe('unpaywall')
+  })
+
+  it('drops the candidate whose own source record describes another work', async () => {
+    // Unpaywall holds the right paper; S2's record for the same DOI points at a
+    // different work and offers its own PDF — that candidate must not be used.
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title: 'Metal-liquid nucleation kinetics', year: 2021, journal_name: 'JCTC', z_authors: [{ family: 'Doe' }], best_oa_location: { url_for_pdf: 'https://example.com/right.pdf' } })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) {
+        return jsonResponse({ title: 'Magnetic thin films by sputtering', openAccessPdf: { url: 'https://example.com/wrong.pdf' }, externalIds: {} })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const result = await resolveOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1063/1.3506838')
+    expect(result.success).toBe(true)
+    expect(result.pdfUrl).toBe('https://example.com/right.pdf')
+    expect(result.meta.rejectedCandidates).toEqual([expect.objectContaining({ source: 'semantic_scholar', title: 'Magnetic thin films by sputtering' })])
+  })
+
+  it('reports source_title_conflict when every candidate describes another work', async () => {
+    // Unpaywall knows the DOI's real title but has no PDF; S2's record for the
+    // same DOI is a different work and offers its own PDF. Nothing trustworthy
+    // survives, so the call must refuse rather than download the wrong paper.
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title: 'Metal-liquid nucleation kinetics', year: 2021, journal_name: 'JCTC', z_authors: [{ family: 'Doe' }], best_oa_location: null, oa_locations: [] })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) {
+        return jsonResponse({ title: 'Magnetic thin films by sputtering', openAccessPdf: { url: 'https://example.com/wrong.pdf' }, externalIds: {} })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const result = await resolveOne(runtime({ unpaywallEmail: 'you@example.com' }), '10.1063/1.3506838')
+    expect(result.success).toBe(false)
+    expect(result.error?.code).toBe('source_title_conflict')
+    expect(result.error?.retryable).toBe(false)
   })
 })
 

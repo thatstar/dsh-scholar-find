@@ -91,3 +91,49 @@ export function describeTitleCheck(check: TitleCheck): string {
     case 'unknown': return 'title unverified (no comparable title on one side)'
   }
 }
+
+/** The minimal shape a fetch candidate must expose to be title-checked. */
+export interface TitleCheckable {
+  readonly source: string
+  readonly title?: string
+}
+
+/** A candidate dropped because its own title is a different work. */
+export interface RejectedCandidate {
+  source: string
+  title?: string
+  similarity: number
+  /** The title it was compared against (the expected title, or the DOI record's). */
+  against: string
+}
+
+/**
+ * Drop fetch candidates whose OWN record title is a different work than
+ * `referenceTitle` (the title the caller expects, or the title the DOI record
+ * reports). Candidates without a title are kept — absence of evidence is not
+ * evidence of a mismatch, and the caller still has the extra-source record.
+ *
+ * This is the "resolved a different paper" guard: a DOI whose S2 record points
+ * at a work by overlapping authors yields an arXiv candidate carrying that
+ * other work's title.
+ */
+export function rejectMismatchedCandidates<T extends TitleCheckable>(
+  candidates: readonly T[],
+  referenceTitle: string | undefined,
+): { keep: T[]; rejected: RejectedCandidate[] } {
+  const reference = (referenceTitle ?? '').trim()
+  if (!reference) return { keep: [...candidates], rejected: [] }
+  const keep: T[] = []
+  const rejected: RejectedCandidate[] = []
+  for (const c of candidates) {
+    const title = (c.title ?? '').trim()
+    if (!title) {
+      keep.push(c)
+      continue
+    }
+    const check = titleVerdict(reference, title)
+    if (titleAccepted(check)) keep.push(c)
+    else rejected.push({ source: c.source, title, similarity: check.similarity, against: reference })
+  }
+  return { keep, rejected }
+}

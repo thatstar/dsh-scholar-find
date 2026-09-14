@@ -50,6 +50,8 @@ export interface SourceResolution {
   meta: PaperMeta
   /** External ids learned along the way (ArXiv, PubMedCentral, DOI). */
   ext: Record<string, string>
+  /** The title THIS source reported for the DOI (undefined when it reported none). */
+  title?: string
   /** Extra diagnostics for the envelope (e.g. mirror detail). */
   detail?: Record<string, string>
 }
@@ -73,12 +75,15 @@ interface ChainState {
   ext: Record<string, string>
   candidates: SourceResolution[]
   sourcesTried: string[]
+  /** Per-source titles for the DOI — the raw material of the mismatch guard. */
+  titlesBySource: Record<string, string>
   /** S2 `openAccessPdf.url` when it is a direct PDF (landing links excluded). */
   s2Pdf?: string
 }
 
-function mergeMeta(state: ChainState, m: PaperMeta | undefined): void {
+function mergeMeta(state: ChainState, m: PaperMeta | undefined, source?: string): void {
   if (!m) return
+  if (m.title && source) state.titlesBySource[source] = m.title
   if (m.title && !state.meta.title) state.meta.title = m.title
   if (m.year !== undefined && m.year !== null && state.meta.year === undefined) state.meta.year = m.year
   if (m.author && !state.meta.author) state.meta.author = m.author
@@ -97,21 +102,21 @@ function isNotFound(e: unknown): boolean {
 function addCandidate(state: ChainState, source: string, pdfUrl: string | undefined, extra?: Partial<SourceResolution>): void {
   if (!pdfUrl) return
   if (state.candidates.some((c) => c.pdfUrl === pdfUrl)) return
-  state.candidates.push({ source, pdfUrl, meta: { ...state.meta }, ext: { ...state.ext }, ...extra })
+  state.candidates.push({ source, pdfUrl, meta: { ...state.meta }, ext: { ...state.ext }, ...(state.titlesBySource[source] ? { title: state.titlesBySource[source] } : {}), ...extra })
 }
 
 /**
  * Resolve one DOI to the ordered candidate list (URL + source + merged meta),
  * following the documented chain. Never downloads; the caller does that.
  */
-export async function resolveChain(ctx: ChainContext): Promise<{ candidates: SourceResolution[]; sourcesTried: readonly string[]; meta: PaperMeta; ext: Record<string, string> }> {
-  const state: ChainState = { meta: {}, ext: {}, candidates: [], sourcesTried: [] }
+export async function resolveChain(ctx: ChainContext): Promise<{ candidates: SourceResolution[]; sourcesTried: readonly string[]; meta: PaperMeta; ext: Record<string, string>; titlesBySource: Record<string, string> }> {
+  const state: ChainState = { meta: {}, ext: {}, candidates: [], sourcesTried: [], titlesBySource: {} }
   await stepUnpaywall(ctx, state)
   await stepSemanticScholar(ctx, state)
   await stepArxiv(ctx, state)
   await stepPmc(ctx, state)
   await stepBiorxiv(ctx, state)
-  return { candidates: state.candidates, sourcesTried: state.sourcesTried, meta: state.meta, ext: state.ext }
+  return { candidates: state.candidates, sourcesTried: state.sourcesTried, meta: state.meta, ext: state.ext, titlesBySource: state.titlesBySource }
 }
 
 // Each step is a named function over (ctx, state) so the ordering dependency is
@@ -141,7 +146,7 @@ async function stepUnpaywall(ctx: ChainContext, state: ChainState): Promise<void
   await runSource(state, 'unpaywall', async () => {
     const up = await unpaywallResolve(ctx.doi, ctx.email, ctx.timeoutMs, ctx.signal)
     if (up) {
-      mergeMeta(state, up.meta)
+      mergeMeta(state, up.meta, 'unpaywall')
       for (const c of up.candidates) addCandidate(state, c.source, c.pdfUrl)
     }
   })
@@ -155,7 +160,7 @@ async function stepSemanticScholar(ctx: ChainContext, state: ChainState): Promis
     const d = await getPaper(ctx.s2, `DOI:${ctx.doi}`, 'title,year,authors,openAccessPdf,externalIds,venue')
     s2Pdf = d.openAccessPdf?.url
     s2Ext = d.externalIds ?? {}
-    mergeMeta(state, { title: d.title, year: d.year, author: d.authors?.[0]?.name, journal: d.venue })
+    mergeMeta(state, { title: d.title, year: d.year, author: d.authors?.[0]?.name, journal: d.venue }, 'semantic_scholar')
   } catch (e) {
     // 404 = no S2 record (common for arXiv-only preprints) — a normal miss.
     // Any other failure is surfaced distinctly so the envelope shows the
@@ -190,7 +195,7 @@ async function stepArxiv(ctx: ChainContext, state: ChainState): Promise<void> {
   // empty. Merge only complements existing values (mergeMeta).
   if (!state.meta.title || !state.meta.author || state.meta.year === undefined) {
     const am = await arxivMetaEnrich(arxivId, ctx.timeoutMs, ctx.signal)
-    if (am) mergeMeta(state, am)
+    if (am) mergeMeta(state, am, 'arxiv')
   }
   state.sourcesTried.push('arxiv')
   addCandidate(state, 'arxiv', arxivPdfUrl(arxivId))

@@ -101,6 +101,24 @@ describe('list-result identity caveat', () => {
   })
 })
 
+describe('paper_fetch_* — expected title wiring', () => {
+  it('flags a title mismatch in the resolve markdown', async () => {
+    stubFetch((url) => {
+      if (url.startsWith('https://api.unpaywall.org/')) {
+        return jsonResponse({ title: 'Colloidal gelation of hard spheres', year: 2010, journal_name: 'PRL', z_authors: [{ family: 'Doe' }], best_oa_location: { url_for_pdf: 'https://example.com/a.pdf' } })
+      }
+      if (url.startsWith('https://api.semanticscholar.org/')) return jsonResponse({ error: 'not found' }, 404)
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const h = makeScholarContext({ unpaywallEmail: 'you@example.com' })
+    const out = await runTool(h, 'paper_fetch_resolve', { doi: '10.1063/1.3506838', title: 'Homogeneous nucleation in metal liquids' })
+    expect(out.data.ok).toBe(false)
+    expect(out.data.result.error.code).toBe('title_mismatch')
+    expect(out.markdown).toContain('title_mismatch')
+    expect(out.markdown).toContain('pass the DOI')
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))

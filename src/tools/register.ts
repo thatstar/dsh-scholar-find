@@ -209,6 +209,20 @@ async function resolveInputDoi(rt: FetchRuntime, input: { doi?: string; title?: 
   return { doi: r.doi, resolution: r.resolution }
 }
 
+/** The identity the caller asked for, in the caller's own words (undefined for
+ * a DOI-only request). Fed to the fetch chain's title gate. */
+function expectedTitleOf(input: { title?: string }): string | undefined {
+  const t = input.title?.trim()
+  return t ? t : undefined
+}
+
+/** One failure line for the paper_fetch markdown, with the typed code and the
+ * actionable reason. */
+function failureLine(error: { code?: string; message?: string; reason?: string; retry_after_hours?: number } | undefined): string {
+  if (!error) return '**Failed** (no error detail)'
+  return `**Failed** [${error.code ?? 'error'}]: ${error.message ?? ''}${error.reason ? `\n\n> ${error.reason}` : ''}${error.retry_after_hours ? ` (retry after ~${error.retry_after_hours}h)` : ''}`
+}
+
 /**
  * Register one tool into `ctx.tools` with the two shared hardening wrappers,
  * shared by BOTH tool families so the copy cannot drift:
@@ -642,10 +656,11 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       if (!doi) {
         return { markdown: `Could not resolve "${args.title ?? args.doi ?? ''}" to a DOI. Use a longer/cleaner title or pass the DOI directly.`, data: { ok: false, resolution } } as any
       }
-      const result = await fetchSvc.resolveOne(rt, doi)
+      const result = await fetchSvc.resolveOne(rt, doi, { expectedTitle: expectedTitleOf(args as { title?: string }) })
+      const rejected = (result.meta as any).rejectedCandidates as Array<{ source: string; title?: string }> | undefined
       const sourceLine = result.success
-        ? `**Source:** ${result.source}\n**PDF URL:** ${result.pdfUrl}\n**Title:** ${(result.meta as any).title ?? '?'}\n${(result.meta as any).year !== undefined ? `**Year:** ${(result.meta as any).year}\n` : ''}${result.source === 'web_search' && result.verified === false ? '*This link was found by web search and not fetched — treat it as a hint, not a confirmed OA copy.*\n' : ''}`
-        : `**Not found.** ${(result.error as any)?.message ?? ''}`
+        ? `**Source:** ${result.source}\n**PDF URL:** ${result.pdfUrl}\n**Title:** ${(result.meta as any).title ?? '?'}\n${(result.meta as any).year !== undefined ? `**Year:** ${(result.meta as any).year}\n` : ''}${result.source === 'web_search' || result.verified === false ? '*This link was found by web search and not fetched — treat it as a hint, not a confirmed OA copy.*\n' : ''}${rejected?.length ? `\n> Dropped ${rejected.length} source(s) whose record describes a different work: ${rejected.map((r) => `${r.source} ("${r.title ?? '?'}")`).join(', ')}.\n` : ''}`
+        : failureLine(result.error as any)
       return {
         doi,
         markdown: `## Resolve ${doi}\n\n${sourceLine}`,
@@ -674,13 +689,12 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       if (!doi) {
         return { ok: false, markdown: `Could not resolve "${args.title ?? ''}" to a DOI. Provide the DOI directly (title→DOI matching can fail or pick a different paper).`, data: { ok: false, resolution } } as any
       }
-      const result = await fetchSvc.fetchOne(rt, doi, { overwrite: args.overwrite })
-      const err = result.error as { code?: string; message?: string; retry_after_hours?: number } | undefined
+      const result = await fetchSvc.fetchOne(rt, doi, { overwrite: args.overwrite, expectedTitle: expectedTitleOf(args as { title?: string }) })
       const statusLine = result.success
         ? result.skipped
           ? `**Skipped** (already downloaded): ${result.file}`
-          : `**Downloaded** from ${result.source}:\n- file: \`${result.file}\`\n- url: ${result.pdfUrl}`
-        : `**Failed** [${err?.code}]: ${err?.message}${err?.retry_after_hours ? ` (retry after ~${err.retry_after_hours}h)` : ''}`
+          : `**Downloaded** from ${result.source}:\n- file: \`${result.file}\`\n- url: ${result.pdfUrl}${result.source === 'web_search' || result.verified === false ? '\n\n> Not title-verified: obtained by web search — confirm it is the right paper before citing.' : ''}`
+        : failureLine(result.error as any)
       return {
         ok: result.success,
         markdown: `## Fetch ${doi}\n\n${statusLine}`,
@@ -710,13 +724,20 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         return { ok: false, markdown: 'paper_fetch_batch needs `dois` or `titles`.', data: { ok: false } }
       }
       const dois = [...(args.dois ?? [])]
+      // The caller's own title is the identity gate for each resolved DOI, so a
+      // fuzzy title->DOI pick can never silently become a downloaded wrong PDF.
+      const expectedTitles: Record<string, string> = {}
       if (args.titles?.length) {
         for (const title of args.titles) {
           const r = await fetchSvc.resolveTitleToDoi(rt, title)
-          if (r.doi) dois.push(r.doi)
+          if (r.doi) {
+            dois.push(r.doi)
+            const t = title.trim()
+            if (t) expectedTitles[r.doi] = t
+          }
         }
       }
-      const envelope: any = await fetchSvc.fetchBatch(rt, dois, { overwrite: args.overwrite, idempotencyKey: args.idempotencyKey })
+      const envelope: any = await fetchSvc.fetchBatch(rt, dois, { overwrite: args.overwrite, idempotencyKey: args.idempotencyKey, expectedTitles })
       const summary = envelope.data?.summary ?? {}
       const lines = (envelope.data?.results ?? []).map((r: any) =>
         r.success ? `- ✅ ${r.doi} → ${r.file ?? r.pdfUrl}` : `- ❌ ${r.doi} [${r.error?.code ?? 'error'}]${r.error?.retry_after_hours ? ` (retry ~${r.error.retry_after_hours}h)` : ''}`)
