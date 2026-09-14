@@ -318,8 +318,15 @@ export function deduplicate<T extends { paperId?: string }>(papers: readonly T[]
 // Field defaults (minimal by design — S2 responses slow down with more fields)
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_PAPER_FIELDS = 'title,year,citationCount,authors,venue,externalIds,tldr'
-export const BULK_PAPER_FIELDS = 'title,year,citationCount,authors,venue,externalIds'
+/**
+ * Requested fields. `fieldsOfStudy`, `isOpenAccess` and `publicationTypes` are
+ * part of the default set on purpose: the model needs venue/field/OA evidence
+ * to triage a discovery list (the real-world report saw off-topic hits carded
+ * before being filtered by hand). S2 warns that more fields slow a response, so
+ * the list stays this short.
+ */
+export const DEFAULT_PAPER_FIELDS = 'title,year,citationCount,authors,venue,externalIds,tldr,fieldsOfStudy,isOpenAccess,publicationTypes'
+export const BULK_PAPER_FIELDS = 'title,year,citationCount,authors,venue,externalIds,fieldsOfStudy,isOpenAccess,publicationTypes'
 const AUTHOR_FIELDS = 'name,affiliations,paperCount,citationCount,hIndex'
 
 // ---------------------------------------------------------------------------

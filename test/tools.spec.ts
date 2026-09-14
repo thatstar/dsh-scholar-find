@@ -325,6 +325,70 @@ describe('scholar_format_references', () => {
   })
 })
 
+describe('discovery triage (fields / OA / off-topic)', () => {
+  function stubSearch(rows: unknown[]): void {
+    stubFetch(() => jsonResponse({ data: rows, total: rows.length }))
+  }
+
+  it('carries venue, field-of-study and OA on every row and in the markdown', async () => {
+    stubSearch([{ paperId: 'a', title: 'Metal-liquid nucleation', venue: 'PRL', year: 2020, externalIds: { DOI: '10.1/a' }, fieldsOfStudy: ['Materials Science'], isOpenAccess: true, publicationTypes: ['JournalArticle'] }])
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_search_papers', { query: 'metal-liquid nucleation' })
+    expect(out.results[0]).toMatchObject({ fieldsOfStudy: ['Materials Science'], isOpenAccess: true, publicationTypes: ['JournalArticle'] })
+    expect(out.markdown).toContain('**Fields:** Materials Science')
+    expect(out.markdown).toContain('**Open access:** yes')
+  })
+
+  it('flags a narrow query\'s zero-overlap hits without dropping them', async () => {
+    stubSearch([
+      { paperId: 'a', title: 'Metal-liquid nucleation kinetics', externalIds: { DOI: '10.1/a' } },
+      { paperId: 'b', title: 'Deep learning for polymer informatics', externalIds: { DOI: '10.1/b' } },
+    ])
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_search_papers', { query: 'metal-liquid nucleation' })
+    expect(out.offTopic).toBe(1)
+    expect(out.results.map((r: any) => r.offTopic)).toEqual([false, true])
+    expect(out.total).toBe(2)
+    expect(out.markdown).toContain('flagged `offTopic`')
+  })
+
+  it('drops them only with strictTopic:true', async () => {
+    stubSearch([
+      { paperId: 'a', title: 'Metal-liquid nucleation kinetics', externalIds: { DOI: '10.1/a' } },
+      { paperId: 'b', title: 'Deep learning for polymer informatics', externalIds: { DOI: '10.1/b' } },
+    ])
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_search_papers', { query: 'metal-liquid nucleation', strictTopic: true })
+    expect(out.total).toBe(1)
+    expect(out.results).toHaveLength(1)
+    expect(out.markdown).toContain('already dropped')
+  })
+
+  it('does not flag anything for a broad query', async () => {
+    stubSearch([{ paperId: 'b', title: 'Deep learning for polymer informatics', externalIds: { DOI: '10.1/b' } }])
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_search_papers', { query: 'crystallization' })
+    expect(out.offTopic).toBe(0)
+    expect(out.results[0].offTopic).toBe(false)
+  })
+})
+
+describe('sciverse_search_papers triage', () => {
+  it('renders OA status and the projected topic fields', async () => {
+    stubFetch(() => jsonResponse({
+      total_count: 1,
+      results: [{
+        unique_id: 'paper:10.1/a', title: 'A paper', publication_published_year: 2021,
+        publication_venue_name_unified: 'J. Test', doi: '10.1/a', access_is_oa: true,
+        publication_venue_type: 'journal', primary_topic: { display_name: 'Nucleation' },
+      }],
+    }))
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
+    const out = await runTool(h, 'sciverse_search_papers', { query: 'nucleation', fields: ['primary_topic'] })
+    expect(out.markdown).toContain('OA · Nucleation')
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))

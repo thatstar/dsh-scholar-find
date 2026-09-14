@@ -63,6 +63,9 @@ describe('compactPapers', () => {
       venue: null,
       doi: null,
       tldr: null,
+      fieldsOfStudy: [],
+      isOpenAccess: null,
+      publicationTypes: [],
       verification: 'unverified',
     }])
     expect(isLosslessJson(out)).toBe(true)

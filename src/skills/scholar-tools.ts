@@ -23,9 +23,9 @@ scholar-* workflow skills.
 ## scholar_search_* — Semantic Scholar discovery and graph
 
 - scholar_search_papers: ranked paper search with filters; the default discovery tool.
-  - Limitations: bulk plus filters beats many broad calls; abstracts/TLDR only on request.
-  - Exceptions: envelope errors (see Shared behavior); empty result is not an API failure — broaden the query before retrying.
-  - Prefer when: the user names a topic or asks for literature with year/venue/citation filters.
+  - Limitations: bulk plus filters beats many broad calls; abstracts/TLDR only on request; a narrow query's hits are annotated (offTopic), not filtered, unless \`strictTopic\` is set.
+  - Exceptions: envelope errors (see Shared behavior); empty result is not an API failure — broaden the query before retrying; offTopic means zero shared terms with the query — triage before carding.
+  - Prefer when: the user names a topic or asks for literature with year/venue/citation filters; every hit carries venue, fieldsOfStudy, publicationTypes and isOpenAccess.
 - scholar_search_papers_by_snippet: full-text passage search returning the matching snippet per paper.
   - Limitations: full-text index coverage; snippet search, not metadata search.
   - Exceptions: envelope errors; empty result means the index lacks that passage.
@@ -119,9 +119,9 @@ scholar-* workflow skills.
   - Exceptions: unknown field names — re-check the catalog before filtering.
   - Prefer when: unsure which sciverse_search_papers field or filter to use.
 - sciverse_search_papers: structured metadata search with field filters and pagination.
-  - Limitations: hit totals cap at 10000 when the matched set is larger.
+  - Limitations: hit totals cap at 10000 when the matched set is larger; primary_topic/topics/subjects are non-default and need an explicit \`fields\` projection.
   - Exceptions: cap reached — narrow with field filters, not year filters; precise counting goes through sciverse_trend_scan or boolean scholar_search_papers.
-  - Prefer when: structured screening (year, type, venue) or top-cited lists are wanted.
+  - Prefer when: structured screening (year, type, venue) or top-cited lists are wanted; every row shows OA status, venue type and (when projected) the topic.
 - sciverse_semantic_search: natural-language RAG over passage chunks.
   - Limitations: chunk-based, not full documents; scores matter for thresholds.
   - Exceptions: low-score hits — keep score ≥ 0.6 for evidence use; the returned doc_id_index lists every doc_id a paper appears under (pass the others to sciverse_read_content via alt_doc_ids when one has no stored text).

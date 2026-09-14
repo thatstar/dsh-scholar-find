@@ -32,6 +32,7 @@ import { sanitizeForOutput } from '../util/sanitize.js'
 import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
 import { cardIdentifier, cardPath } from '../cards.js'
+import { isNarrowQuery, topicOverlap } from '../topic.js'
 import { CITATION_STYLES, footnoteBlock, formatReferences, referenceMetaFromS2Paper, type CitationStyle, type ReferenceMeta } from '../cite.js'
 
 /**
@@ -305,6 +306,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       sort: { type: 'string', enum: ['citationCount:desc', 'publicationDate:desc', 'paperId:asc'], description: 'Result ordering (default citationCount:desc)' },
       maxResults: { type: 'integer', description: 'Result cap (default from settings, max 100)' },
       includeTldr: { type: 'boolean', description: 'Use the relevance strategy so TLDR summaries are available (slower)' },
+      strictTopic: { type: 'boolean', description: 'Drop hits that share no significant term with a narrow query (default false — hits are only flagged `offTopic`, so cross-disciplinary work is never silently discarded)' },
     },
     output: {
       schema: {
@@ -329,7 +331,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const strategy = args.includeTldr ? 'relevance' : 'bulk'
       const maxResults = Math.max(1, Math.min(args.maxResults ?? env.settings().maxResultsPerSearch, SEARCH_RESULT_CAP))
       if (!query) {
-        return { query, total: 0, strategy, markdown: 'scholar_search_papers needs a non-empty `query` (or a `boolean` with at least one term).', results: [] }
+        return { query, total: 0, strategy, offTopic: 0, markdown: 'scholar_search_papers needs a non-empty `query` (or a `boolean` with at least one term).', results: [] }
       }
       const papers = args.includeTldr
         ? await s2.searchRelevance(client, query, {
@@ -342,12 +344,29 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
             filters: pickFilters(args),
           })
       const deduped = s2.deduplicate(papers)
+      // Off-topic annotation: only a NARROW query (2+ significant terms, no
+      // OR-group) with zero shared terms is flagged. Annotation is the default;
+      // strictTopic opts into dropping those hits.
+      const scored = deduped.map((p) => ({
+        paper: p,
+        overlap: topicOverlap(query, { title: p.title, venue: p.venue, fieldsOfStudy: p.fieldsOfStudy, abstract: p.abstract }),
+        narrow: isNarrowQuery(query),
+      }))
+      const kept = args.strictTopic ? scored.filter((s) => !s.overlap.offTopic) : scored
+      const offTopicCount = scored.filter((s) => s.overlap.offTopic).length
+      // compactPapers rows are lossless JSON objects; the extra flag is added here.
+      const rows = (fmt.compactPapers(kept.map((s) => s.paper)) as any[])
+        .map((row, i) => ({ ...row, offTopic: kept[i]!.overlap.offTopic }))
+      const note = offTopicCount
+        ? `\n> ${offTopicCount} hit(s) share no significant term with the query — flagged \`offTopic\`${args.strictTopic ? ' (already dropped)' : ' but kept: drop them with `strictTopic: true`, or treat the list as unranked for this query'}.`
+        : ''
       return {
         query,
-        total: deduped.length,
+        total: kept.length,
         strategy,
-        markdown: fmt.formatResults(deduped, query.slice(0, 120)),
-        results: fmt.compactPapers(deduped),
+        offTopic: offTopicCount,
+        markdown: `${note}\n${fmt.formatResults(kept.map((s) => s.paper), query.slice(0, 120))}`,
+        results: rows,
       }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
@@ -1110,6 +1129,22 @@ function pickFilters(args: Record<string, unknown>): s2.ScholarFilters {
 // service); token via the DSH credentials seam; calls socket-timeout bounded.
 // ---------------------------------------------------------------------------
 
+/**
+ * The triage line of one Sciverse hit: OA status, venue type and the
+ * topic/subject evidence the model needs to judge relevance without opening
+ * the record (`access_is_oa`, `publication_venue_type` are default-returned;
+ * `primary_topic`/`topics`/`subjects` need an explicit `fields` projection).
+ */
+function paperEvidence(p: Record<string, unknown>): string {
+  const oa = p.access_is_oa === true ? 'OA' : p.access_is_oa === false ? 'closed' : (typeof p.access_oa_status === 'string' ? p.access_oa_status : '')
+  const primary = (p.primary_topic as Record<string, unknown> | undefined)?.display_name
+  const topics = Array.isArray(p.topics) ? (p.topics as Array<Record<string, unknown>>).map((t) => t?.display_name).filter((t): t is string => typeof t === 'string') : []
+  const subjects = Array.isArray(p.subjects) ? (p.subjects as unknown[]).filter((x): x is string => typeof x === 'string') : []
+  const topic = typeof primary === 'string' && primary ? primary : [...topics, ...subjects].slice(0, 2).join('/')
+  const type = typeof p.publication_venue_type === 'string' ? p.publication_venue_type : typeof p.type === 'string' ? p.type : ''
+  return [oa, topic, type].filter(Boolean).join(' · ')
+}
+
 /** Compact one-line-per-paper markdown for search results. */
 function fmtPapers(papers: readonly Record<string, unknown>[]): string {
   return papers
@@ -1117,7 +1152,8 @@ function fmtPapers(papers: readonly Record<string, unknown>[]): string {
       const authors = Array.isArray(p.author) ? (p.author as Array<{ name?: string }>).map((a) => a.name ?? '').filter(Boolean).join(', ') : ''
       const ids = [`\`${p.unique_id}\``]
       if (p.doc_id) ids.push(`doc_id: ${p.doc_id}`)
-      const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), p.doi ? `DOI: ${p.doi}` : '', ids.join(' · ')].filter(Boolean).join('\n')
+      const evidence = paperEvidence(p)
+      const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), evidence, p.doi ? `DOI: ${p.doi}` : '', ids.join(' · ')].filter(Boolean).join('\n')
       return line
     })
     .join('\n\n')
@@ -1307,6 +1343,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
       journals: { type: 'array', items: { type: 'string' }, description: 'Journal/venue names (any match) — use venue strings VERBATIM as returned by the API: the index stores HTML-escaped names (e.g. "Journal of Materials Science &amp; Technology"); the plain "&" form matches nothing (silent 0 results).' },
       subjects: { type: 'array', items: { type: 'string' }, description: 'Subject categories, e.g. "computer science"' },
+      fields: { type: 'array', items: { type: 'string' }, description: 'Explicit projection of non-default fields, e.g. ["primary_topic","topics","subjects","publication_published_date"] — the default response already carries title/author/venue/year/doi/doc_id/access_is_oa/publication_venue_type' },
       filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Advanced filter escapes, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"},{"field":"publication_published_year","operator":"FILTER_OP_GTE","value":2023}]' },
       sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto)' },
       sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Server-side hard sort fields (order defaults to SORT_ORDER_DESC). Works WITH a keyword query — the query degrades to a hit filter and results are hard-ranked by these fields (soft boosts ignored). e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] for top-cited. Sortable fields: publication_published_year / publication_published_date / reference_count / citation_count / influential_citation_count / fwci' },

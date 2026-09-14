@@ -18,6 +18,9 @@ interface PaperLike {
   abstract?: string
   paperId?: string
   citationStyles?: { bibtex?: string }
+  fieldsOfStudy?: readonly string[]
+  isOpenAccess?: boolean
+  publicationTypes?: readonly string[]
 }
 
 export function doiOfPaper(paper: PaperLike): string {
@@ -31,11 +34,13 @@ function firstAuthor(paper: PaperLike): string {
   return authors.length > 1 ? `${name} et al.` : name
 }
 
-/** Markdown summary table (# | Title | Year | Cites | First author | Venue). */
+/** Markdown summary table (# | Title | Year | Cites | First author | Venue | OA | Field). */
 export function formatTable(papers: readonly PaperLike[], maxRows = 30): string {
-  const rows = ['| # | Title | Year | Cites | First Author | Venue |', '|---|-------|------|-------|-------------|-------|']
+  const rows = ['| # | Title | Year | Cites | First Author | Venue | OA | Field |', '|---|-------|------|-------|-------------|-------|----|-------|']
   for (const [i, p] of papers.slice(0, maxRows).entries()) {
-    rows.push(`| ${i + 1} | ${(p.title ?? '').slice(0, 80)} | ${p.year ?? ''} | ${p.citationCount ?? 0} | ${firstAuthor(p).slice(0, 25)} | ${(p.venue ?? '').slice(0, 30)} |`)
+    const oa = p.isOpenAccess === undefined ? '?' : p.isOpenAccess ? 'yes' : 'no'
+    const field = (p.fieldsOfStudy ?? []).slice(0, 2).join('/')
+    rows.push(`| ${i + 1} | ${(p.title ?? '').slice(0, 80)} | ${p.year ?? ''} | ${p.citationCount ?? 0} | ${firstAuthor(p).slice(0, 25)} | ${(p.venue ?? '').slice(0, 30)} | ${oa} | ${field.slice(0, 30)} |`)
   }
   return rows.join('\n')
 }
@@ -53,6 +58,15 @@ export function formatDetails(papers: readonly PaperLike[], maxPapers = 10): str
     lines.push(`### ${i + 1}. ${p.title ?? 'Untitled'} (${p.year ?? '?'})`)
     lines.push(`**Authors:** ${authorsFull || 'unknown'}`)
     lines.push(doi ? `**Citations:** ${p.citationCount ?? 0} | **DOI:** ${doi}` : `**Citations:** ${p.citationCount ?? 0}`)
+    // Venue / field-of-study / OA evidence so a hit can be triaged without
+    // opening it (the model otherwise judges by title alone).
+    const evidence = [
+      p.venue ? `**Venue:** ${p.venue}` : '',
+      p.fieldsOfStudy?.length ? `**Fields:** ${p.fieldsOfStudy.join(', ')}` : '',
+      p.publicationTypes?.length ? `**Type:** ${p.publicationTypes.join(', ')}` : '',
+      p.isOpenAccess === undefined ? '' : `**Open access:** ${p.isOpenAccess ? 'yes' : 'no'}`,
+    ].filter(Boolean)
+    if (evidence.length) lines.push(evidence.join(' | '))
     if (summary) lines.push(`**Summary:** ${summary}`)
     lines.push('')
   }
@@ -101,6 +115,9 @@ export function compactPapers(papers: readonly PaperLike[]): JsonValue[] {
     venue: p.venue ?? null,
     doi: doiOfPaper(p) || null,
     tldr: p.tldr?.text ?? null,
+    fieldsOfStudy: (p.fieldsOfStudy ?? []).map((f) => String(f)),
+    isOpenAccess: p.isOpenAccess ?? null,
+    publicationTypes: (p.publicationTypes ?? []).map((f) => String(f)),
     // A list/search row is never a verified identity — see formatResults.
     verification: 'unverified',
   }) as JsonValue)
