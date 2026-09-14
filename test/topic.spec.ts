@@ -49,8 +49,18 @@ describe('topicOverlap', () => {
   })
 
   it('matches plural/derivational variants but not unrelated prefixes', () => {
+    // Two-term queries, so the prefix rule is actually exercised (a single-term
+    // query short-circuits as "broad" and would make this vacuous).
     expect(topicOverlap('nucleation rates', { title: 'Nucleation rate measurements' }).offTopic).toBe(false)
-    expect(topicOverlap('gelation', { title: 'Gel electrophoresis of proteins' }).offTopic).toBe(false) // prefix rule
+    expect(topicOverlap('gelation kinetics', { title: 'Gel electrophoresis of proteins' }).offTopic).toBe(true)
+    expect(topicOverlap('nucleation rate', { title: 'Nucleation rates measured' }).offTopic).toBe(false)
+  })
+
+  it('does not treat an excluded (-term) as positive evidence', () => {
+    expect(significantTokens('nucleation -polymer')).toEqual(['nucleation'])
+    expect(significantTokens('metal-liquid nucleation -polymer -hydrate')).toEqual(['metal', 'liquid', 'nucleation'])
+    // A hit matching only the excluded term is still off-topic.
+    expect(topicOverlap('metal-liquid nucleation -polymer', { title: 'Polymer crystallization routes' }).offTopic).toBe(true)
   })
 
   it('never flags when the query is broad (nothing to compare against)', () => {

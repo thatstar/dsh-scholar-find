@@ -32,7 +32,7 @@ import { sanitizeForOutput } from '../util/sanitize.js'
 import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
 import { cardIdentifier, cardPath } from '../cards.js'
-import { isNarrowQuery, topicOverlap } from '../topic.js'
+import { topicOverlap } from '../topic.js'
 import { CITATION_STYLES, footnoteBlock, formatReferences, referenceMetaFromS2Paper, type CitationStyle, type ReferenceMeta } from '../cite.js'
 
 /**
@@ -89,6 +89,17 @@ const SCIVERSE_TOTAL_HITS_CAP = 10000
  * endpoints allow ~30 req/min; per-year trend scans and per-claim evidence
  * packs are multi-call loops, so they pace themselves). */
 const SCIVERSE_WORKFLOW_PACE_MS = 700
+/**
+ * Fields the plugin always needs back from /meta-search to identify a row.
+ * `fields` there is REPLACIVE, not additive (live-verified: projecting
+ * only ["title"] returns rows with no unique_id/doi/author), so a caller's
+ * projection is unioned with this set — a projected row must never come back
+ * as an unidentifiable `untitled` record.
+ */
+const SCIVERSE_IDENTITY_FIELDS = ['unique_id', 'title', 'doi', 'author', 'publication_published_year', 'publication_venue_name_unified', 'doc_id'] as const
+/** Triage evidence the plugin requests by default (live-verified present). */
+const SCIVERSE_TRIAGE_FIELDS = ['access_is_oa', 'publication_venue_type', 'metadata_type'] as const
+
 /** sciverse_list_paper_relations page size used by the citation/reference
  * second-source fallback (one page is a hint that the index HAS the list). */
 const SCIVERSE_RELATIONS_FALLBACK_PAGE = 20
@@ -364,7 +375,6 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const scored = deduped.map((p) => ({
         paper: p,
         overlap: topicOverlap(query, { title: p.title, venue: p.venue, fieldsOfStudy: p.fieldsOfStudy, abstract: p.abstract }),
-        narrow: isNarrowQuery(query),
       }))
       const kept = args.strictTopic ? scored.filter((s) => !s.overlap.offTopic) : scored
       const offTopicCount = scored.filter((s) => s.overlap.offTopic).length
@@ -545,7 +555,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       maxResults: { type: 'integer', description: 'Result cap (default 100)' },
       publicationDate: { type: 'string', description: 'Filter citing papers by date YYYY-MM-DD or range' },
       withIntents: { type: 'boolean', description: 'Include contextsWithIntent (larger response)' },
-      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own citation count (one extra paced request, default true) — distinguishes an empty list from an unindexed one' },
+      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own citation count (one extra paced request, default true) — distinguishes an empty list from an unindexed one. Skipping it only removes the count request: the empty-list second-source fallback is unaffected.' },
     },
     output: markdownOutput(
       { total: { type: 'integer' }, coverage: { type: 'json' }, fallback: { type: 'json' }, citations: { type: 'array', items: { type: 'json' } } },
@@ -587,7 +597,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     parameters: {
       paperId: { type: 'string', description: 'Paper id', required: true },
       maxResults: { type: 'integer', description: 'Result cap (default 100)' },
-      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own reference count (one extra paced request, default true) — distinguishes an empty list from an unindexed one' },
+      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own reference count (one extra paced request, default true) — distinguishes an empty list from an unindexed one. Skipping it only removes the count request: the empty-list second-source fallback is unaffected.' },
     },
     output: markdownOutput(
       { total: { type: 'integer' }, coverage: { type: 'json' }, fallback: { type: 'json' }, references: { type: 'array', items: { type: 'json' } } },
@@ -745,7 +755,16 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
         const fields = args.style === 'bibtex' ? `${REFS_FIELDS},citationStyles` : REFS_FIELDS
         const papers = await s2.batchPapers(client, capped, fields)
         resolved = capped.map((id, i) => {
-          const meta = referenceMetaFromS2Paper(papers[i] as Record<string, any> | undefined)
+          const record = papers[i] as Record<string, any> | undefined
+          // The batch endpoint mirrors the request order, but formatting an
+          // author/title/DOI from a MISMATCHED row would fabricate a citation —
+          // the exact failure this work removes — so verify the record's own
+          // identifiers before trusting it.
+          if (record && !recordMatchesId(record, id)) {
+            warnings.push(`Semantic Scholar returned a different record for \`${id}\` (got "${record.title ?? 'untitled'}") — that id is formatted from the identifier alone; verify it before citing.`)
+            return { note: id } as ReferenceMeta & { note?: string }
+          }
+          const meta = referenceMetaFromS2Paper(record)
           if (!meta.title) warnings.push(`No Semantic Scholar record for \`${id}\` — formatted from the identifier alone; verify it before citing.`)
           return meta
         })
@@ -1072,6 +1091,32 @@ async function bestEffortSeedCounts(client: s2.ScholarClient, paperId: string): 
   }
 }
 
+/** Normalized DOI / paperId comparison for one batch-lookup row. */
+function normalizeIdToken(value: string): string {
+  return value.trim().toLowerCase()
+    .replace(/^doi:/, '')
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+    .replace(/^arxiv:/, '')
+}
+
+/**
+ * Does the record S2 returned for a batch request actually correspond to the id
+ * that was asked for? Compares the DOI, arXiv id and paperId; a record without
+ * any of them is accepted (nothing to contradict) — only a positive mismatch
+ * (a different identifier present) rejects it.
+ */
+function recordMatchesId(record: Record<string, any>, requestedId: string): boolean {
+  const want = normalizeIdToken(requestedId)
+  const ext = (record.externalIds ?? {}) as Record<string, unknown>
+  const candidates = [
+    typeof record.paperId === 'string' ? record.paperId : '',
+    typeof ext.DOI === 'string' ? ext.DOI : '',
+    typeof ext.ArXiv === 'string' ? ext.ArXiv : '',
+  ].map(normalizeIdToken).filter(Boolean)
+  if (!candidates.length) return true
+  return candidates.some((c) => c === want)
+}
+
 /** Lossless JSON projection of a coverage verdict. */
 function coverageJson(c: Coverage) {
   return {
@@ -1146,8 +1191,11 @@ function pickFilters(args: Record<string, unknown>): s2.ScholarFilters {
 /**
  * The triage line of one Sciverse hit: OA status, venue type and the
  * topic/subject evidence the model needs to judge relevance without opening
- * the record (`access_is_oa`, `publication_venue_type` are default-returned;
- * `primary_topic`/`topics`/`subjects` need an explicit `fields` projection).
+ * the record. `access_is_oa` (boolean, or the literal `"unknown"`),
+ * `publication_venue_type` and `metadata_type` are part of the default
+ * response (live-verified against /meta-search); `primary_topic`/`topics`/
+ * `subjects` need the explicit `fields` projection — and because that
+ * projection is replacive, the tool unions the identity fields back in.
  */
 function paperEvidence(p: Record<string, unknown>): string {
   const oa = p.access_is_oa === true ? 'OA' : p.access_is_oa === false ? 'closed' : (typeof p.access_oa_status === 'string' ? p.access_oa_status : '')
@@ -1164,7 +1212,14 @@ function fmtPapers(papers: readonly Record<string, unknown>[]): string {
   return papers
     .map((p) => {
       const authors = Array.isArray(p.author) ? (p.author as Array<{ name?: string }>).map((a) => a.name ?? '').filter(Boolean).join(', ') : ''
-      const ids = [`\`${p.unique_id}\``]
+      // A row must stay identifiable even if the projection dropped the id:
+      // fall back to the DOI, then doc_id, and only then say so.
+      const idLabel = typeof p.unique_id === 'string' && p.unique_id
+        ? `\`${p.unique_id}\``
+        : typeof p.doi === 'string' && p.doi
+          ? `DOI: ${p.doi}`
+          : '_no id returned_'
+      const ids = [idLabel]
       if (p.doc_id) ids.push(`doc_id: ${p.doc_id}`)
       const evidence = paperEvidence(p)
       const line = [`**${p.title ?? 'untitled'}**`, authors ? `— ${authors}` : '', [p.publication_published_year, p.publication_venue_name_unified].filter(Boolean).join(' · '), evidence, p.doi ? `DOI: ${p.doi}` : '', ids.join(' · ')].filter(Boolean).join('\n')
@@ -1357,7 +1412,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
       journals: { type: 'array', items: { type: 'string' }, description: 'Journal/venue names (any match) — use venue strings VERBATIM as returned by the API: the index stores HTML-escaped names (e.g. "Journal of Materials Science &amp; Technology"); the plain "&" form matches nothing (silent 0 results).' },
       subjects: { type: 'array', items: { type: 'string' }, description: 'Subject categories, e.g. "computer science"' },
-      fields: { type: 'array', items: { type: 'string' }, description: 'Explicit projection of non-default fields, e.g. ["primary_topic","topics","subjects","publication_published_date"] — the default response already carries title/author/venue/year/doi/doc_id/access_is_oa/publication_venue_type' },
+      fields: { type: 'array', items: { type: 'string' }, description: 'Extra fields to project, e.g. ["primary_topic","topics","subjects","publication_published_date"]. Upstream projection is REPLACIVE, so the tool unions your list with the identity fields (unique_id/title/doi/author/venue/year/doc_id) — rows stay identifiable. The unprojected default already carries access_is_oa, publication_venue_type and metadata_type.' },
       filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Advanced filter escapes, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"},{"field":"publication_published_year","operator":"FILTER_OP_GTE","value":2023}]' },
       sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto)' },
       sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Server-side hard sort fields (order defaults to SORT_ORDER_DESC). Works WITH a keyword query — the query degrades to a hit filter and results are hard-ranked by these fields (soft boosts ignored). e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] for top-cited. Sortable fields: publication_published_year / publication_published_date / reference_count / citation_count / influential_citation_count / fwci' },
@@ -1386,6 +1441,11 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         delete payload.abstract_contains
         payload.query = [typeof payload.query === 'string' ? payload.query : '', abstractTerm].filter(Boolean).join(' ').trim()
       }
+      // Upstream `fields` is replacive: a caller asking for ["primary_topic"]
+      // would otherwise get rows with no id, doi or author. Union the identity
+      // set (and the triage evidence) back in.
+      const requestedFields = Array.isArray(payload.fields) ? (payload.fields as unknown[]).filter((f): f is string => typeof f === 'string') : []
+      payload.fields = [...new Set([...requestedFields, ...SCIVERSE_IDENTITY_FIELDS, ...SCIVERSE_TRIAGE_FIELDS])]
       const r = (await sc.searchPapers(payload, exec.signal)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const total = r.total_count ?? results.length
@@ -1495,11 +1555,12 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       // does not end the read when the same paper has another. The walk is
       // bounded by a total deadline (and a doc_id cap) so the tool always
       // returns its envelope rather than being killed by its own timeout.
-      const ids = [args.doc_id, ...(Array.isArray(args.alt_doc_ids) ? args.alt_doc_ids : [])]
+      const allIds = [args.doc_id, ...(Array.isArray(args.alt_doc_ids) ? args.alt_doc_ids : [])]
         .map((d) => (typeof d === 'string' ? d.trim() : ''))
         .filter(Boolean)
         .filter((d, i, all) => all.indexOf(d) === i)
-        .slice(0, SCIVERSE_CONTENT_MAX_DOC_IDS)
+      const ids = allIds.slice(0, SCIVERSE_CONTENT_MAX_DOC_IDS)
+      const droppedIds = allIds.slice(SCIVERSE_CONTENT_MAX_DOC_IDS)
       const attempts: Array<{ doc_id: string; code: string; retryable: boolean }> = []
       const deadline = Date.now() + SCIVERSE_CONTENT_BUDGET_MS
       let last: SciverseErrorEnvelope | undefined
@@ -1509,7 +1570,11 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           attempts.push({ doc_id: docId, code: 'budget_exhausted', retryable: true })
           break
         }
-        const sc = createSciverseClient(key, Math.min(SCIVERSE_CONTENT_TIMEOUT_MS, remaining), { maxAttempts: 2, backoffMs: [600] })
+        // Each doc_id gets at most 2 attempts, so it may consume at most twice
+        // the per-attempt cap: clamp to half the remaining budget to keep the
+        // whole walk (3 doc_ids) inside the tool's own wall clock.
+        const perAttempt = Math.max(2_000, Math.min(SCIVERSE_CONTENT_TIMEOUT_MS, Math.floor(remaining / 2)))
+        const sc = createSciverseClient(key, perAttempt, { maxAttempts: 2, backoffMs: [600] })
         try {
           const r = (await sc.readContent({ doc_id: docId, offset: args.offset, limit: args.limit }, exec.signal)) as any
           const text = String(r?.text ?? '')
@@ -1531,9 +1596,10 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           if (!shouldTryAlternateDocId(envelope)) break
         }
       }
-      const failure = last ?? sciverseEnvelope(new Error('doc_id is required'), 'read_content')
+      const failure = last ?? sciverseEnvelope(new Error(`no doc_id could be read (${attempts.map((a) => a.code).join(', ') || 'none supplied'})`), 'read_content')
       const tried = attempts.length > 1 ? `\n\nTried ${attempts.length} doc_ids: ${attempts.map((a) => `\`${a.doc_id}\` (${a.code})`).join(', ')}.` : ''
-      return { ...failure, doc_id: args.doc_id, doc_id_used: null, attempts, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: `${failure.markdown}${tried}` } as any
+      const skipped = droppedIds.length ? `\n\n${droppedIds.length} further alternate doc_id(s) were not tried (cap ${SCIVERSE_CONTENT_MAX_DOC_IDS} per call): ${droppedIds.map((d) => `\`${d}\``).join(', ')}.` : ''
+      return { ...failure, doc_id: args.doc_id, doc_id_used: null, attempts, skipped_doc_ids: droppedIds, bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: `${failure.markdown}${tried}${skipped}` } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,

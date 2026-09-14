@@ -216,7 +216,7 @@ describe('sciverse_read_content — doc_id fallback', () => {
     expect(out.markdown).toContain('alternate doc_id')
   })
 
-  it('caps the doc_id walk so the call always returns an envelope', async () => {
+  it('caps the doc_id walk at 3 and still returns a typed envelope', async () => {
     let calls = 0
     stubFetch((url) => {
       if (url.includes('/content?')) { calls++; return jsonResponse({ error: { code: 'CONTENT_NOT_FOUND', message: 'nope' } }, 404) }
@@ -225,8 +225,32 @@ describe('sciverse_read_content — doc_id fallback', () => {
     const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
     const out = await runTool(h, 'sciverse_read_content', { doc_id: 'a', alt_doc_ids: ['b', 'c', 'd', 'e'] })
     expect(out.ok).toBe(false)
+    expect(out.code).toBe('content_not_found')
     expect(out.attempts).toHaveLength(3) // primary + 2 alternates at most
+    expect(out.skipped_doc_ids).toEqual(['d', 'e']) // truncation is reported, not silent
+    expect(out.markdown).toContain('were not tried')
     expect(calls).toBe(3)
+  })
+
+  it('stops the walk when the total budget is exhausted and reports it', async () => {
+    let clock = 0
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    try {
+      stubFetch((url) => {
+        if (url.includes('/content?')) {
+          clock += 120_000 // this doc_id consumed the whole budget
+          return jsonResponse({ error: { code: 'FETCH_FAILED', message: 'upstream' } }, 502)
+        }
+        return jsonResponse({ error: 'unexpected ' + url }, 404)
+      })
+      const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
+      const out = await runTool(h, 'sciverse_read_content', { doc_id: 'a', alt_doc_ids: ['b'] })
+      expect(out.ok).toBe(false)
+      expect(out.attempts.map((a: any) => a.code)).toEqual(['content_fetch_failed', 'budget_exhausted'])
+      expect(out.markdown).toContain('budget_exhausted')
+    } finally {
+      now.mockRestore()
+    }
   })
 
   it('returns the typed envelope (not a bare error) when every doc_id fails', async () => {
@@ -387,18 +411,44 @@ describe('discovery triage (fields / OA / off-topic)', () => {
 })
 
 describe('sciverse_search_papers triage', () => {
-  it('renders OA status and the projected topic fields', async () => {
+  const CRED = { resolve: async () => ({ value: 't' }) }
+
+  it('renders the default OA + venue-type evidence', async () => {
+    // Shape mirrors a real /meta-search row (live-verified: access_is_oa and
+    // publication_venue_type are part of the default response).
     stubFetch(() => jsonResponse({
       total_count: 1,
       results: [{
         unique_id: 'paper:10.1/a', title: 'A paper', publication_published_year: 2021,
-        publication_venue_name_unified: 'J. Test', doi: '10.1/a', access_is_oa: true,
-        publication_venue_type: 'journal', primary_topic: { display_name: 'Nucleation' },
+        publication_venue_name_unified: 'J. Test', doi: '10.1/a', access_is_oa: false,
+        publication_venue_type: 'journal', metadata_type: 'paper',
       }],
     }))
-    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { query: 'nucleation' })
+    expect(out.markdown).toContain('closed · journal')
+  })
+
+  it('unions a requested projection with the identity fields (upstream projection is replacive)', async () => {
+    let body: any
+    stubFetch((_url, init) => {
+      body = JSON.parse(String(init?.body))
+      return jsonResponse({ total_count: 1, results: [{ unique_id: 'paper:10.1/a', title: 'A paper', doi: '10.1/a', primary_topic: { display_name: 'Nucleation' }, access_is_oa: true }] })
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
     const out = await runTool(h, 'sciverse_search_papers', { query: 'nucleation', fields: ['primary_topic'] })
+    // The caller's field survives AND the identity fields are unioned back in.
+    expect(body.fields).toContain('primary_topic')
+    expect(body.fields).toEqual(expect.arrayContaining(['unique_id', 'title', 'doi', 'author', 'doc_id']))
     expect(out.markdown).toContain('OA · Nucleation')
+  })
+
+  it('never renders the literal string "undefined" for a row without an id', async () => {
+    stubFetch(() => jsonResponse({ total_count: 1, results: [{ title: 'Anonymous row' }] }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { query: 'x' })
+    expect(out.markdown).not.toContain('undefined')
+    expect(out.markdown).toContain('no id returned')
   })
 })
 

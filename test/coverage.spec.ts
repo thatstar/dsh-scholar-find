@@ -10,17 +10,19 @@ describe('computeCoverage', () => {
     expect(c.label).toContain('NOT indexed')
   })
 
-  it('reports empty only when the record itself reports none', () => {
+  it('reports empty as complete only when the record itself reports none', () => {
     const c = computeCoverage({ returned: 0, requestedCap: 100, hasMore: false, seedCount: 0 })
     expect(c.status).toBe('empty')
     expect(c.complete).toBe(true)
   })
 
-  it('does not call an unverifiable zero list empty', () => {
+  it('does not call an unverifiable zero list complete', () => {
     const c = computeCoverage({ returned: 0, requestedCap: 100, hasMore: false })
     expect(c.status).toBe('empty')
-    // No count was available: the label must not imply a real total.
+    // No count was available: the label must not imply a real total, and the
+    // verdict must not be machine-readable as trustworthy.
     expect(c.label).toContain('index gap')
+    expect(c.complete).toBe(false)
   })
 
   it('reports truncated when the requested cap was hit', () => {
@@ -31,6 +33,14 @@ describe('computeCoverage', () => {
 
     const exactlyCap = computeCoverage({ returned: 100, requestedCap: 100, hasMore: false, seedCount: 22302 })
     expect(exactlyCap.status).toBe('truncated')
+  })
+
+  it('does not call a list that exactly fills the cap truncated when it IS the whole record', () => {
+    const whole = computeCoverage({ returned: 100, requestedCap: 100, hasMore: false, seedCount: 100 })
+    expect(whole.status).toBe('complete')
+    expect(whole.complete).toBe(true)
+    // Without a count, an exactly-capped list is still unverifiable.
+    expect(computeCoverage({ returned: 100, requestedCap: 100, hasMore: false }).status).toBe('truncated')
   })
 
   it('reports partial when the list is short of the record count without hitting the cap', () => {
@@ -47,10 +57,15 @@ describe('computeCoverage', () => {
     expect(c.complete).toBe(true)
   })
 
-  it('reports complete-with-caveat when no count was available and the list was not capped', () => {
+  it('reports unknown (never complete) when the count lookup failed', () => {
+    // A failed count request must not upgrade a short list to a total — that is
+    // the original "index gap presented as a total" bug, one branch over.
     const c = computeCoverage({ returned: 12, requestedCap: 100, hasMore: false })
-    expect(c.status).toBe('complete')
-    expect(c.label).toContain('no total')
+    expect(c.status).toBe('unknown')
+    expect(c.complete).toBe(false)
+    expect(c.label).toContain('lower bound')
+    // The 2-of-244 case with a failed lookup stays untrustworthy too.
+    expect(computeCoverage({ returned: 2, requestedCap: 100, hasMore: false }).complete).toBe(false)
   })
 
   it('keeps the raw numbers for the model', () => {

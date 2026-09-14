@@ -22,7 +22,6 @@
 import { randomUUID } from 'node:crypto'
 import { timedFetch } from '../fetch/transport.js'
 import { sleep } from '../util/async.js'
-import { isRetryableSciverseError } from './errors.js'
 import { buildAgenticSearchPayload, buildMetaSearchPayload } from './payload.js'
 
 /** Public gateway endpoint (override for tests via the constructor baseUrl). */
@@ -31,6 +30,18 @@ export const SCIVERSE_DEFAULT_ENDPOINT = 'https://api.sciverse.space'
 /** Client-origin tag sent to the gateway (platform + channel, like the SDK). */
 const CHANNEL = 'typescript-sdk'
 const SOURCE = `${process.platform}-${CHANNEL}`
+
+/**
+ * True when retrying the same request could plausibly succeed: a retryable HTTP
+ * status (429/5xx), or a transport-level failure (socket timeout, DNS, reset).
+ * A programming error is not retryable. Lives here (not in ./errors.ts) so the
+ * dependency between the two modules stays one-way.
+ */
+export function isRetryableSciverseError(e: unknown): boolean {
+  if (e instanceof SciverseHttpError) return e.retryable
+  const message = e instanceof Error ? e.message : String(e)
+  return /timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|network|aborted/i.test(message)
+}
 
 /** Attempts per request (1 try + 2 retries) for transient failures. */
 export const SCIVERSE_MAX_ATTEMPTS = 3

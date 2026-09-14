@@ -11,7 +11,11 @@
  * @module dsh-scholar-find/sciverse/errors
  */
 
-import { SciverseHttpError } from './client.js'
+import { isRetryableSciverseError, SciverseHttpError } from './client.js'
+
+// Re-exported so callers have one errors surface; the implementation lives in
+// ./client.ts to keep the module dependency one-way (client -> payload only).
+export { isRetryableSciverseError }
 
 /** The plugin's typed error envelope for a sciverse_* tool failure. */
 export type SciverseErrorEnvelope = {
@@ -37,14 +41,6 @@ const CONTENT_FALLBACK_HINT =
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-/** True when retrying the same request could plausibly succeed. */
-export function isRetryableSciverseError(e: unknown): boolean {
-  if (e instanceof SciverseHttpError) return e.retryable
-  // Transport-level failures (socket timeouts, DNS, resets) are worth a retry;
-  // a programming error is not.
-  return /timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|network|aborted/i.test(messageOf(e))
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildBoolQuery, classifyScholarStatus, createScholarClient, deduplicate, resetSharedPacing, ScholarHttpError, searchBulk, searchBulkWithMeta } from '../src/s2/client.js'
+import { buildBoolQuery, classifyScholarStatus, createScholarClient, deduplicate, getCitations, getPaperCounts, getReferences, resetSharedPacing, ScholarHttpError, searchBulk, searchBulkWithMeta } from '../src/s2/client.js'
 
 const fetchMock = vi.fn()
 
@@ -147,6 +147,61 @@ describe('searchBulkWithMeta', () => {
     const r = await searchBulkWithMeta(client, 'x', { limit: 10 })
     expect(r.total).toBeUndefined()
     expect(r.papers).toEqual([{ paperId: 'a' }])
+  })
+})
+
+describe('getCitations / getReferences (pagination + truncation signal)', () => {
+  function page(ids: string[], next?: number, offset = 0): unknown {
+    return { offset, ...(next !== undefined ? { next } : {}), data: ids.map((id) => ({ citingPaper: { paperId: id } })) }
+  }
+
+  it('follows the offset cursor until the requested cap and reports hasMore', async () => {
+    stubFetch((url) => {
+      const offset = Number(new URL(url).searchParams.get('offset') ?? '0')
+      expect(url).toContain('/citations')
+      return offset === 0 ? jsonResponse(page(['a', 'b'], 2)) : jsonResponse(page(['c', 'd'], 4, 2))
+    })
+    const client = createScholarClient({ minGapMs: 1 })
+    const r = await getCitations(client, 'DOI:10.1/x', { maxResults: 3 })
+    expect(r.items.map((c: any) => c.citingPaper.paperId)).toEqual(['a', 'b', 'c'])
+    expect(r.hasMore).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports hasMore:false when the API serves a complete list in one page', async () => {
+    stubFetch(() => jsonResponse(page(['a'])))
+    const client = createScholarClient({ minGapMs: 1 })
+    const r = await getReferences(client, 'DOI:10.1/x', { maxResults: 100 })
+    expect(r.items).toHaveLength(1)
+    expect(r.hasMore).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops at a partial page without a cursor', async () => {
+    let call = 0
+    stubFetch(() => {
+      call++
+      return jsonResponse(call === 1 ? page(['a'], 1) : page(['b'], undefined, 1))
+    })
+    const client = createScholarClient({ minGapMs: 1 })
+    const r = await getCitations(client, 'DOI:10.1/x', { maxResults: 100 })
+    expect(r.items).toHaveLength(2)
+    expect(r.hasMore).toBe(false)
+  })
+})
+
+describe('getPaperCounts', () => {
+  it('requests the record counts and keeps only the numeric fields', async () => {
+    stubFetch(() => jsonResponse({ title: 'P', citationCount: 244, referenceCount: 89, extra: 'x' }))
+    const client = createScholarClient({ minGapMs: 1 })
+    await expect(getPaperCounts(client, 'DOI:10.1/x')).resolves.toEqual({ title: 'P', citationCount: 244, referenceCount: 89 })
+    expect(decodeURIComponent(String(fetchMock.mock.calls[0]![0]))).toContain('fields=title,citationCount,referenceCount')
+  })
+
+  it('omits a count the API did not report', async () => {
+    stubFetch(() => jsonResponse({ title: 'P' }))
+    const client = createScholarClient({ minGapMs: 1 })
+    await expect(getPaperCounts(client, 'DOI:10.1/x')).resolves.toEqual({ title: 'P' })
   })
 })
 

@@ -3,14 +3,14 @@
  * report the scholar tools feed. Findings 1/2/3/11 of the real-world report
  * came from leaving bibliography layout to be re-derived per task (a 48-entry
  * list rendered as one paragraph, footnote numbers disagreeing with their
- * markers, 13 back-references on one entry, a hand-invented marker form).
+ * markers, an unusable back-reference run, a hand-invented marker form).
  *
  * The rules are not stylistic preference: they match what the DSH Markdown
  * renderer actually does (verified in
  * packages/client/ui-primitives/src/markdown/render.tsx): a footnote's number is
- * its first-reference position (the digit in the definition is ignored),
- * back-references are emitted once per rendered citation, and a definition that
- * is never referenced is dropped entirely.
+ * its first-reference position (the digit in the definition is ignored), a
+ * definition that is never referenced is dropped entirely, and the footnote
+ * section carries ONE back-reference marker per entry.
  */
 
 export const SCHOLAR_CITATION_STYLE_SKILL = {
@@ -29,12 +29,16 @@ metadata returned by \`scholar_get_paper\`; this skill governs how it is emitted
 ## Why these rules (the renderer's actual behaviour)
 
 - a footnote's number is its **first-reference position**; the digit written in
-  the definition is ignored;
-- **one back-reference is emitted per rendered citation**, so a source cited 13
-  times gets \`↩ ↩2 … ↩13\` on one entry;
-- a definition that is **never referenced is dropped** from the section.
+  the definition is ignored, so definitions must be emitted in first-reference
+  order;
+- a definition that is **never referenced is dropped** from the section;
+- the section carries **one back-reference marker per entry** (the marker is
+  plain text — the in-page anchor is stripped by the protocol allowlist).
 
-The conventions below are the ones that survive that renderer.
+Marking only the first mention is therefore about the PROSE: a superscript on
+every mention clutters the text and makes the numbering harder to follow, while
+author–year prose reads naturally in a report and keeps each source on one
+number.
 
 ## Rules (follow exactly)
 
@@ -43,7 +47,7 @@ The conventions below are the ones that survive that renderer.
    Never mix styles.
 2. **Marker at first mention only.** Use \`[^n]\` at the FIRST citation of a
    source; afterwards refer to it in prose (author–year, e.g. \`Zhang 等 (2021)\`).
-   This yields exactly one back-reference per source.
+   One marker per source keeps the prose readable and the numbering stable.
 3. **Definitions at the end, blank-line separated.** Every definition is
    \`[^n]: <full entry>\` and definitions are separated by a **blank line** —
    consecutive non-blank lines merge into one paragraph in CommonMark, which is
@@ -53,8 +57,9 @@ The conventions below are the ones that survive that renderer.
    topic, renumber markers, definitions and cross-references in ONE pass.
 5. **Every definition must be referenced.** An unreferenced definition is
    dropped by the renderer; delete it or cite it.
-6. **No markers in appendix/summary tables.** Restating \`[^n]\` in a table
-   doubles every back-reference count. Refer to sources by author–year there.
+6. **No markers in appendix/summary tables.** Restating \`[^n]\` in a table adds
+   no information (the number already exists) and re-numbers nothing useful.
+   Refer to sources by author–year there.
 7. **Never invent a marker form.** \`（文献 [13]）\` is neither a footnote nor a
    numbered style: it collides with the reference list's own \`[N]\` labels. Use
    \`[^13]\` (or plain author–year prose), attached to the sentence.

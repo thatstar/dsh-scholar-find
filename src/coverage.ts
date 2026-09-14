@@ -18,7 +18,7 @@
 export type CoverageStatus = 'complete' | 'truncated' | 'partial' | 'not_indexed' | 'empty' | 'unknown'
 
 /** Which list is being described (only used for the human-readable label). */
-export type CoverageKind = 'citations' | 'references' | 'citing papers' | 'references'
+export type CoverageKind = 'citations' | 'references' | 'citing papers'
 
 export interface CoverageInput {
   /** Rows the tool actually returned. */
@@ -56,15 +56,22 @@ export function computeCoverage(input: CoverageInput): Coverage {
   const returned = Math.max(0, Math.trunc(input.returned))
   const requestedCap = Math.max(1, Math.trunc(input.requestedCap))
   const seedCount = typeof input.seedCount === 'number' && Number.isFinite(input.seedCount) ? Math.max(0, Math.trunc(input.seedCount)) : undefined
-  const capped = input.hasMore || returned >= requestedCap
+  // A list that exactly fills the cap is only "capped" when it is not also the
+  // whole record: 100 references with a requested cap of 100 and referenceCount
+  // 100 is a COMPLETE list.
+  const capped = input.hasMore || (returned >= requestedCap && (seedCount === undefined || returned < seedCount))
 
+  // `complete` means "this list can be trusted as the record's total". That is
+  // only true when the record's OWN count confirmed it (or confirmed there are
+  // none) — an unverifiable list must never come back complete, or a failed
+  // count lookup would silently upgrade an index gap to a total.
   const mk = (status: CoverageStatus, label: string): Coverage => ({
     status,
     returned,
     requestedCap,
     hasMore: input.hasMore,
     ...(seedCount !== undefined ? { seedCount } : {}),
-    complete: status === 'complete' || status === 'empty',
+    complete: status === 'complete' || (status === 'empty' && seedCount === 0),
     label,
   })
 
@@ -84,7 +91,9 @@ export function computeCoverage(input: CoverageInput): Coverage {
   }
 
   if (seedCount === undefined) {
-    return mk('complete', `${returned} ${kind} (S2 reported no total; the list was not capped)`)
+    // The record's count could not be read (rate limit, transient error): the
+    // list was not capped, but nothing confirms it is the whole record.
+    return mk('unknown', `${returned} ${kind} returned; the record's own count could not be read, so treat this as a lower bound — not a total`)
   }
 
   return mk('complete', `${returned} ${kind}`)

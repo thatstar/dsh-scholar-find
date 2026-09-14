@@ -30,12 +30,19 @@ const MIN_TERM_LEN = 2
 /** Shorter prefixes than this are not treated as the same term (`nano` vs `nan`). */
 const MIN_PREFIX_LEN = 4
 
-/** Topical terms of a query, in first-seen order. */
+/**
+ * Topical terms of a query, in first-seen order. Excluded terms (`-polymer`)
+ * are dropped: a hit that matches only an exclusion is not on-topic evidence
+ * for the query.
+ */
 export function significantTokens(query: string): string[] {
   const cleaned = (query ?? '')
     // Structured boolean syntax carries no topical content.
     .replace(/[()"~]/g, ' ')
     .split(/[^A-Za-z0-9-]+/)
+    .join(' ')
+    .split(/\s+/)
+    .filter((word) => word && !word.startsWith('-'))
     .join(' ')
     .toLowerCase()
     .split(/[\s-]+/)

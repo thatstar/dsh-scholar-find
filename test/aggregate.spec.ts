@@ -108,10 +108,18 @@ describe('verifyQuoteInSlice', () => {
   })
 
   it('accepts a quote that contains the slice and rejects foreign text', () => {
-    expect(verifyQuoteInSlice('short slice', 'prefix short slice suffix')).toBe(true)
+    // A slice covering most of the quote verifies (a window cut mid-quote).
+    expect(verifyQuoteInSlice('prefix short slice suffix', 'short slice suffix')).toBe(true)
     expect(verifyQuoteInSlice('completely different text', 'unrelated quote')).toBe(false)
     expect(verifyQuoteInSlice('', 'quote')).toBe(false)
     expect(verifyQuoteInSlice('some text', '')).toBe(false)
+  })
+
+  it('never verifies a long quote from a tiny slice', () => {
+    // Reverse containment used to accept any substring: 3 characters of slice
+    // "verified" a 600-character quote.
+    expect(verifyQuoteInSlice('abc', 'a'.repeat(600))).toBe(false)
+    expect(verifyQuoteInSlice('short slice', 'prefix short slice suffix')).toBe(false)
   })
 })
 

@@ -233,8 +233,12 @@ describe('scholar-citation-style (bibliography contract)', () => {
 
   it('explains the renderer behaviour the rules come from', () => {
     expect(style.content).toContain('first-reference position')
-    expect(style.content).toContain('back-reference')
+    expect(style.content).toContain('one back-reference marker per entry')
     expect(style.content).toContain('never referenced is dropped')
+    // The renderer no longer emits one marker per citation — the skill must not
+    // claim it does (that text was written before the renderer fix).
+    expect(style.content).not.toContain('one back-reference is emitted per rendered citation')
+    expect(style.content).not.toContain('↩ ↩2')
   })
 
   it('forbids the invented marker form and marker restatement in tables', () => {

@@ -31,6 +31,12 @@ export interface TopicCandidate {
   votes: number
 }
 
+/**
+ * Minimum share of the quote a slice must cover to verify by reverse
+ * containment: a slice holding only a few characters of a long quote proves
+ * nothing, while a window cut mid-quote (the real case) still verifies.
+ */
+const MIN_REVERSE_SLICE_RATIO = 0.5
 /** evidence_pack: default quote length in chars (the tool clamps to ≤2000). */
 export const EVIDENCE_DEFAULT_QUOTE_MAX = 600
 /** evidence_pack: semantic hits per claim cap (the tool clamps to 1..20). */
@@ -229,7 +235,11 @@ export function verifyQuoteInSlice(slice: string, quote: string): boolean {
   const s = normalizeText(slice)
   const q = normalizeText(quote)
   if (!s || !q) return false
-  return s.includes(q) || q.includes(s)
+  if (s.includes(q)) return true
+  // The reverse containment catches a slice that starts (or ends) mid-quote,
+  // but only when the slice covers a substantial share of it — otherwise a few
+  // characters of slice would "verify" an arbitrarily long quote.
+  return q.includes(s) && s.length >= Math.ceil(q.length * MIN_REVERSE_SLICE_RATIO)
 }
 
 /** Build a lossless-safe evidence item from a hit plus its verification verdict. */
