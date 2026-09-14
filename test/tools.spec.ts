@@ -471,6 +471,17 @@ describe('sciverse_search_papers triage', () => {
     expect(out.markdown).toContain('OA · Nucleation')
   })
 
+  it('leaves an unprojected call unprojected (no fields in the request body)', async () => {
+    let body: any
+    stubFetch((_url, init) => {
+      body = JSON.parse(String(init?.body))
+      return jsonResponse({ total_count: 1, results: [{ unique_id: 'paper:10.1/a', title: 'A paper', access_is_oa: true, abstract: 'kept' }] })
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    await runTool(h, 'sciverse_search_papers', { query: 'nucleation' })
+    expect(body.fields).toBeUndefined()
+  })
+
   it('never renders the literal string "undefined" for a row without an id', async () => {
     stubFetch(() => jsonResponse({ total_count: 1, results: [{ title: 'Anonymous row' }] }))
     const h = makeScholarContext({}, { credentials: CRED })

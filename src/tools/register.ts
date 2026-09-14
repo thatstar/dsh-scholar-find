@@ -1450,10 +1450,17 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         payload.query = [typeof payload.query === 'string' ? payload.query : '', abstractTerm].filter(Boolean).join(' ').trim()
       }
       // Upstream `fields` is replacive: a caller asking for ["primary_topic"]
-      // would otherwise get rows with no id, doi or author. Union the identity
-      // set (and the triage evidence) back in.
+      // would otherwise get rows with no id, doi or author — so union the
+      // identity set (and the triage evidence) back in. An UNPROJECTED call
+      // must stay unprojected: sending a `fields` list here would itself drop
+      // the fields the default response carries (abstract, keywords,
+      // access_oa_*, language, publisher, …).
       const requestedFields = Array.isArray(payload.fields) ? (payload.fields as unknown[]).filter((f): f is string => typeof f === 'string') : []
-      payload.fields = [...new Set([...requestedFields, ...SCIVERSE_IDENTITY_FIELDS, ...SCIVERSE_TRIAGE_FIELDS])]
+      if (requestedFields.length) {
+        payload.fields = [...new Set([...requestedFields, ...SCIVERSE_IDENTITY_FIELDS, ...SCIVERSE_TRIAGE_FIELDS])]
+      } else {
+        delete payload.fields
+      }
       const r = (await sc.searchPapers(payload, exec.signal)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const total = r.total_count ?? results.length

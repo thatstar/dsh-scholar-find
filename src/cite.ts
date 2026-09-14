@@ -184,7 +184,7 @@ export function formatReference(meta: ReferenceMeta, style: CitationStyle): stri
         tail ? `, ${tail}` : '',
         '.',
       ]
-      return `${parts.join('').replace(/\s+/g, ' ').replace(/,\s*\./g, '.').trim()}${doi ? ` DOI: ${doi}.` : ''}`
+      return `${parts.join('').replace(/\s+/g, ' ').replace(/,\s*\./g, '.').replace(/\.\s*\./g, '.').trim()}${doi ? ` DOI: ${doi}.` : ''}`
     }
     case 'apa-7': {
       const by = apaAuthors(authors)

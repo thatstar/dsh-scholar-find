@@ -74,6 +74,12 @@ describe('formatReference', () => {
     expect(formatReference({ title: 'T', year: 2020, pages: '357–362' }, 'apa-7')).toContain('357-362')
   })
 
+  it('does not double the terminal punctuation on a title-only entry', () => {
+    const entry = formatReference({ title: '10.9/missing' }, 'gb-t-7714-2015')
+    expect(entry).toBe('10.9/missing[J].')
+    expect(entry).not.toContain('. .')
+  })
+
   it('degrades gracefully on sparse metadata', () => {
     expect(formatReference({ title: 'Bare title' }, 'gb-t-7714-2015')).toContain('Bare title')
     const apa = formatReference({ title: 'Bare title' }, 'apa-7')
