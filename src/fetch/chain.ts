@@ -11,6 +11,7 @@
 
 import type { ScholarClient } from '../s2/client.js'
 import { getPaper, GRAPH, ScholarHttpError } from '../s2/client.js'
+import { TITLE_SIMILARITY_MIN, titleSimilarity } from '../verify.js'
 import { fetchWithRedirects, isSafeUrl } from './safety.js'
 import { timedFetch } from './transport.js'
 
@@ -419,30 +420,8 @@ export interface TitleResolution {
 const MIN_TITLE_LEN = 6
 const TITLE_SCORE_MIN = 40
 const TITLE_GAP_MIN = 3
-/** Minimum Jaccard similarity between the query title and a resolved title to
- * accept the match — Crossref's fuzzy title search can surface a different paper
- * that still clears TITLE_SCORE_MIN, so we also require the titles to look alike. */
-const TITLE_SIMILARITY_MIN = 0.5
 /** How many Crossref candidate rows to request for the gap/ambiguity check. */
 const CROSSREF_ROW_COUNT = 3
-/** Anything but alphanumerics/whitespace is a token boundary (title similarity). */
-const NON_TOKEN_RE = /[^a-z0-9\s]/g
-
-/** Normalized token set (lowercase, alphanumeric) for title similarity. */
-function titleTokens(s: string): Set<string> {
-  return new Set(s.toLowerCase().replace(NON_TOKEN_RE, ' ').split(/\s+/).filter(Boolean))
-}
-
-/** Jaccard similarity between two titles (0..1). Exact/close titles -> high. */
-function titleSimilarity(a: string, b: string): number {
-  const A = titleTokens(a)
-  const B = titleTokens(b)
-  if (!A.size || !B.size) return 0
-  let inter = 0
-  for (const t of A) if (B.has(t)) inter++
-  const union = A.size + B.size - inter
-  return union ? inter / union : 0
-}
 
 /** Confidence verdict from Crossref's top-match evidence. */
 interface CrossrefConfidence {

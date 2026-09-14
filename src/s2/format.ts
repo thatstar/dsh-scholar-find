@@ -20,7 +20,7 @@ interface PaperLike {
   citationStyles?: { bibtex?: string }
 }
 
-function doiOf(paper: PaperLike): string {
+export function doiOfPaper(paper: PaperLike): string {
   return paper.externalIds?.DOI ?? ''
 }
 
@@ -46,7 +46,7 @@ export function formatDetails(papers: readonly PaperLike[], maxPapers = 10): str
   for (const [i, p] of papers.slice(0, maxPapers).entries()) {
     const authors = (p.authors ?? []).slice(0, 5).map((a) => a.name ?? '').join(', ')
     const authorsFull = (p.authors ?? []).length > 5 ? `${authors} et al.` : authors
-    const doi = doiOf(p)
+    const doi = doiOfPaper(p)
     const tldr = p.tldr?.text ?? ''
     const abstract = (p.abstract ?? '').slice(0, 300)
     const summary = tldr || (abstract.length ? `${abstract}${(p.abstract ?? '').length > 300 ? '...' : ''}` : '')
@@ -62,7 +62,14 @@ export function formatDetails(papers: readonly PaperLike[], maxPapers = 10): str
 /** Combined header + summary table + top-N details. */
 export function formatResults(papers: readonly PaperLike[], queryDesc = ''): string {
   const header = queryDesc ? `## Search Results: ${queryDesc}\n\n**${papers.length} papers found.**\n` : `**${papers.length} papers found.**\n`
-  return `${header}\n${formatTable(papers)}\n\n---\n\n${formatDetails(papers)}`
+  // A list result is a POINTER, not a verified record: DOIs/paperIds copied out
+  // of an enumeration table have resolved to unrelated papers in practice. Say
+  // so once, here, so every list-producing tool carries the same caveat.
+  const hasDoi = papers.some((p) => doiOfPaper(p))
+  const caveat = hasDoi
+    ? '\n> Identifiers below are **unverified**: confirm a DOI/paperId with `scholar_get_paper` (pass `expectedTitle`) or `scholar_match_title` before writing it into a card or citation.\n'
+    : ''
+  return `${header}${caveat}\n${formatTable(papers)}\n\n---\n\n${formatDetails(papers)}`
 }
 
 /** Author table (name, affiliations, papers, citations, h-index). */
@@ -92,7 +99,9 @@ export function compactPapers(papers: readonly PaperLike[]): JsonValue[] {
     // Every element is a lossless string; empty/missing author names are dropped.
     authors: (p.authors ?? []).map((a) => a?.name ?? '').filter((n) => n !== ''),
     venue: p.venue ?? null,
-    doi: doiOf(p) || null,
+    doi: doiOfPaper(p) || null,
     tldr: p.tldr?.text ?? null,
+    // A list/search row is never a verified identity — see formatResults.
+    verification: 'unverified',
   }) as JsonValue)
 }

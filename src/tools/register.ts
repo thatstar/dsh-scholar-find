@@ -28,6 +28,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
+import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
 
 /**
  * Tool-level wall-clock caps. These bound the WHOLE tool run (including model-
@@ -361,10 +362,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_match_title',
-    description: `Resolve a paper title to its exact Semantic Scholar record (paperId, DOI, metadata). Use before fetching when only a title is known.`,
+    description: `Resolve a paper title to its exact Semantic Scholar record (paperId, DOI, metadata). Use before fetching when only a title is known. Returns a \`titleCheck\` verdict: when the best hit is a different work the tool reports \`matched:false\` instead of a confident wrong record.`,
     parameters: { title: { type: 'string', description: 'Exact paper title', required: true } },
     output: markdownOutput(
-      { matched: { type: 'boolean' }, paper: { type: 'json' } },
+      { matched: { type: 'boolean' }, titleCheck: { type: 'json' }, paper: { type: 'json' } },
       (value) => 'No match.',
     ),
     async execute(args, exec) {
@@ -372,7 +373,18 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const d = await s2.matchTitle(client, args.title)
       const paper = (d.data ?? [])[0]
       if (!paper) return { matched: false, markdown: `No Semantic Scholar match for "${args.title}".` } as any
-      return { matched: true, markdown: fmt.formatResults([paper], args.title), paper: fmt.compactPapers([paper])[0] } as any
+      const check = titleVerdict(args.title, paper.title)
+      // A fuzzy title search can surface a DIFFERENT paper. Handing that back as
+      // a confident match is how a wrong DOI gets written into a card.
+      if (!titleAccepted(check)) {
+        return {
+          matched: false,
+          titleCheck: check,
+          paper: fmt.compactPapers([paper])[0] ?? null,
+          markdown: `**No confident match for "${args.title}".**\n\nThe best Semantic Scholar hit is a different work (${describeTitleCheck(check)}):\n\n- returned: ${paper.title ?? 'untitled'}${fmt.doiOfPaper(paper) ? ` (DOI: ${fmt.doiOfPaper(paper)})` : ''}\n\nAsk the user for the DOI, or re-query with the exact published title — do not use this record.`,
+        } as any
+      }
+      return { matched: true, titleCheck: check, markdown: fmt.formatResults([paper], args.title), paper: fmt.compactPapers([paper])[0] } as any
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -380,19 +392,34 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_paper',
-    description: `Fetch one paper by ID. ID forms: DOI:10.xxxx/..., ARXIV:2106.15928, PMID:..., PMCID:..., CorpusId:....`,
+    description: `Fetch one paper by ID. ID forms: DOI:10.xxxx/..., ARXIV:2106.15928, PMID:..., PMCID:..., CorpusId:.... Pass \`expectedTitle\` whenever the ID came from a list/table result: the tool then compares the returned record's title with it and surfaces a \`titleCheck\` verdict (a mismatch means the identifier resolves to a DIFFERENT work — do not cite it).`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id with prefix, e.g. DOI:10.1038/s41586-020-2649-2', required: true },
       includeAbstract: { type: 'boolean', description: 'Include the abstract (larger response)' },
+      expectedTitle: { type: 'string', description: 'Title you expect this id to resolve to; enables the title_mismatch warning (recommended for ids taken from a list result)' },
     },
     output: markdownOutput(
-      { paperId: { type: 'string' }, paper: { type: 'json' } },
+      { paperId: { type: 'string' }, titleCheck: { type: 'json' }, verification: { type: 'string' }, paper: { type: 'json' } },
       (value) => `Paper ${value.paperId ?? 'unknown'}.`,
     ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
       const paper = await s2.getPaper(client, args.paperId, args.includeAbstract ? undefined : 'title,year,citationCount,authors,venue,externalIds,tldr,openAccessPdf')
-      return { paperId: args.paperId, markdown: fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120)), paper: fmt.compactPapers([paper])[0] ?? null }
+      const check = args.expectedTitle ? titleVerdict(args.expectedTitle, paper.title) : undefined
+      const checkJson = check
+        ? { verdict: check.verdict, similarity: check.similarity, expected: check.expected ?? null, actual: check.actual ?? null }
+        : undefined
+      const warning = check
+        ? check.verdict === 'mismatch'
+          ? `> ⚠️ **Title mismatch for \`${args.paperId}\`** — ${describeTitleCheck(check)}.\n> - expected: ${check.expected}\n> - returned: ${check.actual ?? '(no title)'}\n> Do **not** cite this identifier or write it into a card; re-resolve with \`scholar_match_title\` or ask the user for the correct DOI.\n\n`
+          : `> ${describeTitleCheck(check)}\n\n`
+        : ''
+      return {
+        paperId: args.paperId,
+        ...(check && checkJson ? { titleCheck: checkJson, verification: check.verdict } : { verification: 'unverified' }),
+        markdown: `${warning}${fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120))}`,
+        paper: fmt.compactPapers([paper])[0] ?? null,
+      }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,

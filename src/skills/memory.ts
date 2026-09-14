@@ -47,6 +47,16 @@ session workspace, so keep \`defaultOutputDir\` workspace-relative.
   create a new file according to the [Card template] below; if it exists, read
   the full content of that file before updating.
 
+- **Verify the identifier before writing it (mandatory)** — a DOI/paperId taken
+  from a search list or enumeration table is a pointer, not a verified record:
+  such ids have resolved to unrelated papers (a hard-sphere nucleation row
+  recorded as a colloidal-gel PRL). Before writing a card, confirm the id with
+  \`scholar_get_paper({ paperId, expectedTitle })\` or \`scholar_match_title\`,
+  and read the returned \`titleCheck\`. On \`verdict: "mismatch"\` do **not**
+  write that DOI: record the correction (the id and the work it actually
+  resolved to) and re-resolve the title or ask the user. Never card an
+  identifier whose title you have not compared.
+
 - **Update rules (core principle: append-only)** — Never overwrite existing
   content in the file; only append new lines at the end of the specified
   sections.

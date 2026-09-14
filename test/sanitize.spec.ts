@@ -63,6 +63,7 @@ describe('compactPapers', () => {
       venue: null,
       doi: null,
       tldr: null,
+      verification: 'unverified',
     }])
     expect(isLosslessJson(out)).toBe(true)
     expect(JSON.stringify(out)).not.toContain('undefined')
