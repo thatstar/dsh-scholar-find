@@ -43,12 +43,12 @@ scholar-* workflow skills.
   - Exceptions: unconfigured key — direct the user to Settings → Plugins → Plugin configuration.
   - Prefer when: a specific passage from one known paper is needed and the key is configured.
 - scholar_get_citations: papers citing a known paper, with intent labels.
-  - Limitations: S2 graph coverage; one hop per call.
-  - Exceptions: envelope errors; empty results are normal for very new papers.
+  - Limitations: S2 graph coverage is incomplete; one hop per call; the list is capped by maxResults.
+  - Exceptions: never treat the row count as a total — coverage (complete/truncated/partial/not_indexed/empty) says which; a DOI seed with no S2 rows falls back to the Sciverse relations index, labelled by source; envelope errors are separate.
   - Prefer when: who-cites-X or citation-context questions on S2-indexed papers.
 - scholar_get_references: papers a known paper cites (backward edges).
-  - Limitations: one hop; no intent labels.
-  - Exceptions: envelope errors.
+  - Limitations: one hop; no intent labels; capped by maxResults.
+  - Exceptions: 0 rows for a record whose referenceCount is > 0 is not_indexed, not "cites nothing"; a DOI seed falls back to Sciverse; report the coverage label in cards.
   - Prefer when: what-does-X-cite questions or building a related-work pool.
 - scholar_get_recommendations: similar-paper recommendations from seed papers.
   - Limitations: quality depends on seed specificity.

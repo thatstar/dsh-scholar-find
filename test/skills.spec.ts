@@ -104,6 +104,11 @@ describe('scholar-tools catalog (selection-bias invariants)', () => {
     expect(catalog.content).not.toContain('Parameters:')
   })
 
+  it('documents the citation/reference coverage verdicts', () => {
+    expect(catalog.content).toContain('not_indexed')
+    expect(catalog.content).toContain('coverage (complete/truncated/partial/not_indexed/empty)')
+  })
+
   it('carries no workflow recipes — those live in the per-workflow skills', () => {
     expect(catalog.content).not.toContain('## Workflow recipes')
     expect(catalog.content).not.toContain('## Pipeline')
@@ -192,6 +197,12 @@ describe('scholar-memory (DOI card library invariants)', () => {
   it('treats a card as complete only with populated citations and provenance-bound evidence', () => {
     expect(memory.content).toContain('A card is complete only when')
     expect(memory.content).toContain('at least one provenance-bound line')
+  })
+
+  it('requires the citation coverage label to be recorded verbatim', () => {
+    expect(memory.content).toContain('coverage.label')
+    expect(memory.content).toContain('not_indexed')
+    expect(memory.content).toContain('never write it as a')
   })
 
   it('is triggered by DOIs and report recall', () => {

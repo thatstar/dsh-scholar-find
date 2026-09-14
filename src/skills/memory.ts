@@ -34,9 +34,13 @@ session workspace, so keep \`defaultOutputDir\` workspace-relative.
 2. **Populate citations (mandatory)** — run \`scholar_get_references\` into
    \`## Citation Backtrack\` and \`scholar_get_citations\` into \`## Citation
    Forwardtrack\` (one entry per returned paper, deduplicated, DOI included
-   when available). This step is required, not optional. If a tool returns no
-   papers or errors, record \`- no citation data (S2: <code or message>)\`
-   instead of leaving the seed empty.
+   when available). This step is required, not optional. **Record the returned
+   \`coverage.label\` verbatim** next to the entries: a zero-row answer is
+   \`not_indexed\` (the graph has nothing for this record) rather than "cites
+   nothing", and a short list is \`partial\`/\`truncated\` — never write it as a
+   total. Only when the call genuinely errors, record
+   \`- no citation data (S2: <code or message>)\` instead of leaving the seed
+   empty.
 3. **Append evidence as you read** — bind every full-text excerpt with
    provenance (see the Evidence rule below).
 

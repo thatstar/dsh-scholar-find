@@ -341,6 +341,25 @@ async function paginate(client: ScholarClient, url: string, params: Record<strin
   return out.slice(0, maxResults)
 }
 
+/**
+ * Like {@link paginate}, but also reports whether the API had another page
+ * beyond what was returned — the free truncation signal (the references
+ * endpoint omits `next` when the list is complete).
+ */
+async function paginateWithMeta(client: ScholarClient, url: string, params: Record<string, string | undefined>, maxResults: number): Promise<{ items: any[]; hasMore: boolean }> {
+  const next = { ...params, limit: String(Math.min(maxResults, S2_PAGE_MAX)), offset: '0' }
+  const out: any[] = []
+  let cursor: string | undefined
+  while (out.length < maxResults) {
+    const r = await client.request('GET', url, next)
+    out.push(...(r.data ?? []))
+    cursor = r.next
+    if (!cursor) break
+    next.offset = cursor
+  }
+  return { items: out.slice(0, maxResults), hasMore: Boolean(cursor) && out.length >= maxResults }
+}
+
 async function paginateBulk(client: ScholarClient, url: string, params: Record<string, string | undefined>, maxResults: number): Promise<any[]> {
   const next = { ...params }
   const out: any[] = []
@@ -445,18 +464,32 @@ export async function getCitations(
   client: ScholarClient,
   paperId: PaperId,
   options: { maxResults?: number; publicationDate?: string; withIntents?: boolean } = {},
-): Promise<any[]> {
+): Promise<{ items: any[]; hasMore: boolean }> {
   const maxResults = options.maxResults ?? DEFAULT_CITATIONS
   const fields = options.withIntents
     ? 'title,year,citationCount,authors,venue,contextsWithIntent'
     : 'title,year,citationCount,authors,venue'
   const params: Record<string, string | undefined> = { fields, ...(options.publicationDate ? { publicationDateOrYear: options.publicationDate } : {}) }
-  return paginate(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/citations`, params, maxResults)
+  return paginateWithMeta(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/citations`, params, maxResults)
 }
 
 /** What a paper cites. */
-export async function getReferences(client: ScholarClient, paperId: PaperId, options: { maxResults?: number } = {}): Promise<any[]> {
-  return paginate(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: 'title,year,citationCount,authors,venue' }, options.maxResults ?? DEFAULT_CITATIONS)
+export async function getReferences(client: ScholarClient, paperId: PaperId, options: { maxResults?: number } = {}): Promise<{ items: any[]; hasMore: boolean }> {
+  return paginateWithMeta(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: 'title,year,citationCount,authors,venue' }, options.maxResults ?? DEFAULT_CITATIONS)
+}
+
+/**
+ * The record's own citation/reference counts. Used to tell a genuinely empty
+ * list from one the graph has not indexed — the API serves no total with the
+ * list endpoints, so this costs one extra paced request.
+ */
+export async function getPaperCounts(client: ScholarClient, paperId: PaperId): Promise<{ citationCount?: number; referenceCount?: number; title?: string }> {
+  const d = await client.request('GET', `${GRAPH}/paper/${encodeURIComponent(paperId)}`, { fields: 'title,citationCount,referenceCount' })
+  return {
+    ...(typeof d?.citationCount === 'number' ? { citationCount: d.citationCount } : {}),
+    ...(typeof d?.referenceCount === 'number' ? { referenceCount: d.referenceCount } : {}),
+    ...(typeof d?.title === 'string' ? { title: d.title } : {}),
+  }
 }
 
 /** Single-seed recommendations. */

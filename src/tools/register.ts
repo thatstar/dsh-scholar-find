@@ -28,6 +28,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
+import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
 
 /**
@@ -70,6 +71,9 @@ const SCIVERSE_TOTAL_HITS_CAP = 10000
  * endpoints allow ~30 req/min; per-year trend scans and per-claim evidence
  * packs are multi-call loops, so they pace themselves). */
 const SCIVERSE_WORKFLOW_PACE_MS = 700
+/** sciverse_list_paper_relations page size used by the citation/reference
+ * second-source fallback (one page is a hint that the index HAS the list). */
+const SCIVERSE_RELATIONS_FALLBACK_PAGE = 20
 /** sciverse_trend_scan: year-span cap (each year costs 1 call; the sciverse
  * mode adds one topic-discovery call up front). */
 const TREND_MAX_YEARS = 10
@@ -485,28 +489,41 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_citations',
-    description: `List the papers citing a known paper, with optional intent labels (methodology/background/result) and context snippets.`,
+    description: `List the papers citing a known paper, with optional intent labels (methodology/background/result) and context snippets. Reports a COVERAGE verdict: S2's graph is often incomplete, so "N citing papers" may be a truncated or partial list rather than a total — the result carries \`coverage\` (complete/truncated/partial/not_indexed/empty) and, when S2 serves none for a DOI, falls back to the Sciverse relations index. Set \`checkCoverage:false\` to skip the extra count lookup.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id (e.g. DOI:10.48550/arXiv.1706.03762)', required: true },
       maxResults: { type: 'integer', description: 'Result cap (default 100)' },
       publicationDate: { type: 'string', description: 'Filter citing papers by date YYYY-MM-DD or range' },
       withIntents: { type: 'boolean', description: 'Include contextsWithIntent (larger response)' },
+      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own citation count (one extra paced request, default true) — distinguishes an empty list from an unindexed one' },
     },
     output: markdownOutput(
-      { total: { type: 'integer' }, citations: { type: 'array', items: { type: 'json' } } },
+      { total: { type: 'integer' }, coverage: { type: 'json' }, fallback: { type: 'json' }, citations: { type: 'array', items: { type: 'json' } } },
       (value) => `${value.total ?? 0} citing papers.`,
     ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const citations = await s2.getCitations(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS, publicationDate: args.publicationDate, withIntents: args.withIntents })
-      const lines = citations.slice(0, 20).map((c, i) => {
+      const maxResults = args.maxResults ?? s2.DEFAULT_CITATIONS
+      const page = await s2.getCitations(client, args.paperId, { maxResults, publicationDate: args.publicationDate, withIntents: args.withIntents })
+      const counts = args.checkCoverage === false ? undefined : await bestEffortSeedCounts(client, args.paperId)
+      const coverage = computeCoverage({ returned: page.items.length, requestedCap: maxResults, hasMore: page.hasMore, ...(counts?.citationCount !== undefined ? { seedCount: counts.citationCount } : {}), kind: 'citing papers' })
+      const fallback = await relationsFallback(env, args.paperId, 'CITATIONS', coverage, exec.signal)
+      const citations = page.items
+      const lines = citations.slice(0, 20).map((c: any, i: number) => {
         const p = c.citingPaper ?? {}
         const intents = args.withIntents ? [...new Set((c.contextsWithIntent ?? []).flatMap((e: any) => e.intents ?? []))].join(', ') : ''
         return `### ${i + 1}. ${p.title ?? 'Untitled'} (${p.year ?? '?'}) — cites: ${p.citationCount ?? 0}${intents ? `\n**Intents:** ${intents}` : ''}`
       })
+      const body = citations.length
+        ? `${lines.join('\n')}${citations.length > 20 ? `\n\n…and ${citations.length - 20} more` : ''}`
+        : coverage.status === 'not_indexed'
+          ? 'The S2 graph serves no citing papers for this record.'
+          : 'No citing papers found.'
       return {
         total: citations.length,
-        markdown: `**${citations.length} citing papers.**\n\n${lines.join('\n')}${citations.length > 20 ? `\n\n…and ${citations.length - 20} more` : ''}`,
+        coverage: coverageJson(coverage),
+        ...(fallback ? { fallback: fallback.json } : {}),
+        markdown: `**${coverage.label}.**\n\n${body}${fallback ? `\n\n${fallback.markdown}` : ''}`,
         citations,
       }
     },
@@ -516,18 +533,31 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_references',
-    description: `List the papers a known paper cites (backward citations).`,
-    parameters: { paperId: { type: 'string', description: 'Paper id', required: true }, maxResults: { type: 'integer', description: 'Result cap (default 100)' } },
+    description: `List the papers a known paper cites (backward citations). Reports a COVERAGE verdict: a zero-row answer for a record that HAS a reference list means "not indexed by S2", not "cites nothing" — the result carries \`coverage\` (complete/truncated/partial/not_indexed/empty) and, when S2 serves none for a DOI, falls back to the Sciverse relations index. Set \`checkCoverage:false\` to skip the extra count lookup.`,
+    parameters: {
+      paperId: { type: 'string', description: 'Paper id', required: true },
+      maxResults: { type: 'integer', description: 'Result cap (default 100)' },
+      checkCoverage: { type: 'boolean', description: 'Compare the returned list against the record\'s own reference count (one extra paced request, default true) — distinguishes an empty list from an unindexed one' },
+    },
     output: markdownOutput(
-      { total: { type: 'integer' }, references: { type: 'array', items: { type: 'json' } } },
+      { total: { type: 'integer' }, coverage: { type: 'json' }, fallback: { type: 'json' }, references: { type: 'array', items: { type: 'json' } } },
       (value) => `${value.total ?? 0} references.`,
     ),
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const refs = await s2.getReferences(client, args.paperId, { maxResults: args.maxResults ?? s2.DEFAULT_CITATIONS })
+      const maxResults = args.maxResults ?? s2.DEFAULT_CITATIONS
+      const page = await s2.getReferences(client, args.paperId, { maxResults })
+      const counts = args.checkCoverage === false ? undefined : await bestEffortSeedCounts(client, args.paperId)
+      const coverage = computeCoverage({ returned: page.items.length, requestedCap: maxResults, hasMore: page.hasMore, ...(counts?.referenceCount !== undefined ? { seedCount: counts.referenceCount } : {}), kind: 'references' })
+      const fallback = await relationsFallback(env, args.paperId, 'REFERENCES', coverage, exec.signal)
+      const refs = page.items
       return {
         total: refs.length,
-        markdown: fmt.formatResults(refs.map((r) => r.citedPaper ?? r), 'References'),
+        coverage: coverageJson(coverage),
+        ...(fallback ? { fallback: fallback.json } : {}),
+        markdown: refs.length
+          ? `**${coverage.label}**\n\n${fmt.formatResults(refs.map((r: any) => r.citedPaper ?? r), 'References')}${fallback ? `\n\n${fallback.markdown}` : ''}`
+          : `**${coverage.label}**${fallback ? `\n\n${fallback.markdown}` : ''}`,
         references: refs,
       }
     },
@@ -912,6 +942,72 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   return () => {
     for (const dispose of disposers) dispose()
+  }
+}
+
+/**
+ * The record's own citation/reference counts, best-effort: cover the list
+ * endpoints' blind spot without letting a count lookup fail the tool call.
+ */
+async function bestEffortSeedCounts(client: s2.ScholarClient, paperId: string): Promise<{ citationCount?: number; referenceCount?: number } | undefined> {
+  try {
+    return await s2.getPaperCounts(client, paperId)
+  } catch {
+    return undefined
+  }
+}
+
+/** Lossless JSON projection of a coverage verdict. */
+function coverageJson(c: Coverage) {
+  return {
+    status: c.status,
+    returned: c.returned,
+    requested_cap: c.requestedCap,
+    has_more: c.hasMore,
+    seed_count: c.seedCount ?? null,
+    complete: c.complete,
+    label: c.label,
+  }
+}
+
+/** DOI recoverable from a paper id, for the Sciverse relations fallback. */
+function doiFromPaperId(paperId: string): string | undefined {
+  const s = paperId.trim()
+  if (/^doi:/i.test(s)) return s.slice(4).trim() || undefined
+  return /^10\.\d{4,9}\/\S+$/.test(s) ? s : undefined
+}
+
+/**
+ * Second-source fallback for a citation/reference list the S2 graph does not
+ * serve (status `not_indexed`/`empty`). Only attempted when a Sciverse token is
+ * configured AND the id is a DOI (the Open Platform keys papers as
+ * `paper:<doi>`); entries are always labelled with their source so the two
+ * indexes are never silently mixed.
+ */
+async function relationsFallback(
+  env: ScholarToolEnv,
+  paperId: string,
+  relation: 'CITATIONS' | 'REFERENCES',
+  coverage: Coverage,
+  signal?: AbortSignal,
+) {
+  if (coverage.status !== 'not_indexed' && coverage.status !== 'empty') return undefined
+  const doi = doiFromPaperId(paperId)
+  if (!doi) return undefined
+  const key = await env.resolveSciverseKey()
+  if (!key) return undefined
+  try {
+    const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+    const r = (await sc.listPaperRelations({ unique_id: `paper:${doi}`, relation, page: 1, page_size: SCIVERSE_RELATIONS_FALLBACK_PAGE }, signal)) as any
+    const raw = Array.isArray(r?.items) ? r.items : Array.isArray(r?.results) ? r.results : []
+    const items = raw.map((it: any) => ({ source: 'sciverse', id: typeof it?.id === 'string' ? it.id : null, id_type: typeof it?.id_type === 'string' ? it.id_type : null, title: typeof it?.title === 'string' ? it.title : null }))
+    if (!items.length) return undefined
+    const total = typeof r?.total_count === 'number' ? r.total_count : items.length
+    const md = `> **Sciverse fallback** (S2 served none): \`paper:${doi}\` has ${total} ${relation === 'CITATIONS' ? 'citing papers' : 'references'} in the Sciverse index — ${items.length} shown here (source: sciverse, not S2).`
+    return { json: { source: 'sciverse', unique_id: `paper:${doi}`, relation, total, items }, markdown: md }
+  } catch {
+    // The fallback is a bonus: never fail the S2 call because it errored.
+    return undefined
   }
 }
 

@@ -119,6 +119,82 @@ describe('paper_fetch_* — expected title wiring', () => {
   })
 })
 
+describe('citation/reference coverage + second source', () => {
+  const CRED = { resolve: async () => ({ value: 'sciverse-token' }) }
+
+  it('reports a reference list the graph does not serve as not_indexed (not empty)', async () => {
+    stubFetch((url) => {
+      if (url.includes('/references')) return jsonResponse({ offset: 0, data: [] })
+      if (decodeURIComponent(url).includes('fields=title,citationCount,referenceCount')) return jsonResponse({ title: 'Big paper', citationCount: 244, referenceCount: 89 })
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'scholar_get_references', { paperId: 'DOI:10.1038/s41586-020-2649-2' })
+    expect(out.coverage.status).toBe('not_indexed')
+    expect(out.coverage.seed_count).toBe(89)
+    expect(out.markdown).toContain('NOT indexed')
+    expect(out.total).toBe(0)
+  })
+
+  it('falls back to the Sciverse relations index when S2 serves nothing', async () => {
+    stubFetch((url, init) => {
+      if (url.includes('api.sciverse.space/meta-paper-relations')) {
+        expect(String(init?.body)).toContain('"unique_id":"paper:10.1038/s41586-020-2649-2"')
+        expect(String(init?.body)).toContain('REFERENCES')
+        return jsonResponse({ total_count: 89, items: [{ id: '10.1/a', id_type: 'doi', title: 'A cited work' }] })
+      }
+      if (url.includes('/references')) return jsonResponse({ offset: 0, data: [] })
+      if (decodeURIComponent(url).includes('fields=title,citationCount,referenceCount')) return jsonResponse({ title: 'Big paper', citationCount: 244, referenceCount: 89 })
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'scholar_get_references', { paperId: 'DOI:10.1038/s41586-020-2649-2' })
+    expect(out.fallback).toMatchObject({ source: 'sciverse', relation: 'REFERENCES', total: 89 })
+    expect(out.fallback.items[0]).toMatchObject({ source: 'sciverse', title: 'A cited work' })
+    expect(out.markdown).toContain('Sciverse fallback')
+  })
+
+  it('does not call the fallback without a Sciverse token', async () => {
+    let sciverseCalls = 0
+    stubFetch((url) => {
+      if (url.includes('api.sciverse.space')) { sciverseCalls++; return jsonResponse({}) }
+      if (url.includes('/references')) return jsonResponse({ offset: 0, data: [] })
+      if (decodeURIComponent(url).includes('fields=title,citationCount,referenceCount')) return jsonResponse({ title: 'Big paper', citationCount: 244, referenceCount: 89 })
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_get_references', { paperId: 'DOI:10.1038/s41586-020-2649-2' })
+    expect(out.coverage.status).toBe('not_indexed')
+    expect(out.fallback).toBeUndefined()
+    expect(sciverseCalls).toBe(0)
+  })
+
+  it('labels a short list as partial rather than a total', async () => {
+    stubFetch((url) => {
+      if (url.includes('/citations')) return jsonResponse({ offset: 0, data: [{ citingPaper: { title: 'C1' } }, { citingPaper: { title: 'C2' } }] })
+      if (decodeURIComponent(url).includes('fields=title,citationCount,referenceCount')) return jsonResponse({ title: 'P', citationCount: 244, referenceCount: 89 })
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'scholar_get_citations', { paperId: 'DOI:10.1/x' })
+    expect(out.coverage.status).toBe('partial')
+    expect(out.markdown).toContain('2 of 244')
+  })
+
+  it('skips the extra count request with checkCoverage:false', async () => {
+    let countCalls = 0
+    stubFetch((url) => {
+      if (decodeURIComponent(url).includes('fields=title,citationCount,referenceCount')) { countCalls++; return jsonResponse({ citationCount: 1, referenceCount: 1 }) }
+      if (url.includes('/citations')) return jsonResponse({ offset: 0, data: [{ citingPaper: { title: 'C1' } }] })
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_get_citations', { paperId: 'DOI:10.1/x', checkCoverage: false })
+    expect(countCalls).toBe(0)
+    expect(out.coverage.seed_count).toBeNull()
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))
