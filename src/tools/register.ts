@@ -66,6 +66,20 @@ const MINERU_MAX_TIMEOUT_SEC = 1800
 /** Wall-clock cap per Sciverse API call (the direct REST client aborts the
  * socket on expiry). Generous: quality semantic search takes seconds. */
 const SCIVERSE_CLIENT_TIMEOUT_MS = 60_000
+/** Per-attempt cap on the full-text read path. Deliberately below the generic
+ * cap: the client retries transient failures (1+2 attempts), and the tool's own
+ * wall-clock budget is 120 s — a 60 s per-attempt cap would let a hanging
+ * endpoint kill the tool before it could report an envelope. */
+const SCIVERSE_CONTENT_TIMEOUT_MS = 30_000
+/** Total budget for one sciverse_read_content call across ALL doc_ids it walks.
+ * Bounds the walk (each doc_id gets at most 2 attempts) so the tool always gets
+ * to return its envelope instead of being killed by the tool timeout. */
+const SCIVERSE_CONTENT_BUDGET_MS = 100_000
+/** Max doc_ids one read_content call will walk (primary + alternates). */
+const SCIVERSE_CONTENT_MAX_DOC_IDS = 3
+/** The citation/reference second-source fallback is a bonus lookup: keep it
+ * short so it can never dominate an S2 tool call. */
+const SCIVERSE_FALLBACK_TIMEOUT_MS = 20_000
 /** The Sciverse /meta-search backend caps reported hit counts at 10000 for any
  * free-text/BM25 query (OpenSearch track_total_hits-style). Structured field
  * filters report exact counts. We annotate the tool output when this ceiling is
@@ -1098,7 +1112,7 @@ async function relationsFallback(
   const key = await env.resolveSciverseKey()
   if (!key) return undefined
   try {
-    const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+    const sc = createSciverseClient(key, SCIVERSE_FALLBACK_TIMEOUT_MS, { maxAttempts: 2, backoffMs: [600] })
     const r = (await sc.listPaperRelations({ unique_id: `paper:${doi}`, relation, page: 1, page_size: SCIVERSE_RELATIONS_FALLBACK_PAGE }, signal)) as any
     const raw = Array.isArray(r?.items) ? r.items : Array.isArray(r?.results) ? r.results : []
     const items = raw.map((it: any) => ({ source: 'sciverse', id: typeof it?.id === 'string' ? it.id : null, id_type: typeof it?.id_type === 'string' ? it.id_type : null, title: typeof it?.title === 'string' ? it.title : null }))
@@ -1477,16 +1491,25 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, doc_id: args.doc_id, doc_id_used: null, attempts: [], bytes_returned: 0, next_offset: 0, text: '', images: [], markdown: sciverseNotConfigured() } as any
-      const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-      // Walk the primary doc_id then every alternate, so one missing artifact
-      // does not end the read when the same paper has another.
+      // Walk the primary doc_id then the alternates, so one missing artifact
+      // does not end the read when the same paper has another. The walk is
+      // bounded by a total deadline (and a doc_id cap) so the tool always
+      // returns its envelope rather than being killed by its own timeout.
       const ids = [args.doc_id, ...(Array.isArray(args.alt_doc_ids) ? args.alt_doc_ids : [])]
         .map((d) => (typeof d === 'string' ? d.trim() : ''))
         .filter(Boolean)
         .filter((d, i, all) => all.indexOf(d) === i)
+        .slice(0, SCIVERSE_CONTENT_MAX_DOC_IDS)
       const attempts: Array<{ doc_id: string; code: string; retryable: boolean }> = []
+      const deadline = Date.now() + SCIVERSE_CONTENT_BUDGET_MS
       let last: SciverseErrorEnvelope | undefined
       for (const docId of ids) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) {
+          attempts.push({ doc_id: docId, code: 'budget_exhausted', retryable: true })
+          break
+        }
+        const sc = createSciverseClient(key, Math.min(SCIVERSE_CONTENT_TIMEOUT_MS, remaining), { maxAttempts: 2, backoffMs: [600] })
         try {
           const r = (await sc.readContent({ doc_id: docId, offset: args.offset, limit: args.limit }, exec.signal)) as any
           const text = String(r?.text ?? '')

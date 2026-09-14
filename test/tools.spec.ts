@@ -216,6 +216,19 @@ describe('sciverse_read_content — doc_id fallback', () => {
     expect(out.markdown).toContain('alternate doc_id')
   })
 
+  it('caps the doc_id walk so the call always returns an envelope', async () => {
+    let calls = 0
+    stubFetch((url) => {
+      if (url.includes('/content?')) { calls++; return jsonResponse({ error: { code: 'CONTENT_NOT_FOUND', message: 'nope' } }, 404) }
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 't' }) } })
+    const out = await runTool(h, 'sciverse_read_content', { doc_id: 'a', alt_doc_ids: ['b', 'c', 'd', 'e'] })
+    expect(out.ok).toBe(false)
+    expect(out.attempts).toHaveLength(3) // primary + 2 alternates at most
+    expect(calls).toBe(3)
+  })
+
   it('returns the typed envelope (not a bare error) when every doc_id fails', async () => {
     stubFetch((url) => {
       if (url.includes('/content?')) return jsonResponse({ error: { code: 'CONTENT_NOT_FOUND', message: 'nope' } }, 404)

@@ -3,13 +3,23 @@
 ## Mission
 
 Build a **scholar plugin** for DSH that offers **tools to the LLM** — not a
-predefined work loop. The plugin has four tool families plus companion
+predefined work loop. The plugin has five tool families plus companion
 instructions:
 
 1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
    relevance / snippets), paper lookup, citations, references, recommendations,
    authors, BibTeX export, and `scholar_get_paper_snippets` (~500-word full-text
    content via the Ai2 Asta MCP server, not exposed by the public S2 API).
+   Identity is verified, not assumed: `scholar_get_paper` takes an
+   `expectedTitle` and returns a `titleCheck` verdict (`match`/`near`/
+   `mismatch`/`unknown`), `scholar_match_title` refuses a confident wrong
+   record, list rows carry `verification: 'unverified'`, and every search hit
+   carries venue / fieldsOfStudy / publicationTypes / isOpenAccess so discovery
+   can be triaged (`offTopic` annotation for narrow queries, `strictTopic` to
+   drop) without opening each record. Citation/reference lists carry a
+   `coverage` verdict (`complete`/`truncated`/`partial`/`not_indexed`/`empty`)
+   instead of presenting an index gap as a total, and fall back to the Sciverse
+   relations index when S2 serves nothing for a DOI.
 2. **`paper_fetch_*`** — PDF acquisition: DOI/title → best OA PDF via the
    fallback chain (Unpaywall → Semantic Scholar → arXiv → Europe PMC/PMC →
    bioRxiv/medRxiv). We rely strictly on the OA sources' own return values: a
@@ -46,11 +56,17 @@ instructions:
    `admitEncodedImages`) for vision models — text-only routes degrade to URL
    placeholders. No API key; fetched through the proxy (arXiv is international).
 
-5. **Companion instructions** (variant C, split) — a slim resident prompt
+5. **`scholar_format_*`** — reference formatting: `scholar_format_references`
+   turns resolved metadata (or explicit items) into entries in ONE declared
+   citation style — GB/T 7714-2015, APA 7, IEEE, Nature, BibTeX — and returns a
+   footnote-ready `[^n]:` block, so citation format is decided by the plugin
+   once instead of re-derived per report. Pure formatters live in `src/cite.ts`.
+
+6. **Companion instructions** (variant C, split) — a slim resident prompt
    section (one line per tool + cross-tool Shared behavior + the skill routing
    map) plus on-demand skills registered as runtime contributions via
    `ctx.skills.register`: the `scholar-tools` per-tool behavioral catalog
-   (Limitations / Exceptions / Prefer-when for all 27 tools — no parameter
+   (Limitations / Exceptions / Prefer-when for all 28 tools — no parameter
    rosters; tool schemas are the parameter source), one skill per workflow
    (`scholar-literature-review`, `scholar-scientific-rag`,
    `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
@@ -63,7 +79,12 @@ instructions:
    workflows (literature-review, scientific-rag, systematic-screen,
    evidence-pack) hook a "persist investigated DOIs as cards" line into their
    `## Behavior`; trend-scan is deliberately excluded (it lists top-cited
-   papers without examining them). `skills` is deliberately NOT in `inject`
+   papers without examining them). The eighth skill, `scholar-citation-style`,
+   is the citation/bibliography contract (first-mention-only `[^n]` markers,
+   blank-line-separated definitions in first-reference order, no markers in
+   summary tables, per-report style declaration, entry templates and
+   Chinese-report punctuation) — its rules mirror the DSH renderer's actual
+   behaviour. `skills` is deliberately NOT in `inject`
    (a profile without the skill service degrades to the resident floor).
 
 The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
@@ -152,8 +173,9 @@ deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 ## Code policy
 
 Implementation is **complete** and committed:
-The repository root is the pure-TypeScript DSH plugin (**27 tools**: `scholar_search_*`
-incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `paper_fetch_*`,
+The repository root is the pure-TypeScript DSH plugin (**28 tools**: `scholar_search_*`
+incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `scholar_format_references`,
+`paper_fetch_*`,
 `arxiv_*` (`arxiv_get_fulltext` — official arXiv HTML full text as Markdown or
 article-scoped HTML, parse5-based), and
 `sciverse_*` via the Sciverse Open Platform — including the two workflow tools
@@ -161,11 +183,20 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **241 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+settings section, companion instructions, client-half settings card. **356 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
-no PDF. No Sci-Hub / publisher-guess / institutional fallback.
+no PDF. No Sci-Hub / publisher-guess / institutional fallback. The fetch chain
+applies an identity gate (`title_mismatch` / `source_title_conflict`, both
+non-retryable) so a plausible-looking PDF for a different work is refused rather
+than returned, and a web-search-only hit is reported `verified: false`.
+
+Sciverse failures are typed envelopes, not thrown errors: the client parses the
+nested `{error:{code}}` body the gateway sends, retries 429/5xx/timeout
+(1+2 attempts with backoff), and `sciverse_read_content` walks `alt_doc_ids`
+(reported by `doc_id_index` on semantic hits) so one missing artifact does not
+end a read.
 
 The three API keys (`s2ApiKeyRef`, `astaApiKeyRef`, `sciverseApiKeyRef`) use the
 **native DSH credentials-domain pattern**: the settings section carries only the

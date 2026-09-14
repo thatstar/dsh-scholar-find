@@ -15,6 +15,15 @@ open-access PDFs, and convert PDFs to Markdown — all from the chat.
   figures (`sciverse_*`).
 - **arXiv HTML** — official arXiv HTML full text by arXiv id, rendered as
   Markdown (or article-scoped raw HTML) (`arxiv_get_fulltext`).
+- **References** — format a reference list in one declared citation style
+  (GB/T 7714-2015, APA 7, IEEE, Nature, BibTeX) and get a footnote-ready
+  definition block (`scholar_format_references`), plus the on-demand
+  `scholar-citation-style` contract and the `scholar-memory` DOI card library.
+- **Honest by default** — identifiers taken from a list are verified against
+  the title you expect before they can be carded or cited, a PDF whose record
+  is a different work is refused rather than downloaded, and citation lists
+  carry a coverage verdict (`complete`/`truncated`/`partial`/`not_indexed`)
+  instead of presenting an index gap as a total.
 
 ## Installation
 
@@ -29,7 +38,10 @@ Restart the deployment afterwards.
 
 - Name a **topic** — the assistant searches, then fetches what it finds.
 - Give **DOIs** — they download straight away. Prefer DOIs over titles:
-  a title can match the wrong paper.
+  a title can match the wrong paper (and if it does, the fetch refuses and
+  says so instead of handing you the wrong PDF).
+- Ask for a **reference list** — it comes back in the style you name, with
+  `[^n]` footnote definitions ready to paste.
 - Set it up in **Settings → Plugins → Plugin configuration**: your email
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
