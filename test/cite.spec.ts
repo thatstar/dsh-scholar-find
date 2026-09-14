@@ -68,6 +68,12 @@ describe('formatReference', () => {
     expect(generated).toContain('doi = {10.1103/PhysRev.47.777}')
   })
 
+  it('normalizes the spaced page range S2 returns', () => {
+    expect(formatReference({ title: 'T', venue: 'Nature', year: 2020, volume: '585', pages: '357 - 362' }, 'gb-t-7714-2015')).toContain('585: 357-362')
+    expect(formatReference({ title: 'T', year: 2020, pages: '357 - 362' }, 'ieee')).toContain('pp. 357-362')
+    expect(formatReference({ title: 'T', year: 2020, pages: '357–362' }, 'apa-7')).toContain('357-362')
+  })
+
   it('degrades gracefully on sparse metadata', () => {
     expect(formatReference({ title: 'Bare title' }, 'gb-t-7714-2015')).toContain('Bare title')
     const apa = formatReference({ title: 'Bare title' }, 'apa-7')

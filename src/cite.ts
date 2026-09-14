@@ -70,6 +70,11 @@ function sentence(s: string): string {
   return /[.?!]$/.test(t) ? t : `${t}.`
 }
 
+/** Page range normalized: S2 reports `357 - 362`, entries want `357-362`. */
+function pagesOf(meta: ReferenceMeta): string {
+  return clean(meta.pages).replace(/\s*[–—]\s*/g, '-').replace(/\s*-\s*/g, '-')
+}
+
 function yearOf(meta: ReferenceMeta): string {
   return clean(meta.year === undefined || meta.year === null ? '' : String(meta.year))
 }
@@ -150,7 +155,7 @@ function bibtexEntry(meta: ReferenceMeta): string {
   if (yearOf(meta)) fields.push(['year', `{${yearOf(meta)}}`])
   if (meta.volume) fields.push(['volume', `{${clean(meta.volume)}}`])
   if (meta.issue) fields.push(['number', `{${clean(meta.issue)}}`])
-  if (meta.pages) fields.push(['pages', `{${clean(meta.pages)}}`])
+  if (meta.pages) fields.push(['pages', `{${pagesOf(meta)}}`])
   if (meta.doi) fields.push(['doi', `{${clean(meta.doi)}}`])
   const kind = meta.type === 'book' ? 'book' : meta.type === 'conference' ? 'inproceedings' : 'article'
   return `@${kind}{${bibtexKey(meta)},\n${fields.map(([k, v]) => `  ${k} = ${v}`).join(',\n')}${fields.length ? ',' : ''}\n}`
@@ -170,7 +175,7 @@ export function formatReference(meta: ReferenceMeta, style: CitationStyle): stri
       const marker = GB_TYPE_MARKER[meta.type ?? 'journal']
       const by = gbAuthors(authors)
       const locator = [meta.volume ? clean(meta.volume) : '', meta.issue ? `(${clean(meta.issue)})` : ''].join('')
-      const tail = [locator, clean(meta.pages)].filter(Boolean).join(': ')
+      const tail = [locator, pagesOf(meta)].filter(Boolean).join(': ')
       const parts = [
         by ? `${trimTrailingPeriod(by)}. ` : '',
         `${trimTrailingPeriod(title)}[${marker}]. `,
@@ -184,7 +189,7 @@ export function formatReference(meta: ReferenceMeta, style: CitationStyle): stri
     case 'apa-7': {
       const by = apaAuthors(authors)
       const volumeIssue = meta.volume ? `${clean(meta.volume)}${meta.issue ? `(${clean(meta.issue)})` : ''}` : ''
-      const tail = [venue, volumeIssue, clean(meta.pages)].filter(Boolean).join(', ')
+      const tail = [venue, volumeIssue, pagesOf(meta)].filter(Boolean).join(', ')
       return `${by ? `${by} ` : ''}(${year || 'n.d.'}). ${sentence(title)} ${tail ? `${trimTrailingPeriod(tail)}. ` : ''}${link}`
         .replace(/\s+/g, ' ')
         .replace(/\.\s*\./g, '.')
@@ -198,7 +203,7 @@ export function formatReference(meta: ReferenceMeta, style: CitationStyle): stri
         venue ? `${venue}` : '',
         meta.volume ? `, vol. ${clean(meta.volume)}` : '',
         meta.issue ? `, no. ${clean(meta.issue)}` : '',
-        meta.pages ? `, pp. ${clean(meta.pages)}` : '',
+        meta.pages ? `, pp. ${pagesOf(meta)}` : '',
         year ? `, ${year}` : '',
         '.',
         doi ? ` doi: ${doi}.` : '',
@@ -207,7 +212,7 @@ export function formatReference(meta: ReferenceMeta, style: CitationStyle): stri
     }
     case 'nature': {
       const by = natureAuthors(authors)
-      const tail = [venue, meta.volume ? clean(meta.volume) : '', meta.pages ? clean(meta.pages) : ''].filter(Boolean).join(' ')
+      const tail = [venue, meta.volume ? clean(meta.volume) : '', pagesOf(meta)].filter(Boolean).join(' ')
       return `${by ? `${by} ` : ''}${sentence(title)} ${tail ? `${tail} ` : ''}(${year || 'n.d.'}).${doi ? ` https://doi.org/${doi}` : ''}`
         .replace(/\s+/g, ' ')
         .trim()
