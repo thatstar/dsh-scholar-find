@@ -32,6 +32,7 @@ import { sanitizeForOutput } from '../util/sanitize.js'
 import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
 import { cardIdentifier, cardPath } from '../cards.js'
+import { CITATION_STYLES, footnoteBlock, formatReferences, referenceMetaFromS2Paper, type CitationStyle, type ReferenceMeta } from '../cite.js'
 
 /**
  * Tool-level wall-clock caps. These bound the WHOLE tool run (including model-
@@ -76,6 +77,10 @@ const SCIVERSE_WORKFLOW_PACE_MS = 700
 /** sciverse_list_paper_relations page size used by the citation/reference
  * second-source fallback (one page is a hint that the index HAS the list). */
 const SCIVERSE_RELATIONS_FALLBACK_PAGE = 20
+/** scholar_format_references: ids per call (S2 batch lookup) and the fields it needs. */
+const REFS_MAX_IDS = 50
+/** S2 fields for a formatted entry (journal carries volume/pages). */
+const REFS_FIELDS = 'title,year,authors,venue,journal,externalIds,publicationTypes,publicationDate'
 /** sciverse_trend_scan: year-span cap (each year costs 1 call; the sciverse
  * mode adds one topic-discovery call up front). */
 const TREND_MAX_YEARS = 10
@@ -670,6 +675,71 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
       const papers = await s2.batchPapers(client, args.ids.slice(0, 500), 'title,citationStyles')
       const bibtex = fmt.exportBibtex(papers)
       return { count: papers.length, bibtex }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  // -------------------------------------------------------------------------
+  // scholar_format_* — reference formatting (citation contract)
+  // -------------------------------------------------------------------------
+
+  register(defineTool({
+    name: 'scholar_format_references',
+    description: `Format a reference list in ONE declared citation style, so formatting is decided by the plugin instead of re-derived per report. Provide \`ids\` (paperIds/DOIs, resolved through Semantic Scholar) and/or \`items\` (explicit metadata or BibTeX). Returns the numbered \`entries\` plus \`footnote_block\` — ready \`[^n]: entry\` definitions separated by blank lines, numbered by first-reference order — per the \`scholar-citation-style\` contract.`,
+    parameters: {
+      ids: { type: 'array', items: { type: 'string', description: 'paperId or DOI:…' }, description: `Papers to format (max ${REFS_MAX_IDS}); metadata is resolved from Semantic Scholar` },
+      items: { type: 'array', items: { type: 'json' }, description: 'Explicit entries: { authors: string[], title, venue, year, volume, issue, pages, doi, url, type, bibtex }' },
+      style: { type: 'string', enum: [...CITATION_STYLES], description: 'Target citation style (gb-t-7714-2015 = GB/T 7714-2015 for Chinese reports; bibtex passes through supplied bibtex)' },
+      start_index: { type: 'integer', description: 'Footnote number of the first entry (default 1); entries are numbered consecutively from it in first-reference order' },
+    },
+    output: markdownOutput(
+      { count: { type: 'integer' }, style: { type: 'string' }, entries: { type: 'array', items: { type: 'json' } }, footnote_block: { type: 'string' }, warnings: { type: 'array', items: { type: 'string' } } },
+      (value) => `${value.count ?? 0} references (${value.style ?? ''}).`,
+    ),
+    async execute(args, exec) {
+      const items = Array.isArray(args.items) ? (args.items as ReferenceMeta[]) : []
+      const ids = (Array.isArray(args.ids) ? args.ids : []).map((i: unknown) => String(i).trim()).filter(Boolean)
+      if (!items.length && !ids.length) {
+        return { count: 0, style: args.style ?? 'gb-t-7714-2015', entries: [], footnote_block: '', warnings: [], markdown: 'scholar_format_references needs `ids` or `items`.' } as any
+      }
+      const capped = ids.slice(0, REFS_MAX_IDS)
+      const warnings: string[] = []
+      if (ids.length > REFS_MAX_IDS) warnings.push(`Only the first ${REFS_MAX_IDS} ids were formatted (${ids.length} given).`)
+      let resolved: ReferenceMeta[] = []
+      if (capped.length) {
+        const { s2: client } = runtimeOf(ctx, env, exec)
+        const fields = args.style === 'bibtex' ? `${REFS_FIELDS},citationStyles` : REFS_FIELDS
+        const papers = await s2.batchPapers(client, capped, fields)
+        resolved = capped.map((id, i) => {
+          const meta = referenceMetaFromS2Paper(papers[i] as Record<string, any> | undefined)
+          if (!meta.title) warnings.push(`No Semantic Scholar record for \`${id}\` — formatted from the identifier alone; verify it before citing.`)
+          return meta
+        })
+      }
+      const all = [...items, ...resolved]
+      const style = (CITATION_STYLES as readonly string[]).includes(String(args.style)) ? (args.style as CitationStyle) : 'gb-t-7714-2015'
+      const entries = formatReferences(all, style, args.start_index ?? 1)
+      const block = footnoteBlock(entries)
+      const lines = entries.map((e) => `${e.index}. ${e.text}`)
+      const markdown = [
+        `**${entries.length} reference(s) in ${style}** — markers are FIRST-MENTION ONLY; use the footnote block verbatim at the end of the document, blank line between definitions.`,
+        '',
+        lines.join('\n'),
+        '',
+        '```markdown',
+        block,
+        '```',
+        warnings.length ? `\n> ${warnings.join('\n> ')}` : '',
+      ].join('\n')
+      return {
+        count: entries.length,
+        style,
+        entries,
+        footnote_block: block,
+        warnings,
+        markdown,
+      }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,

@@ -269,6 +269,62 @@ describe('card library path', () => {
   })
 })
 
+describe('scholar_format_references', () => {
+  const PAPERS = [
+    { paperId: 'a', title: 'First work', year: 1935, authors: [{ name: 'Albert Einstein' }, { name: 'Boris Podolsky' }], journal: { name: 'Physical Review', volume: '47', pages: '777-780' }, externalIds: { DOI: '10.1103/PhysRev.47.777' }, publicationTypes: ['JournalArticle'] },
+    { paperId: 'b', title: 'Second work', year: 2021, authors: [{ name: 'Jane Doe' }], venue: 'Nature', externalIds: { DOI: '10.1/y' } },
+  ]
+
+  it('resolves ids through S2 and emits the style entries plus a footnote block', async () => {
+    stubFetch((url) => {
+      if (url.includes('/paper/batch')) return jsonResponse(PAPERS)
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_format_references', { ids: ['DOI:10.1103/PhysRev.47.777', 'DOI:10.1/y'], style: 'gb-t-7714-2015' })
+    expect(out.count).toBe(2)
+    expect(out.style).toBe('gb-t-7714-2015')
+    expect(out.entries[0].text).toContain('EINSTEIN A, PODOLSKY B')
+    expect(out.entries[0].text).toContain('[J]')
+    expect(out.footnote_block).toContain('[^1]: ')
+    expect(out.footnote_block.split('\n')[1]).toBe('')
+    expect(out.markdown).toContain('FIRST-MENTION ONLY')
+  })
+
+  it('formats explicit items without touching the network', async () => {
+    const fetchSpy = stubFetch(() => jsonResponse({ error: 'should not be called' }, 500))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_format_references', {
+      items: [{ authors: ['Jane Doe'], title: 'A study', venue: 'Nature', year: 2020, doi: '10.1/x' }],
+      style: 'apa-7',
+      start_index: 4,
+    })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(out.entries[0].index).toBe(4)
+    expect(out.entries[0].text).toContain('Doe, J.')
+  })
+
+  it('warns about ids with no record instead of dropping them silently', async () => {
+    stubFetch((url) => (url.includes('/paper/batch') ? jsonResponse([PAPERS[1], null]) : jsonResponse({ error: 'x' }, 404)))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_format_references', { ids: ['10.1/y', '10.9/missing'], style: 'ieee' })
+    expect(out.count).toBe(2)
+    expect(out.warnings.join(' ')).toContain('10.9/missing')
+  })
+
+  it('validates the input and defaults the style', async () => {
+    const h = makeScholarContext()
+    const empty = await runTool(h, 'scholar_format_references', {})
+    expect(empty.count).toBe(0)
+    expect(empty.markdown).toContain('needs `ids` or `items`')
+
+    const fetchSpy = stubFetch(() => jsonResponse({ error: 'no' }, 500))
+    const fallback = await runTool(h, 'scholar_format_references', { items: [{ title: 'T', year: 2020 }] })
+    expect(fallback.style).toBe('gb-t-7714-2015')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('harness sanity', () => {
   it('exposes the workspace cwd to tools', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p', title: 'T', externalIds: {} }))

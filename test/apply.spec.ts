@@ -99,12 +99,12 @@ describe('apply() host wiring', () => {
     expect(sections[0]?.text).toBe(SCHOLAR_INSTRUCTIONS)
   })
 
-  it('registers every one of the 27 tools through the tools service', () => {
+  it('registers every one of the 28 tools through the tools service', () => {
     const { ctx, toolDefinitions } = makeContext()
     apply(ctx)
-    expect(toolDefinitions).toHaveLength(27)
+    expect(toolDefinitions).toHaveLength(28)
     const names = toolDefinitions.map((t) => t.name)
-    for (const expected of ['scholar_search_papers', 'paper_pdf2md', 'scholar_list_library', 'arxiv_get_fulltext', 'sciverse_evidence_pack']) {
+    for (const expected of ['scholar_search_papers', 'paper_pdf2md', 'scholar_list_library', 'arxiv_get_fulltext', 'sciverse_evidence_pack', 'scholar_format_references']) {
       expect(names).toContain(expected)
     }
   })

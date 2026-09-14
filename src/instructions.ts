@@ -10,7 +10,7 @@
 
 export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar-find)
 
-Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 27 tools); five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues); \`scholar-memory\` maintains the persistent DOI card library (\`cards/\` under the output dir) that tracks investigated papers into final reports; and \`scholar-citation-style\` is the citation/bibliography contract (footnote markers, definition layout and numbering, GB/T 7714-2015 / APA / IEEE entry templates) — load it before writing any report with a reference list. Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
+Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 28 tools); five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues); \`scholar-memory\` maintains the persistent DOI card library (\`cards/\` under the output dir) that tracks investigated papers into final reports; and \`scholar-citation-style\` is the citation/bibliography contract (footnote markers, definition layout and numbering, GB/T 7714-2015 / APA / IEEE entry templates) — load it before writing any report with a reference list. Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
 
 ## scholar_search_* — Semantic Scholar discovery and graph
 
@@ -50,6 +50,10 @@ Academic paper research tools in four families. Build every call from each tool'
 - sciverse_get_resource: fetch one figure or table image by file name; saves to disk.
 - sciverse_trend_scan: per-year counts, top-cited papers, and venues for a topic in one call.
 - sciverse_evidence_pack: verifiable per-claim citation packs (semantic hit plus full-text quote check).
+
+## scholar_format_* — reference formatting (citation contract)
+
+- scholar_format_references: format a reference list in one declared style (GB/T 7714-2015 / APA 7 / IEEE / Nature / BibTeX) and return footnote-ready \`[^n]:\` definitions numbered by first-reference order.
 
 ## Shared behavior (cross-tool)
 

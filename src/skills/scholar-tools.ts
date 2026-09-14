@@ -1,5 +1,5 @@
 /**
- * scholar-tools skill: the per-tool behavioral catalog for all 27
+ * scholar-tools skill: the per-tool behavioral catalog for all 28
  * dsh-scholar-find tools — selection, behavior, recovery. Workflows live in
  * their own skills; this file holds no recipes.
  */
@@ -7,13 +7,13 @@
 export const SCHOLAR_TOOLS_SKILL = {
   name: 'scholar-tools',
   description:
-    'Per-tool behavioral catalog for all 27 dsh-scholar-find tools: Limitations / Exceptions / Prefer-when for every search, fetch, arXiv, and sciverse tool. Load when tool choice, call behavior, or error recovery matters.',
+    'Per-tool behavioral catalog for all 28 dsh-scholar-find tools: Limitations / Exceptions / Prefer-when for every search, fetch, format, arXiv, and sciverse tool. Load when tool choice, call behavior, or error recovery matters.',
   whenToUse:
     'Any scholarly task where per-tool behavioral detail is needed: choosing between overlapping tools, error recovery, rate-limit or cap semantics.',
   source: 'runtime',
   content: `# Scholar tool catalog (dsh-scholar-find)
 
-Per-tool behavioral catalog for all 27 dsh-scholar-find tools: selection,
+Per-tool behavioral catalog for all 28 dsh-scholar-find tools: selection,
 behavior, recovery. Construct every call from the tool's own parameter
 schema. Cross-tool rules (error envelope, library directory, configuration,
 DOI hygiene, content chain, pacing) stay in the system prompt's Shared
@@ -70,6 +70,13 @@ scholar-* workflow skills.
   - Limitations: export only; no metadata enrichment.
   - Exceptions: invalid ids are reported per-item.
   - Prefer when: the user collects references — offer it at the end of a search task.
+
+## scholar_format_* — reference formatting (citation contract)
+
+- scholar_format_references: format a reference list in one declared citation style, with footnote-ready definitions.
+  - Limitations: formats the metadata you supply or what Semantic Scholar holds (max 50 ids); it never invents missing volume/pages, and a missing record is formatted from the identifier alone.
+  - Exceptions: a supplied \`bibtex\` wins in the bibtex style; ids without an S2 record return as warnings — verify those before citing.
+  - Prefer when: a report needs a reference list or footnotes in a specific style (GB/T 7714-2015 for Chinese reports) — load scholar-citation-style with it.
 
 ## paper_fetch_* — OA PDF acquisition and conversion
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SCHOLAR_INSTRUCTIONS } from '../src/instructions.js'
 import { SCHOLAR_SKILLS } from '../src/skills/index.js'
 
-/** All 27 registered tool names (src/tools/register.ts). */
+/** All 28 registered tool names (src/tools/register.ts). */
 const TOOL_NAMES = [
   'scholar_search_papers',
   'scholar_search_papers_by_snippet',
@@ -31,6 +31,7 @@ const TOOL_NAMES = [
   'sciverse_get_resource',
   'sciverse_trend_scan',
   'sciverse_evidence_pack',
+  'scholar_format_references',
 ]
 
 const WORKFLOW_SKILL_NAMES = [
@@ -81,7 +82,7 @@ describe('scholar skills registry shape', () => {
 describe('scholar-tools catalog (selection-bias invariants)', () => {
   const catalog = byName.get('scholar-tools')!
 
-  it('names every one of the 27 tools', () => {
+  it('names every one of the 28 tools', () => {
     for (const tool of TOOL_NAMES) {
       expect(catalog.content).toContain(`- ${tool}:`)
     }
@@ -93,8 +94,9 @@ describe('scholar-tools catalog (selection-bias invariants)', () => {
     expect((catalog.content.match(/  - Prefer when:/g) ?? []).length).toBe(TOOL_NAMES.length)
   })
 
-  it('covers exactly the four tool families', () => {
+  it('covers the tool families', () => {
     expect(catalog.content).toContain('## scholar_search_*')
+    expect(catalog.content).toContain('## scholar_format_*')
     expect(catalog.content).toContain('## paper_fetch_*')
     expect(catalog.content).toContain('## arxiv_*')
     expect(catalog.content).toContain('## sciverse_*')
@@ -254,7 +256,7 @@ describe('scholar-citation-style (bibliography contract)', () => {
 })
 
 describe('resident instructions (slim core invariants)', () => {
-  it('lists every one of the 27 tools at selection level', () => {
+  it('lists every one of the 28 tools at selection level', () => {
     for (const tool of TOOL_NAMES) {
       expect(SCHOLAR_INSTRUCTIONS).toContain(`- ${tool}:`)
     }
