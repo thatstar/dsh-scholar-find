@@ -32,10 +32,13 @@ npm run build
 dsh plugin --profile web add .
 ```
 
-Restart the deployment afterwards. The build target is the **DSH 0.1.7-rc.1**
+Restart the deployment afterwards. The build target is the **DSH 0.2.0-rc.1**
 generation (`cordis ~4.0.4`, `@deepseek-ai/schemastery ^3.18.4`): the settings
 page, the client module graph, and the plugin `Config` schema all follow that
-generation's contracts.
+generation's contracts. The four `@deepseek-ai/dsh-*` peers are declared as
+ranges (`>=0.1.7-rc.1 <0.2.0 || >=0.2.0-rc.1 <0.3.0`) rather than exact pins, so
+a runtime bump inside a supported line does not trip the profile's
+peer-compatibility gate.
 
 ### Configuration
 

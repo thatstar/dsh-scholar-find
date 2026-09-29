@@ -168,6 +168,16 @@ A local `link:`/`file:` install does not run `prepare`, so build once with
 automatically. Live examples already in this
 deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
+**Runtime generation.** The build target is the **DSH 0.2.0-rc.1** generation
+(`cordis ~4.0.4`, `@deepseek-ai/schemastery ^3.18.4`, `@deepseek-ai/dsh-*`
+dev dependencies pinned to `0.2.0-rc.1`). The four host peers (`dsh-attachment`,
+`dsh-credentials`, `dsh-llm`, `dsh-tools`) are ranges —
+`>=0.1.7-rc.1 <0.2.0 || >=0.2.0-rc.1 <0.3.0` — because the runtime gates every
+profile bundle whose `@deepseek-ai/dsh*` peers do not satisfy the running
+version (`evaluatePluginCompatibility` in `@deepseek-ai/dsh-app-boot`): an exact
+pin silently drops the bundle from the composition. Widen the ranges (and move
+the dev dependencies) together when the runtime generation changes.
+
 ## Configuration (user-owned, via the Web UI Plugins page, not env vars in code)
 
 | Config field (entry id `dsh-scholar-find`) | Purpose |
