@@ -13,8 +13,8 @@ export const SCHOLAR_TREND_SCAN_SKILL = {
   content: `# Scholar workflow: trend scan
 
 Per-year publication counts, top-cited papers, and venues for a topic.
-Cross-tool rules stay in the system prompt's Shared behavior; per-tool
-behavioral details live in the scholar-tools skill.
+Cross-tool rules live in the scholar-tools skill's Shared behavior, as do the
+per-tool behavioral details.
 
 ## Pipeline
 

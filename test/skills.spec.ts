@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SCHOLAR_INSTRUCTIONS } from '../src/instructions.js'
+import { SCHOLAR_INSTRUCTIONS, SCHOLAR_INSTRUCTIONS_FALLBACK } from '../src/instructions.js'
 import { SCHOLAR_SKILLS } from '../src/skills/index.js'
 
 /** All 28 registered tool names (src/tools/register.ts). */
@@ -259,45 +259,84 @@ describe('scholar-citation-style (bibliography contract)', () => {
   })
 })
 
-describe('resident instructions (slim core invariants)', () => {
-  it('lists every one of the 28 tools at selection level', () => {
-    for (const tool of TOOL_NAMES) {
-      expect(SCHOLAR_INSTRUCTIONS).toContain(`- ${tool}:`)
-    }
-  })
-
-  it('routes to all seven on-demand skills by name', () => {
-    for (const skill of SCHOLAR_SKILLS) {
-      expect(SCHOLAR_INSTRUCTIONS).toContain(`\`${skill.name}\``)
-    }
-  })
-
-  it('defers detail to skills: no per-tool Limitations/Exceptions rosters and no recipes', () => {
+describe('resident instructions (one-sentence pointer + skill-carried detail)', () => {
+  it('stays a single sentence: no roster, no per-tool Limitations/Exceptions, no recipes', () => {
+    expect(SCHOLAR_INSTRUCTIONS).not.toContain('\n')
+    expect(SCHOLAR_INSTRUCTIONS.endsWith('.')).toBe(true)
     expect(SCHOLAR_INSTRUCTIONS).not.toContain('  - Limitations:')
     expect(SCHOLAR_INSTRUCTIONS).not.toContain('## Pipeline')
     expect(SCHOLAR_INSTRUCTIONS).not.toContain('## Workflow recipes')
+    expect(SCHOLAR_INSTRUCTIONS).not.toContain('## Shared behavior')
+    for (const tool of TOOL_NAMES) {
+      expect(SCHOLAR_INSTRUCTIONS).not.toContain(`- ${tool}:`)
+    }
   })
 
-  it('keeps the cross-tool behavioral floor: error envelope, paths, keys, DOI hygiene, pacing', () => {
-    expect(SCHOLAR_INSTRUCTIONS).toContain('Error envelope')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('retry_after_hours')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('never invent a DOI')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('~30 requests/minute')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('Never download or extract speculatively')
-    expect(SCHOLAR_INSTRUCTIONS).toContain("Web UI's Plugins page")
+  it('names the tool families and points at the skill catalog as the only place the rules live', () => {
+    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar_search_*')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('paper_fetch_*')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('arxiv_*')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('sciverse_*')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('`skill` tool')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar-*')
+  })
+
+  it('stays under a hard length guard', () => {
+    // Guards against the section creeping back toward the ~6.5 kB it replaced
+    // (measured: 456 chars, see .notes/71).
+    expect(SCHOLAR_INSTRUCTIONS.length).toBeLessThan(600)
+  })
+
+  it('keeps the full rules in the fallback rendered only without a skills service', () => {
+    for (const tool of TOOL_NAMES) {
+      expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain(`- ${tool}:`)
+    }
+    for (const skill of SCHOLAR_SKILLS) {
+      expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain(`\`${skill.name}\``)
+    }
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('## Shared behavior')
+  })
+
+  it('keeps the cross-tool behavioral floor in the fallback: error envelope, paths, keys, DOI hygiene, pacing', () => {
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('Error envelope')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('retry_after_hours')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('never invent a DOI')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('~30 requests/minute')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('Never download or extract speculatively')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain("Web UI's Plugins page")
+  })
+})
+
+describe('cross-tool rules survive in the on-demand skill', () => {
+  it('carries the Shared behavior rulebook in the scholar-tools skill', () => {
+    const catalog = byName.get('scholar-tools')!
+    expect(catalog.content).toContain('## Shared behavior (cross-tool)')
+    expect(catalog.content).toContain('Error envelope')
+    expect(catalog.content).toContain('retry_after_hours')
+    expect(catalog.content).toContain('never invent a DOI')
+    expect(catalog.content).toContain('~30 requests/minute')
+    expect(catalog.content).toContain('Never download or extract speculatively')
+    expect(catalog.content).toContain("Web UI's Plugins page")
   })
 })
 
 describe('sciverse failure handling (typed envelope + content fallbacks)', () => {
-  it('names the typed sciverse error codes in the resident Shared behavior', () => {
-    expect(SCHOLAR_INSTRUCTIONS).toContain('content_not_found')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('content_fetch_failed')
+  it('names the typed sciverse error codes in the skill-carried Shared behavior', () => {
+    const catalog = byName.get('scholar-tools')!
+    expect(catalog.content).toContain('content_not_found')
+    expect(catalog.content).toContain('content_fetch_failed')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('content_not_found')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('content_fetch_failed')
   })
 
   it('carries the ranked content chain with the Asta step and alt_doc_ids recovery', () => {
-    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar_get_paper_snippets')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('alt_doc_ids')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('doc_id_index')
+    const catalog = byName.get('scholar-tools')!
+    expect(catalog.content).toContain('scholar_get_paper_snippets')
+    expect(catalog.content).toContain('alt_doc_ids')
+    expect(catalog.content).toContain('doc_id_index')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('scholar_get_paper_snippets')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('alt_doc_ids')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('doc_id_index')
   })
 
   it('catalog documents the doc_id alternates on the content tools', () => {

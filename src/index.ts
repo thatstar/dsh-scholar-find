@@ -4,8 +4,9 @@
  *      `Config`; edited on the Web UI's Plugins page, persisted to the active
  *      profile's patch document),
  *   2. the `scholar_search_*` / `paper_fetch_*` / `sciverse_*` tools,
- *   3. the resident companion-instructions prompt section (slim core: family
- *      map + Shared behavior + skill routing map),
+ *   3. the resident companion-instructions prompt section (one sentence:
+ *      family map + a pointer to the scholar-* skills; falls back to the full
+ *      rulebook only on a profile with no skills service),
  *   4. the scholar skills (on-demand: one skill per workflow + the
  *      scholar-tools per-tool catalog) as runtime skill contributions.
  *
@@ -21,7 +22,7 @@ import { assertServiceableScholarSettings, readScholarSettings, ScholarConfigSch
 import { cleanCredentialValue, DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 import { bestEffort } from './util/async.js'
 import { applyScholarTools } from './tools/register.js'
-import { SCHOLAR_INSTRUCTIONS } from './instructions.js'
+import { SCHOLAR_INSTRUCTIONS, SCHOLAR_INSTRUCTIONS_FALLBACK } from './instructions.js'
 import { SCHOLAR_SKILLS } from './skills/index.js'
 import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 
@@ -148,9 +149,17 @@ export function apply(ctx: Context, config?: ScholarConfigInput): void {
   }
 
   // 3. Companion instructions ----------------------------------------------
+  // One resident sentence. The section text is a provider (evaluated at every
+  // assembly) that degrades to the complete rulebook ONLY when this profile has
+  // no skills service — there is then nothing to load on demand, so the rules
+  // must stay resident or the plugin would ship guidance-free.
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt) {
-    ctx.effect(() => systemPrompt.section({ name: 'scholar-tools', order: 150, text: SCHOLAR_INSTRUCTIONS }))
+    ctx.effect(() => systemPrompt.section({
+      name: 'scholar-tools',
+      order: 150,
+      text: () => ctx.get('skills') ? SCHOLAR_INSTRUCTIONS : SCHOLAR_INSTRUCTIONS_FALLBACK,
+    }))
   }
 
   // 4. Companion skills -----------------------------------------------------

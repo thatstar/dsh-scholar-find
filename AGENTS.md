@@ -62,12 +62,17 @@ instructions:
    footnote-ready `[^n]:` block, so citation format is decided by the plugin
    once instead of re-derived per report. Pure formatters live in `src/cite.ts`.
 
-6. **Companion instructions** (variant C, split) — a slim resident prompt
-   section (one line per tool + cross-tool Shared behavior + the skill routing
-   map) plus on-demand skills registered as runtime contributions via
-   `ctx.skills.register`: the `scholar-tools` per-tool behavioral catalog
-   (Limitations / Exceptions / Prefer-when for all 28 tools — no parameter
-   rosters; tool schemas are the parameter source), one skill per workflow
+6. **Companion instructions** (variant D, one-sentence resident pointer) — the
+   resident prompt section (`SCHOLAR_INSTRUCTIONS`, `src/instructions.ts`) is a
+   **single sentence**: it names the five tool families and points at the
+   `scholar-*` skills as the only place the scholarly rules live. Everything
+   else is on-demand, registered as runtime contributions via
+   `ctx.skills.register`: the `scholar-tools` skill carries both the per-tool
+   behavioral catalog (Limitations / Exceptions / Prefer-when for all 28 tools —
+   no parameter rosters; tool schemas are the parameter source) **and** the
+   cross-tool Shared behavior rulebook (error envelope, library directory,
+   configuration, discovery triage, DOI hygiene, content chain, pacing,
+   exports); one skill per workflow
    (`scholar-literature-review`, `scholar-scientific-rag`,
    `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
    each carrying its pipeline and a `## Output` section that is the extension
@@ -84,8 +89,15 @@ instructions:
    blank-line-separated definitions in first-reference order, no markers in
    summary tables, per-report style declaration, entry templates and
    Chinese-report punctuation) — its rules mirror the DSH renderer's actual
-   behaviour. `skills` is deliberately NOT in `inject`
-   (a profile without the skill service degrades to the resident floor).
+   behaviour. The section is registered as a **provider function**
+   (`text: () => ctx.get('skills') ? SCHOLAR_INSTRUCTIONS :
+   SCHOLAR_INSTRUCTIONS_FALLBACK`), so the fallback is chosen per assembly:
+   a profile **with** the skill service pays the one sentence (456 chars ≈
+   120 tokens, down from the 6,458-char ≈ 1,700-token section);
+   a profile **without** it renders `SCHOLAR_INSTRUCTIONS_FALLBACK` — the old
+   full rulebook — because there is nothing left to load on demand.
+   `skills` is deliberately NOT in `inject`, so such a profile still loads
+   every tool.
 
 The user configures plugin parameters (Unpaywall email, API keys, CloakBrowser
 toggle, proxy, output directory, …) on the **DSH Web UI's Plugins page** — the
@@ -204,7 +216,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-Config schema, companion instructions, client-half settings page. **388 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+Config schema, companion instructions, client-half settings page. **391 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

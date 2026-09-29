@@ -15,8 +15,8 @@ export const SCHOLAR_LITERATURE_REVIEW_SKILL = {
 
 Survey / research-progress / state-of-the-field requests, answered from the
 Sciverse content chain. Cross-tool rules (error envelope, pacing, library
-directory) stay in the system prompt's Shared behavior; per-tool behavioral
-details live in the scholar-tools skill.
+directory) live in the scholar-tools skill's Shared behavior, as do the
+per-tool behavioral details.
 
 ## Pipeline
 

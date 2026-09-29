@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { apply } from '../src/index.js'
 import { cleanCredentialValue } from '../src/refs.js'
-import { SCHOLAR_INSTRUCTIONS } from '../src/instructions.js'
+import { SCHOLAR_INSTRUCTIONS, SCHOLAR_INSTRUCTIONS_FALLBACK } from '../src/instructions.js'
 import { SCHOLAR_SKILLS } from '../src/skills/index.js'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -33,11 +33,12 @@ interface ToolDefinition {
 interface PromptSection {
   name: string
   order: number
-  text: string
+  text: string | ((context: { scope?: unknown }) => string)
 }
 
 /** A cordis-shaped fake that captures the services `apply()` reaches for. */
-function makeContext() {
+function makeContext(options: { skills?: boolean } = {}) {
+  const skillsAvailable = options.skills ?? true
   const skillRegistrations: SkillRegistration[] = []
   const toolDefinitions: ToolDefinition[] = []
   const sections: PromptSection[] = []
@@ -46,6 +47,7 @@ function makeContext() {
   const ctx = {
     get(name: string): unknown {
       if (name === 'skills') {
+        if (!skillsAvailable) return undefined
         return {
           register: (skill: SkillRegistration) => {
             skillRegistrations.push(skill)
@@ -102,13 +104,24 @@ describe('apply() host wiring', () => {
     }
   })
 
-  it('mounts the resident instructions as the scholar-tools prompt section', () => {
+  it('mounts the one-sentence resident section as a per-assembly provider', () => {
     const { ctx, sections } = makeContext()
     apply(ctx)
     expect(sections).toHaveLength(1)
     expect(sections[0]?.name).toBe('scholar-tools')
     expect(sections[0]?.order).toBe(150)
-    expect(sections[0]?.text).toBe(SCHOLAR_INSTRUCTIONS)
+    const text = sections[0]?.text
+    expect(typeof text).toBe('function')
+    expect((text as (c: { scope?: unknown }) => string)({})).toBe(SCHOLAR_INSTRUCTIONS)
+  })
+
+  it('falls back to the full rulebook only when the profile has no skills service', () => {
+    const { ctx, sections, skillRegistrations } = makeContext({ skills: false })
+    apply(ctx)
+    expect(skillRegistrations).toHaveLength(0)
+    const text = sections[0]?.text as (c: { scope?: unknown }) => string
+    expect(text({})).toBe(SCHOLAR_INSTRUCTIONS_FALLBACK)
+    expect(text({})).toContain('## Shared behavior')
   })
 
   it('registers every one of the 28 tools through the tools service', () => {

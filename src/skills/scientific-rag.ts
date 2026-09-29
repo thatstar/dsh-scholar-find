@@ -13,8 +13,8 @@ export const SCHOLAR_SCIENTIFIC_RAG_SKILL = {
   content: `# Scholar workflow: scientific RAG
 
 A question answered with quoted evidence from the Sciverse corpus. Cross-tool
-rules stay in the system prompt's Shared behavior; per-tool behavioral details
-live in the scholar-tools skill.
+rules live in the scholar-tools skill's Shared behavior, as do the per-tool
+behavioral details.
 
 ## Pipeline
 

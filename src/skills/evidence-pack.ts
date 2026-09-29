@@ -14,8 +14,8 @@ export const SCHOLAR_EVIDENCE_PACK_SKILL = {
   content: `# Scholar workflow: evidence pack
 
 Verifiable per-claim citation packs for grounding a draft or checking claims.
-Cross-tool rules stay in the system prompt's Shared behavior; per-tool
-behavioral details live in the scholar-tools skill.
+Cross-tool rules live in the scholar-tools skill's Shared behavior, as do the
+per-tool behavioral details.
 
 ## Pipeline
 

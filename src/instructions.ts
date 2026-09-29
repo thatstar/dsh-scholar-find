@@ -1,16 +1,33 @@
 /**
- * Resident companion instructions for the scholar tools — the slim
- * always-present core (variant C): one line per tool plus cross-tool Shared
- * behavior, and the routing map to the on-demand skills. The per-tool
- * behavioral catalog lives in the scholar-tools skill; each workflow has its
- * own skill (see ./skills/). Guidance only — the model composes the pipeline
- * per the user's goal.
+ * Companion instructions for the scholar tools.
+ *
+ * The RESIDENT section is one sentence (`SCHOLAR_INSTRUCTIONS`): a pointer to
+ * the tool families and to the `scholar-*` skill catalog. Everything else —
+ * the cross-tool Shared behavior and the per-tool catalog — lives in the
+ * on-demand skills (see ./skills/), so a scholarly session pays for the detail
+ * only when it loads it, and every other session pays 456 chars ≈ 120 tokens
+ * (it replaced a 6,458-char ≈ 1,700-token section).
+ *
+ * `SCHOLAR_INSTRUCTIONS_FALLBACK` is the complete behavioral floor, rendered
+ * ONLY when the profile has no `skills` service (nothing to load, so the
+ * rules must stay resident or the plugin would ship guidance-free). The
+ * section is registered as a provider function so the choice is made per
+ * assembly; see src/index.ts.
  * @module dsh-scholar-find/instructions
  */
 
-export const SCHOLAR_INSTRUCTIONS = `# Scholar tools (dsh-scholar-find)
+/** The resident section: one sentence, always injected. */
+export const SCHOLAR_INSTRUCTIONS = 'dsh-scholar-find ships the `scholar_search_*` / `scholar_format_*` / `paper_fetch_*` / `arxiv_*` / `sciverse_*` tools; their schemas are authoritative. Before treating a scholarly task as a plain search, call the `skill` tool for the matching `scholar-*` entry — that is where every scholarly rule lives (cross-tool error envelope, DOI verification, content chain, pacing, and each workflow pipeline), since the tool definitions describe single calls only.'
 
-Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 28 tools); five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues); \`scholar-memory\` maintains the persistent DOI card library (\`cards/\` under the output dir) that tracks investigated papers into final reports; and \`scholar-citation-style\` is the citation/bibliography contract (footnote markers, definition layout and numbering, GB/T 7714-2015 / APA / IEEE entry templates) — load it before writing any report with a reference list. Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
+/**
+ * The resident fallback: the full cross-tool rulebook plus the skill routing
+ * map, rendered only when this profile exposes no `skills` service. Never
+ * injected when the skills are available — the same rules live in the
+ * `scholar-tools` skill.
+ */
+export const SCHOLAR_INSTRUCTIONS_FALLBACK = `# Scholar tools (dsh-scholar-find)
+
+Academic paper research tools in four families. Build every call from each tool's own parameter schema — the authoritative, always-present source; this section covers tool selection and behavior only. Deeper layers load on demand via the \`skill\` tool when the profile has one: \`scholar-tools\` carries the per-tool behavioral catalog (Limitations / Exceptions / Prefer-when for all 28 tools); five workflow skills carry pipeline recipes and output contracts — \`scholar-literature-review\` (survey / state of a field), \`scholar-scientific-rag\` (question answered with quoted evidence), \`scholar-systematic-screen\` (PRISMA-style include/exclude), \`scholar-evidence-pack\` (verifiable per-claim citation packs), \`scholar-trend-scan\` (per-year counts, top-cited, venues); \`scholar-memory\` maintains the persistent DOI card library (\`cards/\` under the output dir) that tracks investigated papers into final reports; and \`scholar-citation-style\` is the citation/bibliography contract (footnote markers, definition layout and numbering, GB/T 7714-2015 / APA / IEEE entry templates) — load it before writing any report with a reference list. Call the matching skill before composing the pipeline, or whenever a tool's behavioral details matter.
 
 ## scholar_search_* — Semantic Scholar discovery and graph
 

@@ -13,8 +13,8 @@ export const SCHOLAR_SYSTEMATIC_SCREEN_SKILL = {
   content: `# Scholar workflow: systematic screening
 
 PRISMA-style screening / include-exclude over the Sciverse corpus. Cross-tool
-rules stay in the system prompt's Shared behavior; per-tool behavioral details
-live in the scholar-tools skill.
+rules live in the scholar-tools skill's Shared behavior, as do the per-tool
+behavioral details.
 
 ## Pipeline
 
