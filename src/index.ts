@@ -1,7 +1,8 @@
 /**
  * dsh-scholar-find — DSH plugin registering:
- *   1. the `dsh-scholar-find` settings section (Web UI: Settings -> Plugins ->
- *      Plugin configuration; persisted to $DSH_HOME/settings.yaml),
+ *   1. the `dsh-scholar-find` settings section (the plugin's own Cordis
+ *      `Config`; edited on the Web UI's Plugins page, persisted to the active
+ *      profile's patch document),
  *   2. the `scholar_search_*` / `paper_fetch_*` / `sciverse_*` tools,
  *   3. the resident companion-instructions prompt section (slim core: family
  *      map + Shared behavior + skill routing map),
@@ -15,7 +16,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-tools'
-import { assertServiceableScholarSettings, DEFAULT_SCHOLAR_SETTINGS, ScholarSettingsSchema, SCHOLAR_SETTINGS_NAMESPACE, type ScholarSettings } from './settings.js'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import { assertServiceableScholarSettings, readScholarSettings, ScholarConfigSchema, type ScholarSettings, type ScholarConfigInput } from './settings.js'
 import { cleanCredentialValue, DEFAULT_ASTA_KEY_REF, DEFAULT_SCIVERSE_KEY_REF, DEFAULT_S2_KEY_REF } from './refs.js'
 import { bestEffort } from './util/async.js'
 import { applyScholarTools } from './tools/register.js'
@@ -26,41 +28,48 @@ import { configureProxy, resolveProxyUrl } from './fetch/transport.js'
 export const name = 'dsh-scholar-find'
 
 /**
- * Services this plugin requires before its `apply(ctx)` runs.
- *
- * The plugin registers a settings section (via the `settings` service), the
- * `scholar_*` / `paper_fetch_*` / `sciverse_*` tools (via `tools`), the
- * resident companion-instructions prompt section (via `systemPrompt`), and
- * the companion skills (via `skills`, accessed guarded below — deliberately
- * NOT declared here, see section 4); API keys are resolved lazily from the
- * `credentials` service. Declaring these lets the loader start the plugin
- * only once every dependency is available.
+ * The plugin's settings/config schema. The loader parses the profile row with
+ * this and hands the parsed value to `apply()`; the settings service projects
+ * the same schema into the Web UI's form, and every `.volatile()` field is one
+ * the user may change without remounting the plugin.
  */
-export const inject = ['settings', 'tools', 'systemPrompt', 'credentials']
+export const Config = ScholarConfigSchema
+
+/**
+ * Services this plugin requires before its `apply(ctx, config)` runs.
+ *
+ * The plugin registers the `scholar_*` / `paper_fetch_*` / `sciverse_*` tools
+ * (via `tools`), the resident companion-instructions prompt section (via
+ * `systemPrompt`), and the companion skills (via `skills`, accessed guarded
+ * below — deliberately NOT declared here, see section 4); API keys are
+ * resolved lazily from the `credentials` service. Declaring these lets the
+ * loader start the plugin only once every dependency is available.
+ *
+ * `settings` is deliberately absent: the plugin's configuration no longer
+ * needs that service (the schema IS the contract), and only the optional
+ * "this entry has its own page" policy below touches it — through the guarded
+ * `ctx.inject` child, so a profile without the settings service still loads
+ * everything else.
+ */
+export const inject = ['tools', 'systemPrompt', 'credentials']
 
 /**
  * Minimal mirror of the settings service the installed profile provides
- * (ctx.settings, @deepseek-ai/dsh-settings' SettingsProvider) — the ONE method
- * this plugin uses. Deliberately local: the plugin ships NO import of
- * @deepseek-ai/dsh-settings (runtime or types), so the namespace, the schema,
- * and the registration are all validated by the profile's copy at runtime.
- * An upstream API change therefore fails loudly at plugin activation instead
- * of being silently masked by a private nested copy of the package. If the
- * deployed profile upgrades and this mirror's shape no longer matches, that IS
- * the intended signal.
+ * (ctx.settings, @deepseek-ai/dsh-settings' SettingsForms) — the ONE method
+ * this plugin uses, and only to say "this entry ships its own page". Kept
+ * deliberately local: the plugin ships NO import of @deepseek-ai/dsh-settings
+ * (runtime or types), so Config and the namespace stay validated by the
+ * profile's copy. If the deployed profile changes this shape, the policy just
+ * is not registered — the plugin runs without it.
  */
 export interface ScholarSettingsService {
-  installSection<const Namespace extends string, T>(
-    owner: unknown,
-    ns: Namespace,
-    schema: unknown,
-    entry: T,
-    hooks: {
-      setSource(current: () => T): void
-      onChange(): void
-      validate?(value: T): void
-    },
-  ): void
+  /**
+   * Register the calling plugin instance's page policy.
+   * @param presentation - automatic-page policy for this instance.
+   * @param owner - the plugin fiber the policy belongs to.
+   * @returns disposer removing the policy.
+   */
+  configure(presentation: { auto?: boolean }, owner?: unknown): () => void
 }
 
 /**
@@ -93,30 +102,32 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export function apply(ctx: Context): void {
-  let source: () => ScholarSettings = () => DEFAULT_SCHOLAR_SETTINGS
-
-  // 1. Settings section -----------------------------------------------------
-  // Service call (not a package import): the profile's dsh-settings registers
-  // the namespace, applies the schema defaults, and validates the stored
-  // section; our hooks mirror the old installSettingsSection contract exactly.
-  ctx.settings.installSection(ctx, SCHOLAR_SETTINGS_NAMESPACE, ScholarSettingsSchema, DEFAULT_SCHOLAR_SETTINGS, {
-    validate: assertServiceableScholarSettings,
-    setSource: (current) => {
-      source = current
-    },
-    onChange: () => {
-      // Proxy is read live so a settings change applies without a restart.
-      configureProxy(resolveProxyUrl(source().proxyUrl))
-    },
-  })
-  // Apply the proxy on boot (falls back to HTTPS_PROXY etc. when unset).
+export function apply(ctx: Context, config?: ScholarConfigInput): void {
+  // 1. Settings -------------------------------------------------------------
+  // `config` is the profile row parsed through `Config`: every field is a
+  // stable reference the loader updates in place when the user saves, so
+  // `source()` always reads the values in force for THIS call.
+  const source = (): ScholarSettings => readScholarSettings(config)
+  assertServiceableScholarSettings(source())
+  // Apply the proxy on boot (falls back to HTTPS_PROXY etc. when unset), and
+  // again whenever the loader commits a volatile change — the same signal the
+  // settings service writes through, so a saved proxyUrl applies live.
   configureProxy(resolveProxyUrl(source().proxyUrl))
+  ctx.effect(() => ctx.on('loader/volatile-update', () => {
+    configureProxy(resolveProxyUrl(source().proxyUrl))
+  }), 'dsh-scholar-find: proxy follows the live config')
+
+  // The browser half draws this entry's form on the Plugins page itself, so
+  // the settings service must not also generate one. Guarded child: a profile
+  // without the settings service keeps loading every other registration.
+  ctx.inject(['settings'], (child) => {
+    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dsh-scholar-find: own settings page')
+  })
 
   // 2. Tools ----------------------------------------------------------------
   const tools = ctx.get('tools')
   if (tools) {
-    // The keys never live in the settings section: the section carries a
+    // The keys never live in the settings row: the config carries a
     // credential reference (record name) and the value is resolved from the DSH
     // credentials domain. Fail-closed to anonymous, but logged so a mis-typed
     // ref is audible (the card surfaces the same state).
@@ -148,8 +159,8 @@ export function apply(ctx: Context): void {
   // the scholar-tools per-tool catalog. Runtime contributions
   // (ctx.skills.register) — no provider plumbing. 'skills' is deliberately
   // NOT declared in `inject`: cordis holds apply() until every declared
-  // service exists, so declaring it would keep the whole plugin (settings,
-  // 27 tools, instructions) from loading on profiles without the skill
+  // service exists, so declaring it would keep the whole plugin (tools,
+  // instructions) from loading on profiles without the skill
   // service. ctx.get() returns undefined instead (service absent or not yet
   // started — never throws); we skip then, and the resident section above
   // remains the complete behavioral floor (fail-open). Registry duplicate

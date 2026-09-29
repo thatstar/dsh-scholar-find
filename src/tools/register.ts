@@ -520,7 +520,7 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
     async execute(args, exec) {
       const apiKey = await env.resolveAstaKey()
       if (!apiKey) {
-        return { markdown: 'Asta content tool is not configured. Add an `astaApiKeyRef` in the plugin settings (Settings -> Plugins -> Plugin configuration) to enable it.', snippets: [] }
+        return { markdown: 'Asta content tool is not configured. Add an `astaApiKeyRef` in the plugin configuration (Web UI: Plugins page -> dsh-scholar-find) to enable it.', snippets: [] }
       }
       const snippets = await astaSnippetSearch(apiKey, {
         query: args.query,
@@ -1268,7 +1268,7 @@ async function guarded<T>(label: string, fn: () => Promise<T>): Promise<T> {
 
 /** Not-configured markdown shared by all sciverse_* tools. */
 function sciverseNotConfigured(): string {
-  return 'sciverse_* tools are not configured. Add a `sciverseApiKeyRef` credential (Settings -> Plugins -> Plugin configuration → "Sciverse API token") to enable them.'
+  return 'sciverse_* tools are not configured. Add a `sciverseApiKeyRef` credential (Web UI: Plugins page -> dsh-scholar-find -> "Sciverse API token") to enable them.'
 }
 
 /**

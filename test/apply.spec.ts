@@ -41,10 +41,9 @@ function makeContext() {
   const skillRegistrations: SkillRegistration[] = []
   const toolDefinitions: ToolDefinition[] = []
   const sections: PromptSection[] = []
+  let settingsPolicy: { auto?: boolean } | undefined
+  const listeners: string[] = []
   const ctx = {
-    settings: {
-      installSection: () => {},
-    },
     get(name: string): unknown {
       if (name === 'skills') {
         return {
@@ -71,9 +70,22 @@ function makeContext() {
       }
       return undefined
     },
+    on: (event: string) => { listeners.push(event); return () => {} },
+    inject: (_deps: string[], callback: (child: unknown) => void) => {
+      callback({
+        settings: {
+          configure: (presentation: { auto?: boolean }) => {
+            settingsPolicy = presentation
+            return () => {}
+          },
+        },
+        effect: <T>(inner: () => T): T => inner(),
+      })
+    },
     effect: <T>(callback: () => T): T => callback(),
+    fiber: {},
   }
-  return { ctx: ctx as unknown as Context, skillRegistrations, toolDefinitions, sections }
+  return { ctx: ctx as unknown as Context, skillRegistrations, toolDefinitions, sections, listeners, policy: () => settingsPolicy }
 }
 
 describe('apply() host wiring', () => {
@@ -116,6 +128,18 @@ describe('apply() host wiring', () => {
     expect(tool).toBeDefined()
     const subdir = tool?.parameters.properties?.subdir
     expect(subdir?.enum).toEqual(['pdfs', 'md', 'html', 'figs', 'cards', 'all'])
+  })
+
+  it('declares its own settings page, so the service generates none (auto: false)', () => {
+    const { ctx, policy } = makeContext()
+    apply(ctx)
+    expect(policy()).toEqual({ auto: false })
+  })
+
+  it('follows live config commits (the loader re-applies the proxy on volatile-update)', () => {
+    const { ctx, listeners } = makeContext()
+    apply(ctx)
+    expect(listeners).toContain('loader/volatile-update')
   })
 })
 

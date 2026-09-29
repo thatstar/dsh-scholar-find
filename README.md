@@ -32,7 +32,28 @@ npm run build
 dsh plugin --profile web add .
 ```
 
-Restart the deployment afterwards.
+Restart the deployment afterwards. The build target is the **DSH 0.1.7-rc.1**
+generation (`cordis ~4.0.4`, `@deepseek-ai/schemastery ^3.18.4`): the settings
+page, the client module graph, and the plugin `Config` schema all follow that
+generation's contracts.
+
+### Configuration
+
+Open the Web UI's **Plugins** page and pick the **dsh-scholar-find** bundle;
+its configuration renders on the bundle's own page (the harness moved plugin
+configuration off the read-only Settings inventory in 0.1.7). Values are saved
+into the active profile's patch document
+(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`) as
+
+```yaml
+- id: dsh-scholar-find
+  config:
+    unpaywallEmail: you@example.org
+```
+
+and apply live — no restart. API keys are the exception: their literals go to
+the DSH credentials domain (key management), and the card shows only whether a
+key is configured. Nothing needs editing by hand.
 
 ## Usage
 
@@ -42,7 +63,8 @@ Restart the deployment afterwards.
   says so instead of handing you the wrong PDF).
 - Ask for a **reference list** — it comes back in the style you name, with
   `[^n]` footnote definitions ready to paste.
-- Set it up in **Settings → Plugins → Plugin configuration**: your email
+- Set it up on the Web UI's **Plugins** page (**dsh-scholar-find** → its
+  configuration): your email
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
   `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`html/`/`figs/`/

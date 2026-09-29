@@ -40,7 +40,7 @@ scholar-* workflow skills.
   - Prefer when: a DOI or arXiv id is already in hand and metadata is needed.
 - scholar_get_paper_snippets: ~500-word full-text snippets from the Ai2 Asta corpus.
   - Limitations: requires the Asta API key; corpus coverage varies by paper.
-  - Exceptions: unconfigured key — direct the user to Settings → Plugins → Plugin configuration.
+  - Exceptions: unconfigured key — direct the user to the Web UI's Plugins page (the dsh-scholar-find plugin's configuration).
   - Prefer when: a specific passage from one known paper is needed and the key is configured.
 - scholar_get_citations: papers citing a known paper, with intent labels.
   - Limitations: S2 graph coverage is incomplete; one hop per call; the list is capped by maxResults.

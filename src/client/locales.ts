@@ -1,16 +1,18 @@
 /**
- * Locale dictionaries for the dsh-scholar-find settings card (client half).
- * Registered under the `dsh-scholar-find` dictionary namespace.
+ * Locale dictionaries for the dsh-scholar-find settings page (client half).
+ * Registered under the `dsh-scholar-find` dictionary namespace: the page's own
+ * labels, plus the copy the shared settings form frame renders (save /
+ * read-only / unavailable / save-failed).
  * @module dsh-scholar-find/client-locales
  */
 
 export const NS = 'dsh-scholar-find'
 
-/** Locale keys this card renders. */
+/** Locale keys this page renders. */
 export type ScholarLocaleKey =
-  | 'title' | 'description'
-  | 'save' | 'saving' | 'discard' | 'overridden' | 'reset'
-  | 'unsaved' | 'expand' | 'collapse' | 'readOnly' | 'invalidNumber'
+  | 'description'
+  | 'save' | 'saving' | 'saveFailed' | 'unavailable'
+  | 'overridden' | 'reset' | 'readOnly' | 'invalidNumber'
   | 'configured' | 'notConfigured'
   | 'unpaywallEmail' | 'unpaywallEmailHint'
   | 's2ApiKey' | 's2ApiKeyHint'
@@ -25,16 +27,13 @@ export type ScholarLocaleKey =
   | 's2RequestGapMs' | 's2RequestGapMsHint'
 
 export const en: Record<ScholarLocaleKey, string> = {
-  title: 'Scholar Retrieval',
   description: 'Semantic Scholar search, open-access PDF fetch, and Sciverse corpus retrieval.',
   save: 'Save',
   saving: 'Saving…',
-  discard: 'Discard',
+  saveFailed: 'The deployment did not accept these values; they were left for you to correct.',
+  unavailable: 'This plugin is not loaded, so it cannot be configured right now.',
   overridden: 'Overridden',
   reset: 'Reset',
-  unsaved: 'Unsaved',
-  expand: 'Show settings',
-  collapse: 'Hide settings',
   readOnly: 'This deployment stores settings read-only.',
   invalidNumber: 'Enter a number, or leave blank to use the default.',
   configured: 'Key set',
@@ -64,16 +63,13 @@ export const en: Record<ScholarLocaleKey, string> = {
 }
 
 export const zh: Record<ScholarLocaleKey, string> = {
-  title: '学术检索',
   description: 'Semantic Scholar 论文检索、开放获取 PDF 下载与 Sciverse 语料检索。',
   save: '保存',
   saving: '保存中…',
-  discard: '放弃修改',
+  saveFailed: '本部署没有接受这些值，已保留供你修改。',
+  unavailable: '该插件当前未加载，暂时无法配置。',
   overridden: '已覆盖',
   reset: '恢复默认',
-  unsaved: '未保存',
-  expand: '显示设置',
-  collapse: '收起设置',
   readOnly: '当前部署以只读方式存储设置。',
   invalidNumber: '请填数字；留空表示使用默认值。',
   configured: '已设置密钥',

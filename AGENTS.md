@@ -87,15 +87,26 @@ instructions:
    behaviour. `skills` is deliberately NOT in `inject`
    (a profile without the skill service degrades to the resident floor).
 
-The user configures plugin parameters (Unpaywall email, S2 API key, CloakBrowser
-toggle, proxy, output directory, …) in the **DSH Web UI: Settings → Plugins →
-Plugin configuration**; values persist to `$DSH_HOME/settings.yaml`.
+The user configures plugin parameters (Unpaywall email, API keys, CloakBrowser
+toggle, proxy, output directory, …) on the **DSH Web UI's Plugins page** — the
+**dsh-scholar-find** bundle's own configuration (0.1.7 removed the Settings →
+Plugins → Plugin configuration surface; the read-only settings inventory no
+longer holds plugin forms). Values persist to the active profile's patch
+document (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`) as an id-targeted
+`- id: dsh-scholar-find` row and apply live.
 
-Settings registration is a **runtime service call** (`ctx.settings.installSection`)
-— the plugin imports nothing from `@deepseek-ai/dsh-settings` (no runtime import,
-no type import, no direct dependency). The namespace/schema are validated by the
-installed profile's copy, so an upstream dsh API change fails **loudly at plugin
-activation** instead of being silently masked by a private nested copy.
+Settings registration is the **plugin's own Cordis `Config` schema**
+(`src/settings.ts`, exported as `Config` from `src/index.ts`): the loader parses
+the profile row with it, and every field is `.volatile()`, which is what the
+settings service projects into the editable form and what lets a saved value be
+committed into the running references without remounting the plugin. The plugin
+still imports nothing from `@deepseek-ai/dsh-settings` (no runtime import, no
+type import, no direct dependency) — the schema, the namespace, and the writes
+are validated by the installed profile's copy, so an upstream dsh API change
+fails **loudly at plugin activation** instead of being silently masked by a
+private nested copy. The numeric bounds live in that schema (the write-time
+boundary) and `assertServiceableScholarSettings()` re-checks the config the
+running fiber actually carries at activation.
 
 ## Implementation rules (mandatory)
 
@@ -108,7 +119,7 @@ activation** instead of being silently masked by a private nested copy.
   requirement). **Reference citations live only in `README.md`** — that is the
   single sanctioned place that names external skills.
 - **No user-preset dependency.** The plugin is a self-contained
-  host-composition unit — tools, settings section, and companion-instructions
+  host-composition unit — tools, its own Config (settings) schema, and companion-instructions
   prompt row are mounted deployment-wide (host plane). No personalized agent
   preset is required or used.
 - **No CLI.** The plugin ships no binary; every capability is a DSH tool. Retry
@@ -157,14 +168,14 @@ A local `link:`/`file:` install does not run `prepare`, so build once with
 automatically. Live examples already in this
 deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
-## Configuration (user-owned, via Web UI settings, not env vars in code)
+## Configuration (user-owned, via the Web UI Plugins page, not env vars in code)
 
-| Setting (namespace `dsh-scholar-find`) | Purpose |
+| Config field (entry id `dsh-scholar-find`) | Purpose |
 | --- | --- |
 | `unpaywallEmail` | Required for the Unpaywall source; also used as Crossref `mailto`. |
-| `s2ApiKeyRef` | Optional S2 key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Semantic Scholar API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`) — never stored in the settings section. **Decided: anonymous mode** (empty ref → 5 s pacing). |
-| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the card's write-only "Ai2 Asta API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`). Enables `scholar_get_paper_snippets` (~500-word full text). |
-| `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the card's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
+| `s2ApiKeyRef` | Optional S2 key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the page's write-only "Semantic Scholar API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`) — never stored in the settings row. **Decided: anonymous mode** (empty ref → 5 s pacing). |
+| `astaApiKeyRef` | Optional Ai2 Asta corpus MCP key — a **DSH credential reference** (the record name; resolved via `ctx.credentials`). The key literal is entered on the page's write-only "Ai2 Asta API key" control, which writes to the **DSH credentials domain** (`api.credentials.set`). Enables `scholar_get_paper_snippets` (~500-word full text). |
+| `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the page's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
 | `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar), `cards/` (the `scholar-memory` DOI card library, written by the model via its file tools). |
@@ -183,7 +194,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-settings section, companion instructions, client-half settings card. **373 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+Config schema, companion instructions, client-half settings page. **388 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report
@@ -199,10 +210,10 @@ nested `{error:{code}}` body the gateway sends, retries 429/5xx/timeout
 end a read.
 
 The three API keys (`s2ApiKeyRef`, `astaApiKeyRef`, `sciverseApiKeyRef`) use the
-**native DSH credentials-domain pattern**: the settings section carries only the
-credential **reference** (record name), the card's write-only key controls write
+**native DSH credentials-domain pattern**: the settings row carries only the
+credential **reference** (record name), the page's write-only key controls write
 the literal to the **DSH credentials domain** (`api.credentials.set`), and the
 keys are resolved at runtime via `ctx.credentials.resolve(credentialRef(...))` —
-never stored in the settings section/repo.
+never stored in the settings row/repo.
 
 Keep everything TypeScript-only, clean-room, and test-covered.

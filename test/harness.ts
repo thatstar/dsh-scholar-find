@@ -25,6 +25,11 @@ export interface ScholarHarness {
   byName: Map<string, CapturedTool>
   skills: Array<{ name: string; source: string; content: string }>
   sections: Array<{ name: string; order: number; text: string }>
+  /**
+   * The page policy the plugin registered with the settings service (undefined
+   * when the fake profile serves no settings service at all).
+   */
+  settingsPolicy: { auto?: boolean } | undefined
   /** Patch the live settings the tools read through `env.settings()`. */
   setSettings(patch: Partial<ScholarSettings>): void
 }
@@ -41,14 +46,23 @@ export function makeScholarContext(
   const tools: CapturedTool[] = []
   const skills: Array<{ name: string; source: string; content: string }> = []
   const sections: Array<{ name: string; order: number; text: string }> = []
-  let current: ScholarSettings = { ...DEFAULT_SCHOLAR_SETTINGS, s2RequestGapMs: 1, ...overrides }
+  let settingsPolicy: { auto?: boolean } | undefined
+  // The live config the plugin reads. Mutated in place (like the volatile
+  // references the loader commits into) so `setSettings` is visible to the
+  // plugin through the same read path a saved value takes.
+  const current: ScholarSettings = { ...DEFAULT_SCHOLAR_SETTINGS, s2RequestGapMs: 1, ...overrides }
 
-  const ctx = {
+  /** The settings-service child `ctx.inject(['settings'], …)` hands the plugin. */
+  const settingsChild = {
     settings: {
-      installSection: (_owner: unknown, _ns: string, _schema: unknown, _entry: unknown, hooks: { setSource(current: () => ScholarSettings): void }) => {
-        hooks.setSource(() => current)
+      configure: (presentation: { auto?: boolean }) => {
+        settingsPolicy = presentation
+        return () => {}
       },
     },
+    effect: <T>(callback: () => T): T => callback(),
+  }
+  const ctx = {
     get(name: string): unknown {
       if (name === 'tools') return { register: (t: CapturedTool) => { tools.push(t); return () => {} } }
       if (name === 'skills') return { register: (s: { name: string; source: string; content: string }) => { skills.push(s); return () => {} } }
@@ -57,17 +71,21 @@ export function makeScholarContext(
       if (name === 'web') return opts.web
       return undefined
     },
+    on: () => () => {},
+    inject: (_deps: string[], callback: (child: typeof settingsChild) => void) => { callback(settingsChild) },
     effect: <T>(callback: () => T): T => callback(),
+    fiber: {},
   }
 
-  apply(ctx as never)
+  apply(ctx as never, current)
   if (tools.length === 0) throw new Error('harness: apply() registered no tools')
   return {
     tools,
     byName: new Map(tools.map((t) => [t.name, t])),
     skills,
     sections,
-    setSettings: (patch) => { current = { ...current, ...patch } },
+    settingsPolicy,
+    setSettings: (patch) => { Object.assign(current, patch) },
   }
 }
 

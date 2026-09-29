@@ -15,6 +15,21 @@ export const DEFAULT_ASTA_KEY_REF = 'ASTA_API_KEY'
 export const DEFAULT_SCIVERSE_KEY_REF = 'SCIVERSE_API_TOKEN'
 
 /**
+ * Loader entry id of this plugin's row — which doubles as its settings
+ * namespace: the Config-derived forms address one profile entry by id, and the
+ * browser half binds `configForms` to the same string. Must stay in sync with
+ * the `id` of the row in `cordis.patch.yml`.
+ */
+export const SCHOLAR_ENTRY_ID = 'dsh-scholar-find'
+
+/**
+ * npm package name of the bundle (what `dsh plugin add` installs). The Plugins
+ * page keys a bundle's own configuration by the package name, so the browser
+ * half registers under this string. Must stay in sync with `package.json`.
+ */
+export const SCHOLAR_PACKAGE_NAME = 'dsh-scholar-find'
+
+/**
  * Trim a resolved credential value before use. API keys/tokens must not carry
  * surrounding whitespace (a stored `" s2k-..."` would be sent verbatim);
  * whitespace-only values degrade to undefined (fail-closed to anonymous).

@@ -284,7 +284,7 @@ describe('resident instructions (slim core invariants)', () => {
     expect(SCHOLAR_INSTRUCTIONS).toContain('never invent a DOI')
     expect(SCHOLAR_INSTRUCTIONS).toContain('~30 requests/minute')
     expect(SCHOLAR_INSTRUCTIONS).toContain('Never download or extract speculatively')
-    expect(SCHOLAR_INSTRUCTIONS).toContain('Settings → Plugins → Plugin configuration')
+    expect(SCHOLAR_INSTRUCTIONS).toContain("Web UI's Plugins page")
   })
 })
 

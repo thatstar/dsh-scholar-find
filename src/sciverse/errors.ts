@@ -71,7 +71,7 @@ export function sciverseEnvelope(e: unknown, label: string): SciverseErrorEnvelo
       }
     }
     if (e.status === 401 || e.status === 403) {
-      return { ok: false, code: 'forbidden', retryable: false, ...base, markdown: `Sciverse rejected the token (${e.status}${upstream ? ` ${upstream}` : ''}). Re-enter the "Sciverse API token" in Settings → Plugins → Plugin configuration.` }
+      return { ok: false, code: 'forbidden', retryable: false, ...base, markdown: `Sciverse rejected the token (${e.status}${upstream ? ` ${upstream}` : ''}). Re-enter the "Sciverse API token" on the Web UI's Plugins page (dsh-scholar-find configuration).` }
     }
     if (e.status === 404) {
       return { ok: false, code: 'not_found', retryable: false, ...base, markdown: `Sciverse has no record for this ${label} request (404${upstream ? ` ${upstream}` : ''}). Check the identifier.` }

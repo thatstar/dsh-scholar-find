@@ -11,8 +11,8 @@
 # into the host composition.
 #
 # The plugin registers, from its `apply(ctx)`:
-#   - the `dsh-scholar-find` settings section (Web UI: Settings -> Plugins ->
-#     Plugin configuration),
+#   - the `dsh-scholar-find` settings (this row's own Config schema; edited on
+#     the Web UI's Plugins page under the `dsh-scholar-find` bundle),
 #   - the `scholar_search_*` / `paper_fetch_*` / `sciverse_*` tools,
 #   - the companion-instructions prompt section.
 - insert:
