@@ -175,9 +175,14 @@ deployment must reload to activate the rows.
 
 Build note: `lib/` is **not git-tracked** (built by `prepare`, mirroring
 upstream dsh plugins — only the published/installed package carries `lib/`).
-A local `link:`/`file:` install does not run `prepare`, so build once with
-`npm run build` before `dsh plugin add`; a git/registry install runs `prepare`
-automatically. Live examples already in this
+A local `link:`/`file:`/tarball install never runs `prepare`, so build once with
+`npm run build` before `dsh plugin add`; only a **git** spec runs it (pnpm's
+`prepare-package` builds the checkout with a bare `<pm> install`, so that path
+needs pnpm + npm + node on `PATH` **and** an `allowBuilds` entry). For machines
+where Node lives inside an app bundle (DSH desktop on Windows), `npm run
+pack:dist` (`scripts/pack-dist.mjs`) stages a prebuilt `dist/dsh-scholar-find/`
+plus `dist/dsh-scholar-find-<version>.tgz`, whose manifest has `prepare` removed
+— installing either runs no build at all. Live examples already in this
 deployment: `dsh-better-sidebar`, `@anysearch/anysearch-dsh`.
 
 **Runtime generation.** The build target is the **DSH 0.2.0-rc.1** generation

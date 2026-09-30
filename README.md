@@ -32,6 +32,35 @@ npm run build
 dsh plugin --profile web add .
 ```
 
+`dsh plugin` forwards to pnpm, so pnpm must be on `PATH` (or be named by the
+plugin manager's `pnpmCommand`). Only a **git** spec makes the target machine
+build anything — pnpm builds a git checkout through a bare `<pm> install`, which
+needs `npm` and `node` on `PATH` as well, plus the `allowBuilds` entry it prints.
+A path or tarball spec is installed exactly as it comes.
+
+### Distributing a prebuilt artifact
+
+So to install on a machine whose Node lives inside an app bundle (DSH desktop on
+Windows), ship it built:
+
+```bash
+npm run pack:dist                              # → dist/dsh-scholar-find/ + dist/dsh-scholar-find-<version>.tgz
+npm run pack:dist -- --out ../dsh-scholar-find-dist
+```
+
+Then on the target machine:
+
+```bash
+dsh plugin --profile web add <folder>/dsh-scholar-find-0.2.0.tgz   # or …/<folder>/dsh-scholar-find
+```
+
+The staged package ships `lib/` already compiled and its `package.json` has the
+`prepare` script removed, so no install path — not even a git URL pointing at the
+staged folder — can trigger a build there. Its runtime dependencies (`parse5`,
+`undici`, `playwright-core`, `cloakbrowser`) are still resolved from the
+registry. Prefer the tarball: a directory spec installs as a `link:`, a symlink
+that breaks if the folder moves.
+
 Restart the deployment afterwards. The build target is the **DSH 0.2.0-rc.1**
 generation (`cordis ~4.0.4`, `@deepseek-ai/schemastery ^3.18.4`): the settings
 page, the client module graph, and the plugin `Config` schema all follow that
