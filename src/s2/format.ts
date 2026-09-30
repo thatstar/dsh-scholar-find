@@ -53,8 +53,11 @@ export function formatDetails(papers: readonly PaperLike[], maxPapers = 10): str
     const authorsFull = (p.authors ?? []).length > 5 ? `${authors} et al.` : authors
     const doi = doiOfPaper(p)
     const tldr = p.tldr?.text ?? ''
-    const abstract = (p.abstract ?? '').slice(0, 300)
-    const summary = tldr || (abstract.length ? `${abstract}${(p.abstract ?? '').length > 300 ? '...' : ''}` : '')
+    const abstractFull = p.abstract ?? ''
+    // The summary is the SHORT form (TLDR, else a 300-char abstract teaser);
+    // the full abstract gets its own line below when the caller asked for it
+    // (`scholar_get_paper` with includeAbstract — search rows never carry one).
+    const summary = tldr || (abstractFull ? `${abstractFull.slice(0, 300)}${abstractFull.length > 300 ? '...' : ''}` : '')
     lines.push(`### ${i + 1}. ${p.title ?? 'Untitled'} (${p.year ?? '?'})`)
     lines.push(`**Authors:** ${authorsFull || 'unknown'}`)
     lines.push(doi ? `**Citations:** ${p.citationCount ?? 0} | **DOI:** ${doi}` : `**Citations:** ${p.citationCount ?? 0}`)
@@ -68,6 +71,7 @@ export function formatDetails(papers: readonly PaperLike[], maxPapers = 10): str
     ].filter(Boolean)
     if (evidence.length) lines.push(evidence.join(' | '))
     if (summary) lines.push(`**Summary:** ${summary}`)
+    if (abstractFull) lines.push(`**Abstract:** ${abstractFull.slice(0, 1200)}${abstractFull.length > 1200 ? '...' : ''}`)
     lines.push('')
   }
   return lines.join('\n')
@@ -96,19 +100,6 @@ export function formatAuthors(authors: readonly { name?: string; affiliations?: 
 }
 
 /**
- * BibTeX concatenation.
- *
- * S2's `/paper/batch` answers `null` in every position it could not resolve
- * (live-verified), so rows are optional and a missing/null row or a record
- * without `citationStyles.bibtex` is skipped rather than thrown on.
- */
-export function exportBibtex(papers: readonly (PaperLike | null | undefined)[]): string {
-  return bibtexEntries(papers)
-    .filter((b) => b !== '')
-    .join('\n\n')
-}
-
-/**
  * One BibTeX string per requested id, in the request order (`''` when that id
  * produced no entry — a null row or a record without `citationStyles.bibtex`).
  * Callers derive both "how many exported" and "which ids failed" from this one
@@ -130,6 +121,8 @@ export function compactPapers(papers: readonly PaperLike[]): JsonValue[] {
     venue: p.venue ?? null,
     doi: doiOfPaper(p) || null,
     tldr: p.tldr?.text ?? null,
+    // Present only when the caller requested it (get_paper with includeAbstract).
+    ...(typeof p.abstract === 'string' && p.abstract ? { abstract: p.abstract } : {}),
     fieldsOfStudy: (p.fieldsOfStudy ?? []).map((f) => String(f)),
     isOpenAccess: p.isOpenAccess ?? null,
     publicationTypes: (p.publicationTypes ?? []).map((f) => String(f)),

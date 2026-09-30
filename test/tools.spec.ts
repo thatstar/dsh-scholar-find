@@ -41,6 +41,23 @@ describe('scholar_get_paper — expectedTitle verification', () => {
     expect(out.markdown).not.toContain('Title mismatch')
   })
 
+  it('surfaces the abstract when includeAbstract is set (and as the JSON field)', async () => {
+    stubFetch((url) => {
+      expect(decodeURIComponent(url)).toContain('abstract')
+      return jsonResponse({
+        paperId: 'p1', title: 'A study', year: 2020, abstract: 'We show that the effect is real.',
+        tldr: { text: 'Short take.' }, externalIds: { DOI: '10.1/x' },
+      })
+    })
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_get_paper', { paperId: 'DOI:10.1/x', includeAbstract: true })
+    // With a TLDR present the summary stays the short form, but the abstract
+    // must still reach the model on its own line.
+    expect(out.markdown).toContain('**Summary:** Short take.')
+    expect(out.markdown).toContain('**Abstract:** We show that the effect is real.')
+    expect(out.paper.abstract).toBe('We show that the effect is real.')
+  })
+
   it('reports `unverified` when no expectedTitle was supplied', async () => {
     stubFetch(() => jsonResponse({ paperId: 'p1', title: 'Something', externalIds: {} }))
     const h = makeScholarContext()

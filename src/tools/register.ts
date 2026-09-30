@@ -483,7 +483,7 @@ Not for: title lookup (\`scholar_match_title\`) or full text (\`scholar_get_pape
 Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for ids taken from a list/table; a mismatch means the id resolves to a DIFFERENT work — do not cite it), and the canonical card path for the memory library.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id with prefix, e.g. DOI:10.1038/s41586-020-2649-2', required: true },
-      includeAbstract: { type: 'boolean', description: 'Include the abstract (larger response)' },
+      includeAbstract: { type: 'boolean', description: 'Also fetch the abstract and render it as its own **Abstract:** line (plus the `paper.abstract` field) — larger response; search results never carry one.' },
       expectedTitle: { type: 'string', description: 'Title you expect this id to resolve to; enables the title_mismatch warning (recommended for ids taken from a list result)' },
     },
     output: markdownOutput(
@@ -930,7 +930,7 @@ Returns: the saved path plus the winning source; an existing file is skipped unl
     description: `Fetch many papers by DOI (or a mix of dois/titles) in one resumable envelope.
 Use when: the user explicitly wants several PDFs at once.
 Not for: a single paper (\`paper_fetch_download\`) or link-only checks (\`paper_fetch_resolve\`).
-Returns: per-item results, a summary and retry hints for the failed subset (\`next\`); one failure never discards the batch. Re-call with the same \`idempotencyKey\` to replay it without re-downloading. Needs \`unpaywallEmail\` for Unpaywall.`,
+Returns: per-item results, a summary and retry hints for the failed subset (\`next\`); one failure never discards the batch. Re-call with the same \`idempotencyKey\` to replay it without re-downloading. Needs \`unpaywallEmail\` for Unpaywall. No hard list cap, but the items are fetched sequentially under a ~10-minute tool budget: a very long list times out mid-way — re-call with the same key to resume.`,
     parameters: {
       dois: { type: 'array', items: { type: 'string', description: 'DOI' }, description: 'DOIs to fetch (give dois and/or titles — both are fetched; needs unpaywallEmail for Unpaywall)' },
       titles: { type: 'array', items: { type: 'string', description: 'Paper title to resolve first' }, description: 'Titles to resolve + fetch' },
@@ -2000,7 +2000,7 @@ Returns: per claim {claim, quote, chunk_id, doc_id, offset, page_no, title, scor
     parameters: {
       claims: { type: 'array', items: { type: 'string' }, description: `Claims to ground (1-${EVIDENCE_MAX_CLAIMS}); each is used as the semantic query`, required: true },
       top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap ${EVIDENCE_MAX_TOP_K})` },
-      min_score: { type: 'number', description: `Minimum score to count as a match (default ${EVIDENCE_DEFAULT_MIN_SCORE})` },
+      min_score: { type: 'number', description: `Minimum score to count as a match (default ${EVIDENCE_DEFAULT_MIN_SCORE}, clamped to 0-1)` },
       mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'Semantic search mode: fast=keyword (~200ms); balanced=hybrid (~600ms, default); quality=LLM-rewrite (~2-4s)' },
       quote_max: { type: 'integer', description: `Max quote length per item in chars (default ${EVIDENCE_DEFAULT_QUOTE_MAX}, clamped to 100-2000)` },
     },

@@ -61,7 +61,7 @@ instructions:
    that contract. The resident surface is budgeted: `test/prompts.spec.ts`
    guards the L1 total recursively — the tool description plus every nested
    parameter/item description, i.e. all of `input_schema` — at ≤29,000 chars
-   (measured 28,279), and the `scholar-tools` skill is a single small load
+   (measured 28,634), and the `scholar-tools` skill is a single small load
    (~5.7k chars).
 4. **`arxiv_*`** — official arXiv HTML full text: `arxiv_get_fulltext` fetches
    `https://arxiv.org/html/<id>` (arXiv's own LaTeXML-converted HTML,
@@ -243,7 +243,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-Config schema, companion instructions, client-half settings page. **425 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+Config schema, companion instructions, client-half settings page. **426 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

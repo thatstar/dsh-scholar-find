@@ -60,7 +60,6 @@ export const SCIVERSE_CONTENT_DEFAULT_LIMIT = 4096
 /** `/content` documented bounds: `offset` ≥ 0, `limit` 1–524288 (silently clamped upstream). */
 export const SCIVERSE_CONTENT_LIMIT_MAX = 524288
 
-
 /**
  * JSON-ish error body → structured error with the documented `code`.
  *
@@ -208,6 +207,8 @@ export class SciverseClient {
     // Documented bounds (page ≥ 1, page_size 1–200): the tool schema cannot
     // express min/max, so clamp here rather than let the gateway answer 400.
     const page = clampNumber(args.page, 1, Number.MAX_SAFE_INTEGER)
+    // `/meta-paper-relations` shares today's 200 bound with `/meta-search`; if the
+    // endpoints ever diverge, give this call its own constant.
     const pageSize = clampNumber(args.page_size, 1, META_SEARCH_PAGE_SIZE_MAX)
     return this.json('list_paper_relations', '/meta-paper-relations', {
       method: 'POST',

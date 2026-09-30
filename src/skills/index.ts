@@ -1,8 +1,8 @@
 /**
  * The scholar skills (variant C, split): one skill per workflow — each a
  * self-contained recipe + output contract, extensible independently (output
- * control lands in the skill's `## Output` section) — plus the scholar-tools
- * per-tool behavioral catalog. Pure data; registration lives in ../index.ts.
+ * control lands in the skill's `## Output` section) — plus `scholar-tools`, the
+ * cross-tool policy + routing map. Pure data; registration lives in ../index.ts.
  * @module dsh-scholar-find/skills
  */
 

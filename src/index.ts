@@ -8,7 +8,7 @@
  *      family map + a pointer to the scholar-* skills; falls back to the full
  *      rulebook only on a profile with no skills service),
  *   4. the scholar skills (on-demand: one skill per workflow + the
- *      scholar-tools per-tool catalog) as runtime skill contributions.
+ *      scholar-tools cross-tool policy + routing map) as runtime skill contributions.
  *
  * Pure TypeScript, Node host, no Python, no vendored upstream code.
  * @module dsh-scholar-find
@@ -165,7 +165,7 @@ export function apply(ctx: Context, config?: ScholarConfigInput): void {
   // 4. Companion skills -----------------------------------------------------
   // Variant C, split: one skill per workflow (recipe + output contract — the
   // `## Output` section is the later extension point for output control) plus
-  // the scholar-tools per-tool catalog. Runtime contributions
+  // the scholar-tools cross-tool policy + routing map. Runtime contributions
   // (ctx.skills.register) — no provider plumbing. 'skills' is deliberately
   // NOT declared in `inject`: cordis holds apply() until every declared
   // service exists, so declaring it would keep the whole plugin (tools,

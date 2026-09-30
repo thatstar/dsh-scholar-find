@@ -42,7 +42,7 @@ describe('tool descriptions — shared skeleton', () => {
   it('keeps the resident tool surface within budget (see .notes/74)', () => {
     // L1 = everything the provider sends as the tool's `input_schema`: the tool
     // description plus EVERY nested parameter/item description (all of them are
-    // prompt cost, so the walk is recursive). Measured 28,279 after the
+    // prompt cost, so the walk is recursive). Measured 28,634 after the
     // .notes/74 cleanup + the .notes/75 review fixes (34,047 before the
     // cleanup); the guard stops the surface from silently growing back.
     const surface = (node: unknown): number => {
@@ -58,12 +58,17 @@ describe('tool descriptions — shared skeleton', () => {
       0,
     )
     expect(total).toBeLessThanOrEqual(29000)
+    // A lower bound too: an empty/partial tool list must not pass the guard.
+    expect(total).toBeGreaterThan(25000)
   })
 
   it('names the look-alike alternative in Not for where tools overlap', () => {
     // Crossrefs the model needs without loading a skill: S2 vs Sciverse search,
     // S2 graph vs Sciverse relations, the three body-text paths.
     expect(tool('scholar_search_papers').description).toContain('scholar_search_papers_by_snippet')
+    // The two corpora must name each other (R11), not just live in the skill.
+    expect(tool('scholar_search_papers').description).toContain('sciverse_search_papers')
+    expect(tool('sciverse_search_papers').description).toContain('scholar_search_papers')
     expect(tool('scholar_get_citations').description).toContain('sciverse_list_paper_relations')
     expect(tool('sciverse_search_papers').description).toContain('sciverse_semantic_search')
     expect(tool('sciverse_semantic_search').description).toContain('sciverse_read_content')
