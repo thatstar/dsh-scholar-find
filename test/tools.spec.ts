@@ -216,6 +216,41 @@ describe('sciverse_read_content — doc_id fallback', () => {
     expect(out.markdown).toContain('alternate doc_id')
   })
 
+  it('always sends offset/limit and reports the API count field', async () => {
+    let seen = ''
+    stubFetch((url) => {
+      if (url.includes('/content?')) {
+        seen = url
+        // Live-verified: the API answers with `bytes_returned` (older material
+        // calls it `chars_returned`). A LONGER text than the reported count
+        // makes the assertion discriminating: the pre-change code fell back to
+        // text.length and would report 28 instead of 5.
+        return jsonResponse({ text: 'a much longer slice text here', chars_returned: 5, next_offset: 5, more: false })
+      }
+      return jsonResponse({ error: 'unexpected ' + url }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_read_content', { doc_id: 'd1' })
+    // An omitted offset makes the API return the whole document and ignore limit.
+    expect(new URL(seen).searchParams.get('offset')).toBe('0')
+    expect(new URL(seen).searchParams.get('limit')).toBe('4096')
+    expect(out.bytes_returned).toBe(5)
+    expect(out.next_offset).toBe(5)
+    expect(out.markdown).toContain('bytes_returned`=5')
+    // Only `more:true` invites a follow-up read.
+    expect(out.markdown).not.toContain('continue with offset')
+  })
+
+  it('prefers bytes_returned over chars_returned (the live field)', async () => {
+    stubFetch((url) => url.includes('/content?')
+      ? jsonResponse({ text: 'abc', bytes_returned: 7, chars_returned: 5, next_offset: 7, more: true })
+      : jsonResponse({ error: 'unexpected ' + url }, 404))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_read_content', { doc_id: 'd1' })
+    expect(out.bytes_returned).toBe(7)
+    expect(out.markdown).toContain('continue with offset=7')
+  })
+
   it('caps the doc_id walk at 3 and still returns a typed envelope', async () => {
     let calls = 0
     stubFetch((url) => {
@@ -265,6 +300,63 @@ describe('sciverse_read_content — doc_id fallback', () => {
     expect(out.retryable).toBe(false)
     expect(out.attempts).toHaveLength(2)
     expect(out.markdown).toContain('Tried 2 doc_ids')
+  })
+})
+
+describe('sciverse_semantic_search — clamped top_k is echoed', () => {
+  const CRED = { resolve: async () => ({ value: 't' }) }
+
+  it('echoes the clamped value and omits the key when it was not supplied', async () => {
+    stubFetch((url) => url.includes('/agentic-search')
+      ? jsonResponse({ hits: [] })
+      : jsonResponse({ error: 'unexpected ' + url }, 404))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const clamped = await runTool(h, 'sciverse_semantic_search', { query: 'q', top_k: 500 })
+    expect(clamped.top_k).toBe(100)
+    const omitted = await runTool(h, 'sciverse_semantic_search', { query: 'q' })
+    expect('top_k' in omitted).toBe(false)
+  })
+})
+
+describe('sciverse_list_paper_relations — CITATIONS window pre-flight', () => {
+  const CRED = { resolve: async () => ({ value: 't' }) }
+
+  it('rejects a >10000 CITATIONS window without calling the gateway', async () => {
+    const mock = stubFetch(() => jsonResponse({ items: [], total_count: 0 }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_list_paper_relations', { unique_id: 'paper:10.1/x', relation: 'CITATIONS', page: 500, page_size: 50 })
+    expect(out.code).toBe('validation_error')
+    expect(out.retryable).toBe(false)
+    expect(out.markdown).toContain('10000')
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('lets REFERENCES page past 10000 (the gateway allows it — live-verified)', async () => {
+    const mock = stubFetch(() => jsonResponse({ items: [], total_count: 0 }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_list_paper_relations', { unique_id: 'paper:10.1/x', relation: 'REFERENCES', page: 500, page_size: 50 })
+    expect(out.ok).toBe(true)
+    expect(mock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('sciverse_list_paper_relations — rendering', () => {
+  const CRED = { resolve: async () => ({ value: 't' }) }
+
+  it('renders an empty-title OpenAlex reference row without an empty bold title', async () => {
+    stubFetch(() => jsonResponse({
+      total_count: 2,
+      items: [
+        { title: '', id: 'https://openalex.org/W6739901393', id_type: 'openalex' },
+        { title: 'A real citing paper', id: 'paper:10.1/x', id_type: 'sciverse' },
+      ],
+    }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_list_paper_relations', { unique_id: 'paper:10.1/a', relation: 'REFERENCES', page_size: 2 })
+    expect(out.markdown).not.toContain('****')
+    expect(out.markdown).toContain('https://openalex.org/W6739901393')
+    expect(out.markdown).toContain('_no title returned_')
+    expect(out.markdown).toContain('**A real citing paper**')
   })
 })
 
@@ -390,6 +482,47 @@ describe('scholar_format_references', () => {
   })
 })
 
+describe('scholar_export_bibtex — unresolvable ids', () => {
+  it('exports what resolved and reports the null row instead of throwing', async () => {
+    // Live-verified: S2 /paper/batch answers `null` in the position it cannot
+    // resolve (an earlier version threw on `null.citationStyles`).
+    stubFetch(() => jsonResponse([
+      { paperId: 'a', title: 'A', citationStyles: { bibtex: '@article{a, title={A}}' } },
+      null,
+    ]))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_export_bibtex', { ids: ['DOI:10.1/a', 'DOI:10.9999/nope'] })
+    expect(out.count).toBe(1)
+    expect(out.unresolved).toEqual(['DOI:10.9999/nope'])
+    expect(out.bibtex).toContain('@article{a')
+    const rendered = h.byName.get('scholar_export_bibtex')!.output.render({}, out) as Array<{ text?: string }>
+    expect(rendered[0]?.text).toContain('not resolved by Semantic Scholar')
+    expect(rendered[0]?.text).toContain('DOI:10.9999/nope')
+  })
+
+  it('counts only ids that produced an entry (a record without citationStyles is not a success)', async () => {
+    stubFetch(() => jsonResponse([{ paperId: 'a', title: 'A' }])) // resolved, but no citationStyles
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_export_bibtex', { ids: ['DOI:10.1/a'] })
+    expect(out.count).toBe(0)
+    expect(out.unresolved).toEqual(['DOI:10.1/a'])
+    expect(out.bibtex).toBe('')
+    const rendered = h.byName.get('scholar_export_bibtex')!.output.render({}, out) as Array<{ text?: string }>
+    expect(rendered[0]?.text).toContain('No BibTeX entries available.')
+    expect(rendered[0]?.text).toContain('not resolved by Semantic Scholar')
+  })
+
+  it('still renders plain text when nothing resolved', async () => {
+    stubFetch(() => jsonResponse([null]))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_export_bibtex', { ids: ['DOI:10.1/nope'] })
+    const rendered = h.byName.get('scholar_export_bibtex')!.output.render({}, out) as Array<{ text?: string }>
+    expect(out.count).toBe(0)
+    expect(rendered[0]?.text).toContain('No BibTeX entries available.')
+    expect(rendered[0]?.text).toContain('1 id(s) not resolved')
+  })
+})
+
 describe('discovery triage (fields / OA / off-topic)', () => {
   function stubSearch(rows: unknown[]): void {
     stubFetch(() => jsonResponse({ data: rows, total: rows.length }))
@@ -488,6 +621,84 @@ describe('sciverse_search_papers triage', () => {
     const out = await runTool(h, 'sciverse_search_papers', { query: 'x' })
     expect(out.markdown).not.toContain('undefined')
     expect(out.markdown).toContain('no id returned')
+  })
+
+  it('renders the live string-shaped access_is_oa evidence (not a JSON boolean)', async () => {
+    // Live-verified row shape: access_is_oa is the STRING "false"/"true"/"unknown",
+    // access_oa_status carries the readable value, and `type` is an array.
+    stubFetch(() => jsonResponse({
+      total_count: 2,
+      results: [
+        { unique_id: 'paper:10.1/closed', title: 'Closed work', access_is_oa: 'false', access_oa_status: 'closed', publication_venue_type: 'journal', type: ['article'] },
+        { unique_id: 'paper:10.1/open', title: 'Open work', access_is_oa: 'true', access_oa_status: 'gold', publication_venue_type: 'journal' },
+      ],
+    }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { query: 'nucleation' })
+    expect(out.markdown).toContain('closed · journal')
+    // R16: keep the specific OA flavour instead of collapsing it to a bare "OA".
+    expect(out.markdown).toContain('OA (gold) · journal')
+  })
+
+  it('rejects a page window above 10000 with a typed validation error (no API call)', async () => {
+    const mock = stubFetch(() => jsonResponse({ total_count: 1, results: [] }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { query: 'graphene', page: 500, page_size: 50 })
+    expect(out.code).toBe('validation_error')
+    expect(out.retryable).toBe(false)
+    expect(out.markdown).toContain('25000')
+    expect(out.markdown).toContain('10000')
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('renders authors-collection rows instead of paper-shaped "untitled" rows', async () => {
+    // Live-verified row shape (collection=authors): display_name, summary_stats.h_index,
+    // an OpenAlex `id`, and NO unique_id.
+    stubFetch(() => jsonResponse({
+      total_count: 1,
+      results: [{
+        works_count: 2, id: 'https://openalex.org/A5007174815', display_name: 'James Hinton Hinton',
+        cited_by_count: 0, last_known_institutions: [], summary_stats: { h_index: 0, i10_index: 0 },
+        orcid: '', relevance_score: 7.47,
+      }],
+    }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { collection: 'authors', query: 'hinton' })
+    expect(out.markdown).toContain('James Hinton Hinton')
+    expect(out.markdown).toContain('0 h-index')
+    expect(out.markdown).toContain('2 works')
+    expect(out.markdown).toContain('https://openalex.org/A5007174815')
+    expect(out.markdown).toContain('1 authors')
+    expect(out.markdown).not.toContain('untitled')
+  })
+
+  it('renders sources-collection rows (issn array / issn_l, is_oa) ', async () => {
+    // Live-verified row shape (collection=sources).
+    stubFetch(() => jsonResponse({
+      total_count: 1,
+      results: [{
+        is_core: true, works_count: 447855, type: 'journal', id: 'https://openalex.org/S137773608',
+        issn: ['0028-0836', '1476-4687'], issn_l: '0028-0836', host_organization_name: 'Nature Portfolio',
+        display_name: 'Nature', cited_by_count: 26663584, is_oa: false,
+      }],
+    }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { collection: 'sources', query: 'nature' })
+    expect(out.markdown).toContain('Nature')
+    expect(out.markdown).toContain('ISSN 0028-0836')
+    expect(out.markdown).toContain('closed')
+    expect(out.markdown).toContain('447855 works')
+    expect(out.markdown).not.toContain('untitled')
+  })
+
+  it('falls back to a row\'s scalar evidence when an entity row has no known name field', async () => {
+    stubFetch(() => jsonResponse({ total_count: 1, results: [{ some_source_field: 'ISSN 1234-5678', inst_id: 'S1' }] }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_search_papers', { collection: 'sources', query: 'x' })
+    expect(out.markdown).toContain('source row')
+    expect(out.markdown).toContain('some_source_field: ISSN 1234-5678')
+    expect(out.markdown).not.toContain('untitled')
+    expect(out.markdown).not.toContain('no id returned')
   })
 })
 

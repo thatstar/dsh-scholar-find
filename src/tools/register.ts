@@ -16,7 +16,7 @@ import * as fmt from '../s2/format.js'
 import * as fetchSvc from '../fetch/service.js'
 import type { FetchRuntime, WebSearchHit } from '../fetch/service.js'
 import { createSciverseClient } from '../sciverse/client.js'
-import { FILTER_OP_EQ, SORT_ORDER_DESC, paperOnlyFilter, topicYearPaperFilters } from '../sciverse/payload.js'
+import { FILTER_OP_EQ, SORT_ORDER_DESC, META_SEARCH_PAGE_WINDOW, SEMANTIC_TOP_K_MAX, clampNumber, clampedPageWindow, pageWindowExceeded, paperOnlyFilter, topicYearPaperFilters } from '../sciverse/payload.js'
 import { buildFigureFilename, extractFigureRefs, mapGetResourceError, safeImageBasename, sniffImageType } from '../sciverse/resource.js'
 import { sciverseEnvelope, shouldTryAlternateDocId, type SciverseErrorEnvelope } from '../sciverse/errors.js'
 import { buildEvidenceItem, groupDocIds, EVIDENCE_DEFAULT_QUOTE_MAX, EVIDENCE_MAX_TOP_K, mapS2Paper, pickEvidenceHit, rankTopicCandidates, resolveYearRange, topicIsConfident, topByCitation, topVenues, verifyQuoteInSlice, type EvidenceItem, type TopicCandidate, type TrendPaper, type TrendVenue } from '../sciverse/aggregate.js'
@@ -307,17 +307,20 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_search_papers',
-    description: `Search Semantic Scholar for academic papers by query. Use for literature discovery: broad topics, precise boolean queries, filters (year, venue, field of study, min citations, publication types, open access). Bulk search is preferred; TLDR summaries are only available via the relevance strategy.`,
+    description: `Search Semantic Scholar for academic papers by query.
+Use when: literature discovery — broad topics, boolean queries, filters (year, venue, field, min citations, type, OA).
+Not for: passage retrieval (\`scholar_search_papers_by_snippet\`), a known title's DOI (\`scholar_match_title\`), or the Sciverse corpus's structured screening (\`sciverse_search_papers\`).
+Returns: ranked rows carrying venue / fieldsOfStudy / publicationTypes / isOpenAccess plus an \`offTopic\` flag for narrow queries — triage without opening each record. Bulk is preferred; TLDR only via the relevance strategy.`,
     parameters: {
       query: { type: 'string', description: 'Search query. For precision use boolean syntax via the `boolean` parameter instead of raw operators.', required: true },
       boolean: {
         type: 'object',
         description: 'Structured boolean query components (exact phrases, +required, -excluded, OR groups, fuzzy/proximity). Preferred over raw boolean syntax.',
         properties: {
-          phrases: { type: 'array', items: { type: 'string', description: 'Exact phrase, quoted' } },
-          required: { type: 'array', items: { type: 'string', description: 'Term that must appear (+term)' } },
-          excluded: { type: 'array', items: { type: 'string', description: 'Term that must not appear (-term)' } },
-          orTerms: { type: 'array', items: { type: 'string', description: 'OR group (a | b | c)' } },
+          phrases: { type: 'array', items: { type: 'string', description: 'Exact phrase' } },
+          required: { type: 'array', items: { type: 'string', description: 'Required term (+term)' } },
+          excluded: { type: 'array', items: { type: 'string', description: 'Excluded term (-term)' } },
+          orTerms: { type: 'array', items: { type: 'string', description: 'OR group' } },
         },
         additionalProperties: true,
       },
@@ -399,7 +402,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_search_papers_by_snippet',
-    description: `Search Semantic Scholar full-text to find PAPERS that contain a specific passage/sentence/method: returns the matched snippet and the paper it appears in (a discovery-by-text search, unlike scholar_search_papers which searches metadata).`,
+    description: `Search Semantic Scholar full text for PAPERS that contain a specific passage/sentence/method and return the matched snippet with its paper.
+Use when: the user quotes or paraphrases a specific method or sentence and wants the papers containing it.
+Not for: topical discovery (\`scholar_search_papers\`) or reading one known paper (\`scholar_get_paper_snippets\`, \`arxiv_get_fulltext\`, \`sciverse_read_content\`).
+Returns: one matched snippet plus its paper per hit; empty means the index lacks that passage, not an API failure.`,
     parameters: {
       query: { type: 'string', description: 'Passage/method text to find in full-text bodies', required: true },
       paperIds: { type: 'string', description: 'Optional comma-separated paperIds to scope the search' },
@@ -430,7 +436,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_match_title',
-    description: `Resolve a paper title to its exact Semantic Scholar record (paperId, DOI, metadata). Use before fetching when only a title is known. Returns a \`titleCheck\` verdict: when the best hit is a different work the tool reports \`matched:false\` instead of a confident wrong record.`,
+    description: `Resolve a paper title to its exact Semantic Scholar record (paperId, DOI, metadata).
+Use when: only a title is known and a DOI/paperId is needed before any other call.
+Not for: fuzzy topic search (\`scholar_search_papers\`).
+Returns: \`matched\` plus a \`titleCheck\` verdict; when the best hit is a different work it reports \`matched:false\` instead of a confident wrong record — ask the user for the DOI rather than using that record.`,
     parameters: { title: { type: 'string', description: 'Exact paper title', required: true } },
     output: markdownOutput(
       { matched: { type: 'boolean' }, titleCheck: { type: 'json' }, paper: { type: 'json' } },
@@ -467,7 +476,11 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_paper',
-    description: `Fetch one paper by ID. ID forms: DOI:10.xxxx/..., ARXIV:2106.15928, PMID:..., PMCID:..., CorpusId:.... Pass \`expectedTitle\` whenever the ID came from a list/table result: the tool then compares the returned record's title with it and surfaces a \`titleCheck\` verdict (a mismatch means the identifier resolves to a DIFFERENT work — do not cite it).`,
+    description: `Fetch one paper by ID.
+ID forms: DOI:10.xxxx/..., ARXIV:2106.15928, PMID:..., PMCID:..., CorpusId:....
+Use when: a DOI or arXiv id is already in hand and its metadata (or an identity check) is needed.
+Not for: title lookup (\`scholar_match_title\`) or full text (\`scholar_get_paper_snippets\`, \`arxiv_get_fulltext\`, \`sciverse_read_content\`).
+Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for ids taken from a list/table; a mismatch means the id resolves to a DIFFERENT work — do not cite it), and the canonical card path for the memory library.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id with prefix, e.g. DOI:10.1038/s41586-020-2649-2', required: true },
       includeAbstract: { type: 'boolean', description: 'Include the abstract (larger response)' },
@@ -505,7 +518,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_paper_snippets',
-    description: `Get ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API). Requires a \`query\` (topic/phrase/title); pass \`paperIds\` to scope to specific papers. Returns the snippets plus paper metadata (title, authors, license).`,
+    description: `Get ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API).
+Use when: a specific passage from one known paper is needed and the Asta key is configured.
+Not for: whole-paper reading (\`arxiv_get_fulltext\`, \`sciverse_read_content\`, \`paper_pdf2md\`) or discovery (\`scholar_search_papers\`).
+Returns: verbatim snippets plus paper metadata. A \`query\` is required; pass \`paperIds\` to scope. An unconfigured key is reported as such — point the user at the Plugins page, do not retry.`,
     parameters: {
       query: { type: 'string', description: 'Text to find in the paper(s) — the topic, a phrase, or the paper title. Required.', required: true },
       paperIds: { type: 'string', description: 'Restrict to these papers: comma-separated S2 IDs, CorpusId:<id>, DOI:<doi>, ARXIV:<id>, PMID:<id>, PMCID:<id>.' },
@@ -549,7 +565,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_citations',
-    description: `List the papers citing a known paper, with optional intent labels (methodology/background/result) and context snippets. Reports a COVERAGE verdict: S2's graph is often incomplete, so "N citing papers" may be a truncated or partial list rather than a total — the result carries \`coverage\` (complete/truncated/partial/not_indexed/empty) and, when S2 serves none for a DOI, falls back to the Sciverse relations index. Set \`checkCoverage:false\` to skip the extra count lookup.`,
+    description: `List the papers citing a known paper, with optional intent labels (methodology/background/result) and context snippets.
+Use when: who-cites-X or citation-context questions on S2-indexed papers.
+Not for: what-X-cites (\`scholar_get_references\`) or deep in-platform relation paging (\`sciverse_list_paper_relations\`).
+Returns: citing papers plus a COVERAGE verdict — S2's graph is often incomplete, so "N citing papers" may be truncated or partial rather than a total. \`coverage\`: complete/truncated/partial/not_indexed/empty; when S2 serves none for a DOI it falls back to the Sciverse relations index (labelled). \`checkCoverage:false\` skips the extra count lookup.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id (e.g. DOI:10.48550/arXiv.1706.03762)', required: true },
       maxResults: { type: 'integer', description: 'Result cap (default 100)' },
@@ -593,7 +612,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_references',
-    description: `List the papers a known paper cites (backward citations). Reports a COVERAGE verdict: a zero-row answer for a record that HAS a reference list means "not indexed by S2", not "cites nothing" — the result carries \`coverage\` (complete/truncated/partial/not_indexed/empty) and, when S2 serves none for a DOI, falls back to the Sciverse relations index. Set \`checkCoverage:false\` to skip the extra count lookup.`,
+    description: `List the papers a known paper cites (backward citations).
+Use when: what-does-X-cite questions or building a related-work pool.
+Not for: who-cites-X (\`scholar_get_citations\`) or deep in-platform relation paging (\`sciverse_list_paper_relations\`).
+Returns: cited papers plus a COVERAGE verdict — a zero-row answer for a record that HAS a reference list means "not indexed by S2", not "cites nothing". \`coverage\`: complete/truncated/partial/not_indexed/empty; a DOI with no S2 rows falls back to the Sciverse relations index (labelled). \`checkCoverage:false\` skips the extra count lookup.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id', required: true },
       maxResults: { type: 'integer', description: 'Result cap (default 100)' },
@@ -627,7 +649,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_recommendations',
-    description: `Recommend papers similar to one or more seeds; negative seeds can steer away from unwanted topics.`,
+    description: `Recommend papers similar to one or more seed papers; negative seeds steer away from unwanted topics.
+Use when: find-papers-similar-to-X requests — more precise than keyword search once a good seed exists.
+Not for: broad keyword discovery (\`scholar_search_papers\`).
+Returns: recommended papers. Poor seeds give poor output — improve the seeds, do not just re-call.`,
     parameters: {
       positiveIds: { type: 'array', items: { type: 'string', description: 'Seed paper id' }, description: 'Seed papers (1+); recommendedPaperIds style ids or DOI:/ARXIV: forms', required: true },
       negativeIds: { type: 'array', items: { type: 'string', description: 'Seed paper id to steer away from' }, description: 'Optional negative seeds' },
@@ -653,7 +678,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_search_authors',
-    description: `Find researchers by name (affiliations, paper count, citations, h-index). Disambiguate common names by affiliation before using scholar_get_author.`,
+    description: `Find researchers by name (affiliations, paper count, citations, h-index).
+Use when: the user names a researcher rather than a paper.
+Not for: a resolved authorId's profile (\`scholar_get_author\`).
+Returns: candidate authors. Common names are ambiguous — disambiguate by affiliation before \`scholar_get_author\`.`,
     parameters: { query: { type: 'string', description: 'Author name', required: true }, maxResults: { type: 'integer', description: `Result cap (default ${s2.DEFAULT_AUTHORS}, max ${s2.S2_AUTHOR_SEARCH_MAX})` } },
     output: markdownOutput(
       { total: { type: 'integer' }, authors: { type: 'array', items: { type: 'json' } } },
@@ -670,7 +698,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_author',
-    description: `One author profile by authorId (affiliations, paper count, citations, h-index).`,
+    description: `One author profile by authorId (affiliations, paper count, citations, h-index).
+Use when: an author was disambiguated via \`scholar_search_authors\` and the profile is needed.
+Not for: listing that author's papers (\`scholar_get_author_papers\`).
+Returns: the profile record. A wrong authorId silently yields a different author — compare the returned name/affiliations before using it, and re-disambiguate if they do not match.`,
     parameters: { authorId: { type: 'string', description: 'Semantic Scholar authorId', required: true } },
     output: markdownOutput(
       { authorId: { type: 'string' }, author: { type: 'json' } },
@@ -688,7 +719,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_get_author_papers',
-    description: `An author's publication list by authorId.`,
+    description: `An author's publication list by authorId.
+Use when: list-X's-papers requests, or scanning an author's output for a topic.
+Not for: the author profile itself (\`scholar_get_author\`) or topic search (\`scholar_search_papers\`).
+Returns: the author's papers, capped by \`maxResults\`; prolific authors return long lists — filter locally.`,
     parameters: { authorId: { type: 'string', description: 'Semantic Scholar authorId', required: true }, maxResults: { type: 'integer', description: 'Result cap (default 100)' } },
     output: markdownOutput(
       { total: { type: 'integer' }, papers: { type: 'array', items: { type: 'json' } } },
@@ -705,19 +739,32 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_export_bibtex',
-    description: `Export BibTeX entries for up to 500 papers (by paperId or DOI:...).`,
+    description: `Export BibTeX entries for up to 500 papers (by paperId or DOI:...).
+Use when: the user collects references — offer it at the end of a search task.
+Not for: a styled, footnote-ready reference list (\`scholar_format_references\`).
+Returns: the BibTeX text (\`count\` entries) plus \`unresolved\` — the ids that produced NO entry (no Semantic Scholar record, or a record without \`citationStyles.bibtex\`), reported rather than crashing.`,
     parameters: { ids: { type: 'array', items: { type: 'string', description: 'paperId or DOI:id' }, description: 'Papers to export', required: true } },
     output: {
-      schema: { type: 'object', properties: { count: { type: 'integer' }, bibtex: { type: 'string' } }, additionalProperties: true },
+      schema: { type: 'object', properties: { count: { type: 'integer' }, unresolved: { type: 'array', items: { type: 'string' } }, bibtex: { type: 'string' } }, additionalProperties: true },
       render(_args, value: any) {
-        return value.bibtex ? text(value.bibtex) : text('No BibTeX entries available.')
+        const note = Array.isArray(value?.unresolved) && value.unresolved.length
+          ? `\n\n> ${value.unresolved.length} id(s) not resolved by Semantic Scholar (no BibTeX entry): ${value.unresolved.map((i: string) => `\`${i}\``).join(', ')}`
+          : ''
+        return text((value?.bibtex || 'No BibTeX entries available.') + note)
       },
     },
     async execute(args, exec) {
       const { s2: client } = runtimeOf(ctx, env, exec)
-      const papers = await s2.batchPapers(client, args.ids.slice(0, 500), 'title,citationStyles')
-      const bibtex = fmt.exportBibtex(papers)
-      return { count: papers.length, bibtex }
+      const ids = args.ids.slice(0, 500)
+      const papers = await s2.batchPapers(client, ids, 'title,citationStyles')
+      // S2 keeps the request order but answers `null` for an id it cannot
+      // resolve. `entries[i]` is the BibTeX for ids[i] ('' when none), so the
+      // count, the unresolved list and the rendered text all come from one
+      // projection and cannot disagree.
+      const entries = fmt.bibtexEntries(papers)
+      const unresolved = ids.filter((_, i) => !entries[i])
+      const exported = entries.filter(Boolean)
+      return { count: exported.length, unresolved, bibtex: exported.join('\n\n') }
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
     isConcurrencySafe: NON_CONCURRENT,
@@ -729,7 +776,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_format_references',
-    description: `Format a reference list in ONE declared citation style, so formatting is decided by the plugin instead of re-derived per report. Provide \`ids\` (paperIds/DOIs, resolved through Semantic Scholar) and/or \`items\` (explicit metadata or BibTeX). Returns the numbered \`entries\` plus \`footnote_block\` — ready \`[^n]: entry\` definitions separated by blank lines, numbered by first-reference order — per the \`scholar-citation-style\` contract.`,
+    description: `Format a reference list in ONE declared citation style, so formatting is decided by the plugin instead of re-derived per report.
+Use when: a report needs numbered references or footnotes in a specific style (GB/T 7714-2015 for Chinese reports) — load \`scholar-citation-style\` with it.
+Not for: raw BibTeX export (\`scholar_export_bibtex\`).
+Returns: numbered \`entries\` plus \`footnote_block\` — ready \`[^n]: entry\` definitions, blank-line separated, numbered by first-reference order — per the \`scholar-citation-style\` contract. Give \`ids\` (resolved via Semantic Scholar) and/or \`items\`; it never invents missing volume/pages, and an id without a record comes back as a warning.`,
     parameters: {
       ids: { type: 'array', items: { type: 'string', description: 'paperId or DOI:…' }, description: `Papers to format (max ${REFS_MAX_IDS}); metadata is resolved from Semantic Scholar` },
       items: { type: 'array', items: { type: 'json' }, description: 'Explicit entries: { authors: string[], title, venue, year, volume, issue, pages, doi, url, type, bibtex }' },
@@ -808,7 +858,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_resolve',
-    description: `Find the best open-access PDF URL for a paper WITHOUT downloading anything. Provide exactly one of doi or title. Reports the winning source (Unpaywall/Semantic Scholar/arXiv/Europe PMC/PMC/bioRxiv/web_search) and metadata.`,
+    description: `Find the best open-access PDF URL for a paper WITHOUT downloading anything.
+Use when: only the PDF URL/link is wanted — the cheap option.
+Not for: saving the file (\`paper_fetch_download\`) or reading its text (\`paper_pdf2md\`, \`arxiv_get_fulltext\`).
+Returns: the winning source (Unpaywall/S2/arXiv/Europe PMC/PMC/bioRxiv/web_search) plus metadata; a \`web_search\` hit is an unverified hint, not a confirmed copy. Give \`doi\` or \`title\` (a DOI is used as-is; a title resolves via Crossref -> Semantic Scholar).`,
     parameters: resolveParams,
     output: markdownOutput(
       { doi: { type: 'string' }, data: { type: 'json' } },
@@ -837,7 +890,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_download',
-    description: `Resolve a paper (doi or title) to its best open-access PDF, download it into the configured library directory (default .scholar/pdfs), and report the saved file path. Skips existing files unless overwrite.`,
+    description: `Resolve a paper (doi or title) to its best open-access PDF, download it into the library directory (default .scholar/pdfs), and report the saved file path.
+Use when: the user explicitly wants the PDF file itself.
+Not for: only the link (\`paper_fetch_resolve\`) or reading the text (\`paper_pdf2md\`, \`arxiv_get_fulltext\`).
+Returns: the saved path plus the winning source; an existing file is skipped unless \`overwrite\`. Failures are typed and non-retryable (\`not_found\`, \`download_not_a_pdf\`, \`download_host_not_allowed\`) — report, do not loop; a web-search hit is flagged not-title-verified. Slow — explicit request only.`,
     parameters: {
       doi: { type: 'string', description: 'DOI to download' },
       title: { type: 'string', description: 'Paper title; resolved to a DOI first' },
@@ -871,9 +927,12 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_batch',
-    description: `Fetch many papers by DOI (or a mix of dois/titles). Returns one envelope with per-item results, a summary, and retry hints for the failed subset. Use idempotencyKey to replay the exact envelope on re-run without re-downloading.`,
+    description: `Fetch many papers by DOI (or a mix of dois/titles) in one resumable envelope.
+Use when: the user explicitly wants several PDFs at once.
+Not for: a single paper (\`paper_fetch_download\`) or link-only checks (\`paper_fetch_resolve\`).
+Returns: per-item results, a summary and retry hints for the failed subset (\`next\`); one failure never discards the batch. Re-call with the same \`idempotencyKey\` to replay it without re-downloading. Needs \`unpaywallEmail\` for Unpaywall.`,
     parameters: {
-      dois: { type: 'array', items: { type: 'string', description: 'DOI' }, description: 'DOIs to fetch (exactly one input of dois or titles)' },
+      dois: { type: 'array', items: { type: 'string', description: 'DOI' }, description: 'DOIs to fetch (give dois and/or titles — both are fetched; needs unpaywallEmail for Unpaywall)' },
       titles: { type: 'array', items: { type: 'string', description: 'Paper title to resolve first' }, description: 'Titles to resolve + fetch' },
       idempotencyKey: { type: 'string', description: 'Stable key; re-running with the same key replays the previous envelope instantly' },
       overwrite: { type: 'boolean', description: 'Re-download existing files' },
@@ -915,7 +974,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_fetch_library',
-    description: `List PDFs already downloaded into the configured library directory (default .scholar/pdfs).`,
+    description: `List PDFs already downloaded into the library directory (default .scholar/pdfs).
+Use when: checking whether a PDF is already downloaded before fetching it again.
+Not for: the rest of the library (\`scholar_list_library\`).
+Returns: the file paths. An empty list is normal before any download.`,
     parameters: {},
     output: markdownOutput(
       { total: { type: 'integer' }, files: { type: 'array', items: { type: 'json' } } },
@@ -934,10 +996,13 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'paper_pdf2md',
-    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API (no API key; IP rate-limited; ≤10MB file cap — the page limit is a server-side constraint). Saves the .md into the configured library directory (default .scholar/md) and returns the path (+ a short excerpt).`,
+    description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API.
+Use when: the user wants full Markdown of one non-arXiv PDF that is already at hand (a URL or a downloaded file).
+Not for: arXiv papers (\`arxiv_get_fulltext\` first) or passage-level evidence (\`sciverse_read_content\`).
+Returns: the saved \`.md\` path (default .scholar/md) plus a short excerpt. No API key; IP rate-limited; ≤10MB cap (page limit is server-side) — split the source or fall back to sciverse slices on oversize/parse errors.`,
     parameters: {
       pdf: { type: 'string', description: 'PDF to convert: an https://...pdf URL or a local file path.', required: true },
-      timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)})` },
+      timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)}, clamped to ${MINERU_MIN_TIMEOUT_SEC}-${MINERU_MAX_TIMEOUT_SEC})` },
     },
     output: {
       schema: { type: 'object', properties: { path: { type: 'string' }, excerpt: { type: 'string' }, pdf: { type: 'string' } }, additionalProperties: true },
@@ -973,7 +1038,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'arxiv_get_fulltext',
-    description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (https://arxiv.org/html/<id>; LaTeXML-converted, "experimental" — a subset of papers have no HTML version and the tool reports available:false). Returns Markdown by default (math as LaTeX $...$ from the page's alttext); md:false returns article-scoped raw HTML (chrome stripped). save:true (default) writes the file under the library dir (.scholar/md/<id>.md or .scholar/html/<id>.html) and saves the paper's figures under .scholar/figs/ (returning their paths); save:false returns the full content inline (cap with maxChars) with the figures attached as inline images for vision models (text-only models receive the URL placeholders). No API key needed; fetched through the configured proxy.`,
+    description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (arXiv's "experimental" HTML: a subset of papers have none → available:false).
+Use when: the content of an arXiv paper is wanted — first choice over PDF-to-Markdown.
+Not for: non-arXiv works (\`paper_pdf2md\`, \`sciverse_read_content\`, \`scholar_get_paper_snippets\`).
+Returns: Markdown by default (math as LaTeX $...$); md:false gives article-scoped raw HTML. save:true (default) writes .scholar/md/<id>.md (or .scholar/html/) plus the figures under .scholar/figs/, returning the paths; save:false returns the content inline (cap with maxChars) with figures attached as images for vision models. No API key; fetched through the proxy.`,
     parameters: {
       arxivId: { type: 'string', description: 'arXiv id (e.g. 2402.08954, 2402.08954v2, hep-ex/0307015) or an abs/pdf/html URL', required: true },
       save: { type: 'boolean', description: 'Save under the library dir (default true). When false, the full content is returned inline instead of a file path, and the figures are attached as inline images (for vision models).' },
@@ -1044,7 +1112,10 @@ export function applyScholarTools(ctx: Context, env: ScholarToolEnv): () => void
 
   register(defineTool({
     name: 'scholar_list_library',
-    description: `List everything the plugin has produced under the default output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs/cards). Optionally restrict to one subdirectory.`,
+    description: `List everything the plugin has produced under the output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs/cards).
+Use when: resuming work, or reporting which artifacts exist and where.
+Not for: PDF-only listings (\`paper_fetch_library\`).
+Returns: the file paths under the library root; empty subdirs are simply skipped.`,
     parameters: {
       subdir: { type: 'string', enum: ['pdfs', 'md', 'html', 'figs', 'cards', 'all'], description: 'Which subdirectory to list (default all).' },
     },
@@ -1206,12 +1277,31 @@ function pickFilters(args: Record<string, unknown>): s2.ScholarFilters {
  * projection is replacive, the tool unions the identity fields back in.
  */
 function paperEvidence(p: Record<string, unknown>): string {
-  const oa = p.access_is_oa === true ? 'OA' : p.access_is_oa === false ? 'closed' : (typeof p.access_oa_status === 'string' ? p.access_oa_status : '')
+  // Live-verified: `access_is_oa` arrives as the STRING "true"/"false"/"unknown"
+  // (not a JSON boolean), and `access_oa_status` carries the readable value
+  // ("closed" / "gold" / "green" / …). Accept both shapes.
+  const raw = p.access_is_oa
+  const status = typeof p.access_oa_status === 'string' ? p.access_oa_status : ''
+  const isOa = raw === true || raw === 'true'
+  const isClosed = raw === false || raw === 'false'
+  // Keep the specific OA flavour when the API gives one ("OA (gold)"), and fall
+  // back to the status string for the "unknown" case.
+  const oa = isOa
+    ? (status && status !== 'closed' && status !== 'unknown' ? `OA (${status})` : 'OA')
+    : isClosed
+      ? 'closed'
+      : status
   const primary = (p.primary_topic as Record<string, unknown> | undefined)?.display_name
   const topics = Array.isArray(p.topics) ? (p.topics as Array<Record<string, unknown>>).map((t) => t?.display_name).filter((t): t is string => typeof t === 'string') : []
   const subjects = Array.isArray(p.subjects) ? (p.subjects as unknown[]).filter((x): x is string => typeof x === 'string') : []
   const topic = typeof primary === 'string' && primary ? primary : [...topics, ...subjects].slice(0, 2).join('/')
-  const type = typeof p.publication_venue_type === 'string' ? p.publication_venue_type : typeof p.type === 'string' ? p.type : ''
+  // `type` is an array on real rows (e.g. ["article"]); publication_venue_type is
+  // the usable single value.
+  const type = typeof p.publication_venue_type === 'string' && p.publication_venue_type
+    ? p.publication_venue_type
+    : Array.isArray(p.type)
+      ? (p.type as unknown[]).filter((x): x is string => typeof x === 'string').join('/')
+      : typeof p.type === 'string' ? p.type : ''
   return [oa, topic, type].filter(Boolean).join(' · ')
 }
 
@@ -1236,10 +1326,85 @@ function fmtPapers(papers: readonly Record<string, unknown>[]): string {
     .join('\n\n')
 }
 
+/** First non-empty string among the values (arrays are flattened). */
+function firstString(...values: unknown[]): string {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (Array.isArray(v)) {
+      for (const item of v) if (typeof item === 'string' && item.trim()) return item.trim()
+    }
+  }
+  return ''
+}
+
+/** OA label from a boolean OR the API's string form ("true"/"false"/status). */
+function oaLabel(value: unknown): string {
+  if (value === true || value === 'true') return 'OA'
+  if (value === false || value === 'false') return 'closed'
+  return typeof value === 'string' && value && value !== 'unknown' ? value : ''
+}
+
+/** `label value` only when the value is a finite number. */
+function numLabel(value: unknown, label: string): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value} ${label}` : ''
+}
+
+/**
+ * Compact markdown for `authors` / `sources` collection rows.
+ *
+ * The paper formatter ({@link fmtPapers}) reads paper-only fields, so an
+ * entity row rendered through it collapsed to "untitled / no id returned".
+ * Field names differ per collection and are only guaranteed by
+ * `sciverse_list_catalog`, so this picks tolerantly (display_name → title →
+ * name) and, when nothing matches, prints the row's scalar evidence rather
+ * than an empty-looking record. The raw rows always remain in `results`.
+ */
+function fmtEntityRows(rows: readonly Record<string, unknown>[], collection: 'authors' | 'sources'): string {
+  return rows
+    .map((r) => {
+      const name = firstString(r.display_name, r.title, r.name, r.preferred_name)
+      // Live-verified entity rows key on `id` (an OpenAlex URL) and have no
+      // unique_id; sources carry issn_l plus an issn array.
+      const id = firstString(r.unique_id, r.id, r.orcid, r.issn_l, r.doi)
+      const issn = firstString(r.issn_l, r.issn)
+      const stats = collection === 'authors'
+        ? [
+            numLabel((r.summary_stats as Record<string, unknown> | undefined)?.h_index ?? r.h_index, 'h-index'),
+            numLabel(r.cited_by_count, 'cites'),
+            numLabel(r.works_count, 'works'),
+          ]
+        : [
+            issn ? `ISSN ${issn}` : '',
+            oaLabel(r.is_oa),
+            numLabel(r.works_count, 'works'),
+          ]
+      const meta = [...stats.filter(Boolean), id ? `\`${id}\`` : ''].filter(Boolean).join(' · ')
+      if (name) return meta ? `**${name}**\n${meta}` : `**${name}**`
+      // No recognized display field: show the row's own scalars — an entity row
+      // must never come back looking like an empty "untitled" record.
+      const scalars = Object.entries(r)
+        .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
+        .slice(0, 4)
+        .map(([k, v]) => `${k}: ${String(v)}`)
+      return `**${collection === 'authors' ? 'author' : 'source'} row**\n${scalars.join(' · ') || '_no scalar fields returned_'}`
+    })
+    .join('\n\n')
+}
+
 /** Compact markdown for citation-relation entries (shape {id, id_type, title}). */
 function fmtRelationItems(items: readonly Record<string, unknown>[]): string {
+  // Live-verified: REFERENCES entries can carry an EMPTY title with an OpenAlex
+  // work URL (id_type "openalex") while CITATIONS entries carry a title and a
+  // `paper:<doi>` (id_type "sciverse"). Never render `****` for the empty case —
+  // surface the id and say the title is missing.
   return items
-    .map((r) => `- **${r.title ?? 'untitled'}**${r.id ? ` — \`${r.id}${r.id_type ? ` (${r.id_type})` : ''}\`` : ''}`)
+    .map((r) => {
+      const title = typeof r.title === 'string' ? r.title.trim() : ''
+      const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : ''
+      const type = typeof r.id_type === 'string' && r.id_type ? ` (${r.id_type})` : ''
+      const ref = id ? `\`${id}\`${type}` : '_no id returned_'
+      return title ? `- **${title}** — ${ref}` : `- ${ref} — _no title returned_`
+    })
     .join('\n')
 }
 
@@ -1383,7 +1548,10 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_list_catalog',
-    description: `Discover the search_papers field catalog for a Sciverse collection (papers/authors/sources): which fields exist, which support filtering/sorting, and sample enum values. Call this first when unsure which field to filter on.`,
+    description: `Discover the field catalog of a Sciverse collection (papers/authors/sources): field names, filterability/sortability, applicable filter operators and sample enum values.
+Use when: before constructing \`filters_advanced\` / \`sort_advanced\` / \`fields\`, or when a field name or enum value is uncertain. It is authoritative: \`filters\`/\`sort\`/\`fields\` names must match it exactly (no renaming, no invention) — an unknown field is a 400, not a silent miss.
+Not for: searching papers (\`sciverse_search_papers\`, \`sciverse_semantic_search\`).
+Returns: the collection's \`fields\` — call once and cache. \`include_sample_values\` adds top-20 enum samples (~24h server cache); \`include_field_stats\` adds cardinality/min-max stats.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection to inspect (default papers)' },
       include_sample_values: { type: 'boolean', description: 'Also return sample enum values (server caches ~24h)' },
@@ -1409,26 +1577,29 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_search_papers',
-    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources collections): title/author/journal/year/subject filters, advanced filters, and pagination. Returns paper metadata with unique_id (always) and doc_id (when full text exists). Use doc_id with sciverse_read_content to read the actual full text — the upstream accessibility flag is advisory and not a reliable gate. For natural-language questions use sciverse_semantic_search instead. Note: reported hit totals are capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server whenever the matched set is larger (keyword query or broad filter); narrow the query/filters for an exact count. \`abstract_contains\` is folded into the full-text \`query\`. The keyword \`query\` is for relevance-ranked discovery, not precise counting; exact counts require the matched set below ${SCIVERSE_TOTAL_HITS_CAP} — narrow with field filters (\`authors\` / \`journals\` / \`subjects\`) so the matched set falls below ${SCIVERSE_TOTAL_HITS_CAP}; year filters alone do NOT narrow the cap. \`title_contains\` is near-exact token matching (it under-matches: e.g. CONTAINS "high-entropy alloys" 2020-24 → only 6 records, mostly book chapters) — not a topical filter. Top-cited lists: \`query\` + \`sort_advanced\` (e.g. citation_count desc), plus \`filters_advanced\` \`metadata_type=paper\` to exclude books/ebooks — but never trust citation-sorted keyword pools for topical claims: the hard sort surfaces the corpus's all-time most-cited papers regardless of topic (verified live), so verify every title is on-topic before quoting.`,
+    description: `Structured metadata search over the Sciverse corpus (papers/authors/sources): field filters, sorting, pagination.
+Use when: structured screening (year / type / venue / subject / OA) or a top-cited list.
+Not for: natural-language questions (\`sciverse_semantic_search\`), full text (\`sciverse_read_content\`), or Semantic Scholar's citation-graph discovery (\`scholar_search_papers\`).
+Returns: rows with unique_id (always) and doc_id (when full text exists) plus OA / venue-type / (projected) topic evidence — the \`is_content_accessible\` flag is advisory, not a gate (\`doc_id\` is what \`sciverse_read_content\` needs); collections authors/sources render the entity's name and present summary fields. Counts cap at ${SCIVERSE_TOTAL_HITS_CAP} for keyword/broad filters; page * page_size = ${SCIVERSE_TOTAL_HITS_CAP} is the ceiling (a larger window is rejected with a validation error; no \`cursor\`). Citation-sorted keyword pools surface the corpus's most-cited papers regardless of topic — verify titles are on-topic.`,
     parameters: {
-      collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers)' },
-      query: { type: 'string', description: 'BM25 keyword query over title/abstract/venue/keywords; empty = structured filters only' },
-      title_contains: { type: 'string', description: 'Word the title must contain' },
-      abstract_contains: { type: 'string', description: 'Word the abstract must contain — matched via the full-text query (the abstract field is not filterable; the term is folded into `query`).' },
-      authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match)' },
+      collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers). The convenience fields are papers-only; for authors/sources use `filters_advanced` with that collection\'s fields (see `sciverse_list_catalog`).' },
+      query: { type: 'string', description: 'BM25 over title/abstract/venue/keywords; empty = structured filters only. Boolean syntax works: UPPERCASE AND / OR / NOT, ( ) grouping and "quoted phrases"; NOT > AND > OR, adjacent words implicitly AND, and in boolean mode every term is a hard requirement (0 hits = 0). Lowercase and/or are plain words. Search terms ONLY — a label like `检索式1（预后预测）` becomes a required term. Max 64 terms in boolean mode (65+ → 400). With an explicit sort the query degrades to a plain hit filter.' },
+      title_contains: { type: 'string', description: 'Word the title must contain (title field only).' },
+      abstract_contains: { type: 'string', description: 'Word the abstract must contain — folded into the full-text `query` (abstract is not filterable).' },
+      authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match; the backend `author` filter). For surname-only fuzzy matching use `filters_advanced` field `author` + FILTER_OP_MATCH.' },
       year_from: { type: 'integer', description: 'Earliest publication year (inclusive)' },
       year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
-      journals: { type: 'array', items: { type: 'string' }, description: 'Journal/venue names (any match) — use venue strings VERBATIM as returned by the API: the index stores HTML-escaped names (e.g. "Journal of Materials Science &amp; Technology"); the plain "&" form matches nothing (silent 0 results).' },
+      journals: { type: 'array', items: { type: 'string' }, description: 'Venue names (any match) — pass VERBATIM as returned (the index stores HTML-escaped forms; the plain "&" matches nothing). Containing matches: `filters_advanced` publication_venue_name_unified + FILTER_OP_MATCH_PHRASE.' },
       subjects: { type: 'array', items: { type: 'string' }, description: 'Subject categories, e.g. "computer science"' },
-      fields: { type: 'array', items: { type: 'string' }, description: 'Extra fields to project, e.g. ["primary_topic","topics","subjects","publication_published_date"]. Upstream projection is REPLACIVE, so the tool unions your list with the identity fields (unique_id/title/doi/author/venue/year/doc_id) — rows stay identifiable. The unprojected default already carries access_is_oa, publication_venue_type and metadata_type.' },
-      filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Advanced filter escapes, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"},{"field":"publication_published_year","operator":"FILTER_OP_GTE","value":2023}]' },
-      sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto)' },
-      sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Server-side hard sort fields (order defaults to SORT_ORDER_DESC). Works WITH a keyword query — the query degrades to a hit filter and results are hard-ranked by these fields (soft boosts ignored). e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] for top-cited. Sortable fields: publication_published_year / publication_published_date / reference_count / citation_count / influential_citation_count / fwci' },
-      freshness_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Recency weighting for keyword queries (MILD=10y, STRONG=3y)' },
-      impact_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Citation-impact weighting for keyword queries' },
-      language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Prefer results in the query language' },
-      page: { type: 'integer', description: 'Page number (default 1)' },
-      page_size: { type: 'integer', description: 'Page size (default 10)' },
+      fields: { type: 'array', items: { type: 'string' }, description: 'Extra projections, e.g. ["primary_topic","topics","subjects"]. Projection is REPLACIVE, so the tool unions your list with the identity fields; the default already carries access_is_oa, publication_venue_type, metadata_type.' },
+      filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Item shape {field, operator?, value}; `operator` defaults to FILTER_OP_EQ and the set is EQ / NE / GT / GTE / LT / LTE / IN / NIN / CONTAINS / MATCH / MATCH_PHRASE. Field names MUST match `sciverse_list_catalog` exactly. Hints: author/keywords → MATCH (fuzzy), venue → MATCH_PHRASE, doi → EQ (normalized). Citation reverse-lookup: field "references_unique_id" with the target unique_id, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"}] (deep paging + arbitrary sorting).' },
+      sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto: no year sort when `query`/`sort_advanced` is set — relevance and boosts rank; newest-first for pure filters). ⚠️ `query` + explicit sort is NOT "relevant and recent": the sort degrades the query to an OR hit filter and disables all boosts — use `freshness_boost` instead.' },
+      sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Hard sort fields, e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] (order defaults DESC). With a query the query becomes a hit filter and all boosts are ignored. Sortable: publication_published_year / publication_published_date / reference_count / citation_count / influential_citation_count / fwci.' },
+      freshness_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Recency weighting (MILD=10y, STRONG=3y). Only with a non-empty `query` when no sort is set; stackable; paging is shallow while active.' },
+      impact_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Citation-impact weighting (bounded; zero-citation neutral). Only with a non-empty `query` when no sort is set; stackable.' },
+      language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Demotes (never excludes) results not in the query\'s language (MILD ×0.5 / STRONG ×0.2; unknown language stays neutral; the target is detected from the query text). Effective only with a query and when no sort is set. To hard-exclude instead: filters_advanced [{"field":"language","value":"en"}].' },
+      page: { type: 'integer', description: 'Page number (default 1). page * page_size must stay at or below 10000 — a larger window is rejected with a `validation_error`, not sent upstream.' },
+      page_size: { type: 'integer', description: 'Page size (server default 25, range 1-200, clamped; keep at or below 50 for agent use).' },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, total: { type: 'integer' }, page: { type: 'integer' }, results: { type: 'array', items: { type: 'json' } } },
@@ -1439,6 +1610,15 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, total: 0, results: [], markdown: sciverseNotConfigured() } as any
       const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
+      // The gateway 400s on page * page_size > 10000 (live-verified). Answer with
+      // a typed validation error instead of burning a call, and say what to do.
+      if (pageWindowExceeded(args.page, args.page_size)) {
+        const w = clampedPageWindow(args.page, args.page_size)
+        return {
+          ok: false, total: 0, page: w.page, results: [], code: 'validation_error', retryable: false,
+          markdown: `\`page * page_size\` = ${w.product} (${w.page} × ${w.page_size}, the values that would be sent) exceeds the ${META_SEARCH_PAGE_WINDOW} ceiling of this endpoint and was not sent. Narrow the filters (authors / journals / subjects / title_contains) or request an earlier page — this tool exposes no deep-paging \`cursor\`.`,
+        } as any
+      }
       // `abstract_contains` maps to a FILTER_OP_CONTAINS on `abstract`, which the
       // backend rejects (abstract has no .keyword subfield — full-text only, so it
       // cannot be filtered; see the field catalog). Fold it into the full-text
@@ -1464,17 +1644,19 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const r = (await sc.searchPapers(payload, exec.signal)) as any
       const results = Array.isArray(r?.results) ? r.results : []
       const total = r.total_count ?? results.length
+      const collection = args.collection === 'authors' || args.collection === 'sources' ? args.collection : 'papers'
       // The backend caps reported hit counts at 10000 whenever the matched set is
       // larger (track_total_hits-style) — for keyword queries AND broad structured
       // filters alike (e.g. subjects alone hit it, with no keyword query). Annotate
       // any 10000 so it is not mistaken for a real total; exact counts require a
       // narrowed query/filter set (structured filters are not always exact).
       const capped = total >= SCIVERSE_TOTAL_HITS_CAP
+      const noun = collection === 'papers' ? 'papers' : collection
       const markdown = results.length
-        ? `**${total} papers** (page ${args.page ?? 1})${capped
-          ? `\n\n> total is capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server (the matched set is larger). Narrow with field filters (title_contains / authors / journals / subjects) so the matched set falls below 10000 — year filters alone do not narrow the cap.`
-          : ''}\n\n${fmtPapers(results)}`
-        : 'No papers found.'
+        ? `**${total} ${noun}** (page ${args.page ?? 1})${capped
+          ? `\n\n> total is capped at ${SCIVERSE_TOTAL_HITS_CAP} by the server (the matched set is larger). Narrow with field filters (title_contains / authors / journals / subjects) so the matched set falls below ${SCIVERSE_TOTAL_HITS_CAP} — year filters alone do not narrow the cap.`
+          : ''}\n\n${collection === 'papers' ? fmtPapers(results) : fmtEntityRows(results, collection)}`
+        : `No ${noun} found.`
       return { ok: true, total, page: args.page ?? 1, results, markdown }
       })
     },
@@ -1484,16 +1666,20 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_semantic_search',
-    description: `Natural-language semantic retrieval over the Sciverse corpus (RAG): returns the most relevant passage chunks (title, chunk text, character offset, score). Follow up with sciverse_read_content (doc_id + offset) to extend context, and sciverse_get_resource for figures/tables.`,
+    description: `Natural-language semantic retrieval over the Sciverse corpus (RAG): the most relevant passage chunks with doc_id, character offset and score.
+Use when: a question should be answered with quoted evidence passages.
+Not for: precise field filtering (\`sciverse_search_papers\`) or extending a passage (\`sciverse_read_content\`).
+Returns: chunks (chunk_id, doc_id, score, offset, title) plus \`doc_id_index\` — every doc_id the same paper appears under; pass the others to \`sciverse_read_content\` via \`alt_doc_ids\` when one has no stored text. Keep score ≥ 0.6 for evidence use. Figures/tables go through \`sciverse_get_resource\`.
+Limits: \`mode\` defaults to balanced; without query rewriting the fusion pool returns at most ~50 hits, so only \`quality\` honours a larger \`top_k\` (~3 chunks per paper max); \`filters\` is SOFT — use \`filters.doc_id\` for a hard scope.`,
     parameters: {
-      query: { type: 'string', description: 'Natural-language question, 1-200 chars is best', required: true },
-      top_k: { type: 'integer', description: 'Number of chunks to return — legal range 1-100 (default 10; ~3 chunks max per paper)' },
-      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'fast=keyword only (~200ms); balanced=hybrid (~600ms); quality=LLM-rewrite+hybrid (~2-4s)' },
-      source_types: { type: 'array', items: { type: 'string', enum: ['web', 'pdf'] }, description: 'Restrict chunk sources' },
-      filters: { type: 'json', description: 'Approximate structured filters during retrieval, e.g. {"author":["Hinton"],"publication_published_year":{"gte":2023}}' },
+      query: { type: 'string', description: 'Natural-language question, 1-200 chars best (max 4096).', required: true },
+      top_k: { type: 'integer', description: 'Chunks to return (default 10, range 1-100, clamped; ~50 cap without query rewriting; ~3 per paper max).' },
+      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'fast=keyword (~200ms); balanced=hybrid (~600ms, default); quality=LLM-rewrite+hybrid (~2-4s, needed to honour a large top_k).' },
+      source_types: { type: 'array', items: { type: 'string', enum: ['web', 'pdf'] }, description: 'Accepted for compatibility but IGNORED upstream (live-verified: the hit set is identical with and without it) — do not rely on it; narrow with `filters` instead.' },
+      filters: { type: 'json', description: 'SOFT recall-time filters, e.g. {"author":["Hinton"],"publication_published_year":{"gte":2023}}. Fields AND; an array within one field ORs; values may be a scalar, a range ({"gte":2020,"lte":2025}; null = unbounded) or [min,max]; dates accept YYYY / YYYY-MM / YYYY-MM-DD. Fields: lang (alias language), metadata_type, author, publication_venue_name_unified, publication_venue_type, publication_published_year / _date, citation_count, influential_citation_count, title, topics; unknown fields → 400. Missing metadata is NOT excluded, so scoped results are approximate. `doc_id` is the one HARD scope: string or string[], ≤1000 deduped (400 SCOPE_TOO_LARGE), hits never leave the set, empty array → empty hits. Pattern: pin candidates with sciverse_search_papers fields ["doc_id","title"], then scope here.' },
     },
     output: markdownOutput(
-      { ok: { type: 'boolean' }, hits: { type: 'array', items: { type: 'json' } }, doc_id_index: { type: 'array', items: { type: 'json' } } },
+      { ok: { type: 'boolean' }, top_k: { type: 'integer' }, hits: { type: 'array', items: { type: 'json' } }, doc_id_index: { type: 'array', items: { type: 'json' } } },
       (value) => `${Array.isArray(value.hits) ? value.hits.length : 0} passage chunks.`,
     ),
     async execute(args, exec) {
@@ -1501,7 +1687,10 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         const key = await env.resolveSciverseKey()
         if (!key) return { ok: false, hits: [], markdown: sciverseNotConfigured() } as any
         const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
-        const r = (await sc.semanticSearch({ query: args.query, top_k: args.top_k, mode: args.mode, source_types: args.source_types, filters: args.filters }, exec.signal)) as any
+        // Clamp here (the client's builder would too) so the value actually sent
+        // can be echoed back — the model otherwise cannot tell 100 from 500.
+        const topK = clampNumber(args.top_k, 1, SEMANTIC_TOP_K_MAX)
+        const r = (await sc.semanticSearch({ query: args.query, top_k: topK, mode: args.mode, source_types: args.source_types, filters: args.filters }, exec.signal)) as any
         const hits = Array.isArray(r?.hits) ? r.hits : []
         // The same paper is often indexed under several doc_ids; surfacing them
         // is what makes the read_content fallback usable when one 404s.
@@ -1512,6 +1701,7 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
           : ''
         return {
           ok: true,
+          ...(topK !== undefined ? { top_k: topK } : {}),
           hits,
           doc_id_index: docIdIndex,
           markdown: hits.length ? `**${hits.length} passage chunk(s)**\n\n${fmtChunks(hits)}${note}` : 'No passages found.',
@@ -1524,12 +1714,15 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_list_paper_relations',
-    description: `Paginate a paper's full citation relations (CITATIONS = who cites it; REFERENCES = what it cites; RELATED_WORKS). Deep pagination for very large lists: use the alternative references_unique_id filter in sciverse_search_papers (relations >10000 return 429 here).`,
+    description: `Paginate a paper's full citation relations (CITATIONS = who cites it; REFERENCES = what it cites; RELATED_WORKS).
+Use when: deep pagination through one paper's relation list.
+Not for: a single-hop who-cites / what-cites answer on S2-indexed papers (\`scholar_get_citations\`, \`scholar_get_references\`).
+Returns: entries (id / id_type / title) plus total_count (in-corpus only, ~1% off the paper's citation_count). REFERENCES entries can have an EMPTY title and an OpenAlex work URL (id_type \`openalex\`, not resolvable here); CITATIONS carry a title and a \`paper:<doi>\` id. Limits (large CITATIONS): >10000 relations → 429, page * page_size >10000 → 400 (REFERENCES/RELATED_WORKS page freely) — either way switch to \`sciverse_search_papers\` with a references_unique_id filter (deep paging + sorting).`,
     parameters: {
-      unique_id: { type: 'string', description: 'The paper\'s unique_id from a sciverse search', required: true },
-      relation: { type: 'string', enum: ['CITATIONS', 'REFERENCES', 'RELATED_WORKS'], description: 'Which relation list to page', required: true },
-      page: { type: 'integer', description: 'Page number (default 1)' },
-      page_size: { type: 'integer', description: 'Page size (default 10)' },
+      unique_id: { type: 'string', description: 'The paper\'s unique_id (e.g. paper:10.1038/xxx) from a sciverse search — never a doc_id.', required: true },
+      relation: { type: 'string', enum: ['CITATIONS', 'REFERENCES', 'RELATED_WORKS'], description: 'CITATIONS = incoming (who cites the paper); REFERENCES = outgoing (what the paper cites) — opposite directions.', required: true },
+      page: { type: 'integer', description: 'Page number (default 1). For large CITATIONS lists keep page * page_size at or below 10000 (a larger window is rejected with a `validation_error`, not sent); REFERENCES/RELATED_WORKS page freely.' },
+      page_size: { type: 'integer', description: 'Page size (server default 25, range 1-200, clamped).' },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, unique_id: { type: 'string' }, relation: { type: 'string' }, total: { type: 'integer' }, items: { type: 'array', items: { type: 'json' } } },
@@ -1539,6 +1732,16 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       return guarded('list_paper_relations', async () => {
         const key = await env.resolveSciverseKey()
         if (!key) return { ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], markdown: sciverseNotConfigured() } as any
+        // Deep paging beyond page*page_size 10000 is rejected by the gateway for
+        // CITATIONS only (REFERENCES/RELATED_WORKS page freely — live-verified),
+        // so answer a typed validation error instead of burning the call.
+        if (args.relation === 'CITATIONS' && pageWindowExceeded(args.page, args.page_size)) {
+          const w = clampedPageWindow(args.page, args.page_size)
+          return {
+            ok: false, unique_id: args.unique_id, relation: args.relation, total: 0, items: [], code: 'validation_error', retryable: false,
+            markdown: `\`page * page_size\` = ${w.product} (${w.page} × ${w.page_size}) exceeds the ${META_SEARCH_PAGE_WINDOW} ceiling this endpoint applies to CITATIONS and was not sent. For a very large citing list, page through \`sciverse_search_papers\` with a \`references_unique_id\` filter instead (deep paging + sorting), or request an earlier page.`,
+          } as any
+        }
         const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
         const r = (await sc.listPaperRelations({ unique_id: args.unique_id, relation: args.relation, page: args.page, page_size: args.page_size }, exec.signal)) as any
         const items = Array.isArray(r?.items ?? r?.results) ? (r.items ?? r.results) : []
@@ -1552,16 +1755,21 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_read_content',
-    description: `Read a character-range slice of a paper's full text by doc_id (usually the chunk offset from sciverse_semantic_search, extended via next_offset). Returns the slice + bytes_returned (characters, per the API) + next_offset for continued reading. When a doc_id has no stored full text (CONTENT_NOT_FOUND) or upstream cannot fetch it (502 FETCH_FAILED), pass \`alt_doc_ids\` — sciverse_semantic_search's \`doc_id_index\` lists every doc_id a paper appears under — and the tool walks them in order, reporting \`doc_id_used\` and \`attempts\`; failures come back as the plugin's typed envelope, not a bare error.`,
+    description: `Read a character-range slice of a paper's full text by doc_id (offsets/limits are Unicode code points).
+Use when: verifying a passage from \`sciverse_semantic_search\`, or reading around its offset.
+Not for: topic search (\`sciverse_search_papers\`, \`sciverse_semantic_search\`) or figure bytes (\`sciverse_get_resource\`).
+Returns: the slice text, the API's \`bytes_returned\` count and \`next_offset\` (page with that, not with the count); an empty slice usually means the end; the text may carry \`![alt](file_name)\` placeholders for \`sciverse_get_resource\`.
+Server rules: \`offset\` is always sent (default 0) — omitting it upstream returns the WHOLE document and ignores \`limit\`; \`limit\` defaults to 4096 (API default 700, only with an offset; >524288 clamped).
+Recovery: CONTENT_NOT_FOUND or 502 FETCH_FAILED → pass \`alt_doc_ids\` from \`doc_id_index\`; the walk reports \`doc_id_used\` / \`attempts\` as a typed envelope.`,
     parameters: {
       doc_id: { type: 'string', description: 'Full-text artifact id (sha256) from a sciverse search/semantic hit', required: true },
-      offset: { type: 'integer', description: 'Character offset (Unicode code points) to start reading from (default 0)' },
-      limit: { type: 'integer', description: 'Max characters to read (Unicode code points; server-enforced cap)' },
-      alt_doc_ids: { type: 'array', items: { type: 'string', description: 'Another doc_id for the same paper' }, description: 'Other doc_ids for the SAME paper, tried in order when this one has no stored full text (see doc_id_index from sciverse_semantic_search).' },
+      offset: { type: 'integer', description: 'Character offset (code points) to start from. Defaults to 0 and is always sent (clamped to >= 0) — omitting it upstream returns the WHOLE document and ignores `limit`.' },
+      limit: { type: 'integer', description: 'Max characters (code points). Default 4096; API default 700 (only with an offset); values are clamped to 1-524288. Page with `next_offset`.' },
+      alt_doc_ids: { type: 'array', items: { type: 'string', description: 'Another doc_id for the same paper' }, description: 'Other doc_ids for the SAME paper, tried in order when this one has no stored text (see `doc_id_index` on sciverse_semantic_search).' },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, doc_id: { type: 'string' }, doc_id_used: { type: 'string' }, attempts: { type: 'array', items: { type: 'json' } }, bytes_returned: { type: 'integer' }, next_offset: { type: 'integer' }, text: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: { file_name: { type: 'string' }, caption: { type: 'string' } }, additionalProperties: true } } },
-      (value) => `${value.bytes_returned ?? 0} chars at offset ${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
+      (value) => `\`bytes_returned\`=${value.bytes_returned ?? 0} at next_offset=${value.next_offset ?? 0}${Array.isArray(value.images) && value.images.length ? `; figures: ${value.images.map((i: any) => i.file_name).join(', ')}` : ''}.`,
     ),
     async execute(args, exec) {
       const key = await env.resolveSciverseKey()
@@ -1593,14 +1801,19 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
         try {
           const r = (await sc.readContent({ doc_id: docId, offset: args.offset, limit: args.limit }, exec.signal)) as any
           const text = String(r?.text ?? '')
+          // Live-verified: the API answers with `bytes_returned` (UTF-8 bytes; the
+          // `/content` page's `chars_returned` name is not implemented). Keep that
+          // output key, and never page by it — offsets/limits are Unicode code
+          // points, so `next_offset` is the only paging pointer.
+          const bytesReturned = typeof r?.bytes_returned === 'number' ? r.bytes_returned : typeof r?.chars_returned === 'number' ? r.chars_returned : text.length
           // Surfaces figure/table references as ![alt](file_name) in this slice,
           // with BOTH the file_name (for sciverse_get_resource) and the alt
           // caption (the only semantic hint the model gets) so it can judge the
           // figure content without rereading.
           const figs = extractFigureRefs(text)
           return {
-            ok: true, doc_id: args.doc_id, doc_id_used: docId, attempts, bytes_returned: r?.bytes_returned ?? text.length, next_offset: r?.next_offset ?? 0, text, images: figs,
-            markdown: text ? `**Full-text slice** (${r?.bytes_returned ?? text.length} chars${docId !== args.doc_id ? `, via alternate doc_id \`${docId}\`` : ''})\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, ${r?.bytes_returned ?? 0} chars). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
+            ok: true, doc_id: args.doc_id, doc_id_used: docId, attempts, bytes_returned: bytesReturned, next_offset: r?.next_offset ?? 0, text, images: figs,
+            markdown: text ? `**Full-text slice** (\`bytes_returned\`=${bytesReturned}${docId !== args.doc_id ? `, via alternate doc_id \`${docId}\`` : ''})\n\n${text.slice(0, 1200)}${text.length > 1200 ? '…' : ''}${figs.length ? `\n\n**Figures in this slice:**\n${figs.map((f) => `- ${f.caption ? `*${f.caption}* — ` : ''}\`${f.file_name}\``).join('\n')}` : ''}${r?.next_offset && r?.more !== false ? `\n\n> continue with offset=${r.next_offset}` : ''}` : `Empty slice at offset ${args.offset ?? 0} (no text, \`bytes_returned\`=${bytesReturned}). This usually means the end of the document's content is reached (the doc IS accessible) — try a smaller \`offset\` or a different \`doc_id\`.`,
           }
         } catch (e) {
           const envelope = sciverseEnvelope(e, 'read_content')
@@ -1622,14 +1835,17 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_get_resource',
-    description: `Fetch a figure/table image embedded in a paper's full text by its file name (referenced as ![alt](file_name) inside sciverse_read_content markdown), validate it is a real image, and (by default) save it to <defaultOutputDir>/figs (default .scholar/figs). Returns the saved path + mimeType + byte size — never the full base64 inline. Pass the paper id (\`paper\`), figure number (\`fignum\`) and caption (\`caption\`) to save a self-describing name (\`{doi}_Fig_{n}_Caption_{text}\`) instead of the raw hash.`,
+    description: `Fetch a figure/table image referenced as ![alt](file_name) in sciverse_read_content markdown, validate the bytes, and save it to <defaultOutputDir>/figs (default .scholar/figs).
+Use when: \`sciverse_read_content\` returned a figure/table placeholder the user wants to see.
+Not for: full text (\`sciverse_read_content\`) or downloading a paper's PDF (\`paper_fetch_download\`).
+Returns: the saved path + mimeType + bytes — never inline base64; view it with \`read_image\`. Non-image bytes → \`not_an_image\`; bad paths / missing assets answer 400/405/507 — terminal, do not loop. Pass \`paper\` / \`fignum\` / \`caption\` for a self-describing name (\`{doi}_Fig_{n}_Caption_{text}\`) instead of the raw hash.`,
     parameters: {
-      file_name: { type: 'string', description: 'Image file name from read_content markdown (relative path)', required: true },
-      paper: { type: 'string', description: `Paper identifier for the filename: a DOI, unique_id (e.g. paper:10.1038/xxx), or short title. Scopes the saved name so figures from different papers don't collide.` },
-      fignum: { type: 'string', description: `Figure number for the filename (e.g. '2'). When omitted, parsed from the caption (e.g. 'Figure 2. …').` },
-      caption: { type: 'string', description: `Figure caption / alt text from read_content (e.g. 'Figure 2. Architecture'). Embedded (truncated to 20 chars) in the saved filename so it's self-describing; omitted when blank.` },
-      save: { type: 'boolean', description: 'Write the image to disk (default true). When false, only metadata is returned (no path).' },
-      out_dir: { type: 'string', description: `Directory for saved figures, resolved against the session workspace (default: <defaultOutputDir>/figs, i.e. .scholar/figs).` },
+      file_name: { type: 'string', description: 'Image file name from read_content markdown (relative path; no `\\`, no `..`, no leading `/`).', required: true },
+      paper: { type: 'string', description: 'Paper identifier for the filename (a DOI, unique_id like paper:10.1038/xxx, or short title) so figures from different papers do not collide.' },
+      fignum: { type: 'string', description: "Figure number (e.g. '2'); parsed from the caption when omitted." },
+      caption: { type: 'string', description: "Figure caption / alt text; embedded (truncated to 20 chars) in the saved filename." },
+      save: { type: 'boolean', description: 'Write the image to disk (default true). false returns metadata only, no path.' },
+      out_dir: { type: 'string', description: 'Figure directory, resolved against the session workspace (default: <defaultOutputDir>/figs).' },
     },
     output: {
       schema: { type: 'object', properties: { ok: { type: 'boolean' }, file_name: { type: 'string' }, mimeType: { type: 'string' }, bytes: { type: 'integer' }, path: { type: 'string' }, wrote: { type: 'boolean' }, code: { type: 'string' }, retryable: { type: 'boolean' } }, additionalProperties: true },
@@ -1694,15 +1910,20 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_trend_scan',
-    description: `Run the research-trend pipeline in one call: per-year publication counts, top-cited papers and top venues for a topic. Two backends. \`source:"s2"\` (default) = Semantic Scholar counts and citations (real values; boolean + year filters; minCitationCount/publicationTypes noise filters) — reliable for any topic size. \`source:"sciverse"\` = OpenAlex-topic-scoped Sciverse meta-search: exact per-year counts (matched set < ${SCIVERSE_TOTAL_HITS_CAP}) and in-topic top-cited. For sciverse mode pass \`topic_id\` (OpenAlex topic URL, e.g. https://openalex.org/T11143) or let the tool discover it from the query: a clear plurality auto-selects; an ambiguous discovery returns \`code:"topic_ambiguous"\` with the TOP-5 candidate topic ids — ask the user via \`ask_user_question\` (they may also type their own topic) and re-run with that \`topic_id\`. The Sciverse keyword index caps counts at ${SCIVERSE_TOTAL_HITS_CAP} and its raw citation data is unreliable for broad queries — topic-scoping fixes the garbage, but verify top-cited titles are on-topic before quoting. Returns table-ready rows; the model formats the final report. Use sciverse_semantic_search / sciverse_evidence_pack for content and evidence.`,
+    description: `Research-trend pipeline in one call: per-year publication counts, top-cited papers and top venues for a topic.
+Use when: field trends, hotness or per-year counts are asked.
+Not for: finding or reading the papers themselves (\`scholar_search_papers\`, \`sciverse_semantic_search\`).
+Returns: table-ready per-year rows (count, top-cited, venues).
+Backends: \`source:"s2"\` (default) = Semantic Scholar counts/citations, real values at any size. \`source:"sciverse"\` = OpenAlex-topic-scoped meta-search: exact counts below the ${SCIVERSE_TOTAL_HITS_CAP} cap plus in-topic top-cited — topic scoping is required there (the keyword index caps at ${SCIVERSE_TOTAL_HITS_CAP} and is unreliable for broad queries); verify top-cited titles are on-topic.
+Topic resolution (sciverse): pass \`topic_id\` (OpenAlex URL, e.g. https://openalex.org/T11143) or let the tool discover it — a clear plurality auto-selects, otherwise \`code:"topic_ambiguous"\` with the TOP-5 ids: ask via \`ask_user_question\` and re-run with the chosen \`topic_id\`.`,
     parameters: {
-      query: { type: 'string', description: 'Topic keywords; used as the Semantic Scholar query (s2) and as the discovery query (sciverse). Required.' },
-      source: { type: 'string', enum: ['s2', 'sciverse'], description: 'Count/citation backend: s2 (default) = Semantic Scholar; sciverse = OpenAlex-topic-scoped Sciverse meta-search (topic_id or auto-discovery; ambiguous discovery → topic_ambiguous with top-5 candidates)' },
-      topic_id: { type: 'string', description: 'OpenAlex topic URL for source:"sciverse", e.g. https://openalex.org/T11143. Omit to auto-discover from the query (auto-selects when a single topic dominates; otherwise returns the top-5 candidates for the user to pick).' },
-      topic_name: { type: 'string', description: 'Optional display name for the topic (shown in the report when topic_id is given explicitly).' },
+      query: { type: 'string', description: 'Topic keywords; used as the S2 query and (sciverse mode) as the discovery query. Required.' },
+      source: { type: 'string', enum: ['s2', 'sciverse'], description: 's2 (default) = Semantic Scholar counts/citations; sciverse = OpenAlex-topic-scoped meta-search (topic_id or auto-discovery → topic_ambiguous with top-5 candidates).' },
+      topic_id: { type: 'string', description: 'OpenAlex topic URL for source:"sciverse" (e.g. https://openalex.org/T11143); omit to auto-discover from the query.' },
+      topic_name: { type: 'string', description: 'Optional display name for the topic (shown when topic_id is given explicitly).' },
       boolean: {
         type: 'object',
-        description: 'Structured boolean query components (exact phrases, +required, -excluded, OR groups) — preferred over raw `query` for precision.',
+        description: 'Structured boolean components for the S2 query — preferred over raw operators.',
         properties: {
           phrases: { type: 'array', items: { type: 'string', description: 'Exact phrase, quoted' } },
           required: { type: 'array', items: { type: 'string', description: 'Term that must appear (+term)' } },
@@ -1714,8 +1935,8 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       year_from: { type: 'integer', description: `Earliest year (default: year_to - 4; span capped at ${TREND_MAX_YEARS} years)` },
       year_to: { type: 'integer', description: 'Latest year (default: current year)' },
       top_n: { type: 'integer', description: `Top-cited papers per year (default ${TREND_DEFAULT_TOP_N}, cap ${TREND_MAX_TOP_N})` },
-      pool: { type: 'integer', description: `Candidate pool per year for the venue distribution — also the discovery pool for source:"sciverse" (default ${TREND_DEFAULT_POOL}, cap ${TREND_MAX_POOL})` },
-      minCitationCount: { type: 'integer', description: 'Only papers with at least this many citations (excludes zero-cite noise); s2 mode only' },
+      pool: { type: 'integer', description: `Candidate pool per year for the venue distribution, and the discovery pool in sciverse mode (default ${TREND_DEFAULT_POOL}, cap ${TREND_MAX_POOL})` },
+      minCitationCount: { type: 'integer', description: 'Only papers with at least this many citations; s2 mode only' },
       publicationTypes: { type: 'string', description: 'e.g. JournalArticle,Conference,Review (comma-separated); s2 mode only' },
     },
     output: markdownOutput(
@@ -1726,9 +1947,9 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const source = args.source === 'sciverse' ? 'sciverse' : 's2'
       const builtQuery = args.boolean ? s2.buildBoolQuery(args.boolean) : args.query
       const q = (builtQuery ?? '').trim() || String(args.query ?? '').trim()
-      if (!q) return { ok: false, query: q, source, years: [], code: 'validation_error', markdown: 'sciverse_trend_scan needs a non-empty `query` (or a `boolean` with at least one term).' } as any
+      if (!q) return { ok: false, query: q, source, years: [], code: 'validation_error', retryable: false, markdown: 'sciverse_trend_scan needs a non-empty `query` (or a `boolean` with at least one term).' } as any
       const range = resolveYearRange(args.year_from, args.year_to, TREND_MAX_YEARS)
-      if (!range.ok) return { ok: false, query: q, source, years: [], code: 'validation_error', markdown: range.error } as any
+      if (!range.ok) return { ok: false, query: q, source, years: [], code: 'validation_error', retryable: false, markdown: range.error } as any
       const topN = Math.min(Math.max(Math.trunc(args.top_n ?? TREND_DEFAULT_TOP_N), 1), TREND_MAX_TOP_N)
       const pool = Math.min(Math.max(Math.trunc(args.pool ?? TREND_DEFAULT_POOL), 1), TREND_MAX_POOL)
       if (source === 'sciverse') {
@@ -1772,13 +1993,16 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
 
   register(defineTool({
     name: 'sciverse_evidence_pack',
-    description: `Build a verifiable citation pack for a list of claims (≤${EVIDENCE_MAX_CLAIMS}): per claim, semantic search for the best passage, then read the full-text slice at its offset to verify the quote is in the source. Returns {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} per claim; quotes are verbatim source text, never rewritten.`,
+    description: `Build a verifiable citation pack for up to ${EVIDENCE_MAX_CLAIMS} claims: per claim, semantic search for the best passage, then read the full-text slice at its offset to verify the quote is in the source.
+Use when: grounding a draft or answer with checkable quotes, or fact-checking claims.
+Not for: broad discovery (\`sciverse_search_papers\`) or one claim's passage (\`sciverse_semantic_search\`).
+Returns: per claim {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} — quotes are verbatim, never rewritten. Unverified items stay marked unverified: report, never silently drop. Batch larger drafts into several calls.`,
     parameters: {
       claims: { type: 'array', items: { type: 'string' }, description: `Claims to ground (1-${EVIDENCE_MAX_CLAIMS}); each is used as the semantic query`, required: true },
       top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap ${EVIDENCE_MAX_TOP_K})` },
       min_score: { type: 'number', description: `Minimum score to count as a match (default ${EVIDENCE_DEFAULT_MIN_SCORE})` },
-      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'Semantic search mode: fast=keyword (~200ms); balanced=hybrid (~600ms); quality=LLM-rewrite (~2-4s)' },
-      quote_max: { type: 'integer', description: `Max quote length per item in chars (default ${EVIDENCE_DEFAULT_QUOTE_MAX}, cap 2000)` },
+      mode: { type: 'string', enum: ['fast', 'balanced', 'quality'], description: 'Semantic search mode: fast=keyword (~200ms); balanced=hybrid (~600ms, default); quality=LLM-rewrite (~2-4s)' },
+      quote_max: { type: 'integer', description: `Max quote length per item in chars (default ${EVIDENCE_DEFAULT_QUOTE_MAX}, clamped to 100-2000)` },
     },
     output: markdownOutput(
       { ok: { type: 'boolean' }, total: { type: 'integer' }, verified: { type: 'integer' }, matched: { type: 'integer' }, items: { type: 'array', items: { type: 'json' } } },
@@ -1789,8 +2013,8 @@ export function applySciverseTools(ctx: Context, env: ScholarToolEnv): () => voi
       const key = await env.resolveSciverseKey()
       if (!key) return { ok: false, total: 0, verified: 0, matched: 0, items: [], markdown: sciverseNotConfigured() } as any
       const claims = (Array.isArray(args.claims) ? args.claims : []).map((c: unknown) => (typeof c === 'string' ? c.trim() : '')).filter(Boolean)
-      if (!claims.length) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: 'sciverse_evidence_pack needs at least one `claim`.' } as any
-      if (claims.length > EVIDENCE_MAX_CLAIMS) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', markdown: `sciverse_evidence_pack accepts at most ${EVIDENCE_MAX_CLAIMS} claims (got ${claims.length}); split into multiple calls.` } as any
+      if (!claims.length) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', retryable: false, markdown: 'sciverse_evidence_pack needs at least one `claim`.' } as any
+      if (claims.length > EVIDENCE_MAX_CLAIMS) return { ok: false, total: 0, verified: 0, matched: 0, items: [], code: 'validation_error', retryable: false, markdown: `sciverse_evidence_pack accepts at most ${EVIDENCE_MAX_CLAIMS} claims (got ${claims.length}); split into multiple calls.` } as any
       const topK = Math.min(Math.max(Math.trunc(args.top_k ?? EVIDENCE_DEFAULT_TOP_K), 1), EVIDENCE_MAX_TOP_K)
       const minScore = Number.isFinite(args.min_score) ? Math.min(Math.max(args.min_score as number, 0), 1) : EVIDENCE_DEFAULT_MIN_SCORE
       const quoteMax = Math.min(Math.max(Math.trunc(args.quote_max ?? EVIDENCE_DEFAULT_QUOTE_MAX), 100), 2000)

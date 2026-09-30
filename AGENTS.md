@@ -41,6 +41,28 @@ instructions:
    HTTP API at `https://api.sciverse.space` — **no SDK dependency** (the
    `sciverse` npm package is not used; requests are socket-timeout bounded via
    `timedFetch` with the global fetch, so the proxy dispatcher never applies).
+   Every tool description follows the official MCP skeleton (**`Use when` /
+   `Not for` / `Returns`** + per-parameter gotchas; the model never sees
+   `output.schema`, so the description is the only return contract) and mirrors
+   the documented API defaults: `page_size` 25 (range 1–200), an explicit
+   `offset` on every `/content` read (an omitted offset returns the WHOLE
+   document and ignores `limit`), boosts gated on a query with no sort, the
+   10000 count/paging ceiling without a `cursor`, and `filters`/`sort`/`fields`
+   names that must match `meta-catalog` exactly. Those numeric bounds are also
+   **enforced in code** (`clampNumber` in `payload.ts`, shared by the sciverse
+   client) because the harness schema DSL has no `minimum`/`maximum`: an
+   out-of-range `page_size`/`top_k`/`limit` is clamped before the request, and a
+   `page * page_size` window above 10000 answers a typed `validation_error`
+   instead of burning a call on the gateway's 400 — on `sciverse_search_papers`
+   for any query, and on `sciverse_list_paper_relations` for **CITATIONS only**
+   (REFERENCES/RELATED_WORKS page freely, live-verified). `/resource` 507, the
+   gateway's answer for a well-formed but absent asset, is classified as a
+   non-retryable `not_found` to match the description. `test/prompts.spec.ts` pins
+   that contract. The resident surface is budgeted: `test/prompts.spec.ts`
+   guards the L1 total recursively — the tool description plus every nested
+   parameter/item description, i.e. all of `input_schema` — at ≤29,000 chars
+   (measured 28,279), and the `scholar-tools` skill is a single small load
+   (~5.7k chars).
 4. **`arxiv_*`** — official arXiv HTML full text: `arxiv_get_fulltext` fetches
    `https://arxiv.org/html/<id>` (arXiv's own LaTeXML-converted HTML,
    "experimental" — a subset of papers have no HTML version → `available:false`)
@@ -67,12 +89,12 @@ instructions:
    **single sentence**: it names the five tool families and points at the
    `scholar-*` skills as the only place the scholarly rules live. Everything
    else is on-demand, registered as runtime contributions via
-   `ctx.skills.register`: the `scholar-tools` skill carries both the per-tool
-   behavioral catalog (Limitations / Exceptions / Prefer-when for all 28 tools —
-   no parameter rosters; tool schemas are the parameter source) **and** the
-   cross-tool Shared behavior rulebook (error envelope, library directory,
-   configuration, discovery triage, DOI hygiene, content chain, pacing,
-   exports); one skill per workflow
+   `ctx.skills.register`: the `scholar-tools` skill carries the cross-tool
+   Shared behavior rulebook (error envelope, library directory, configuration,
+   discovery triage, DOI hygiene, content chain, pacing, coverage verdicts,
+   exports) **plus a routing map** over the 28 tools (the look-alike groups) —
+   no per-tool roster: each tool's description/schema is the authoritative
+   per-call reference (see `.notes/74`); one skill per workflow
    (`scholar-literature-review`, `scholar-scientific-rag`,
    `scholar-systematic-screen`, `scholar-evidence-pack`, `scholar-trend-scan`),
    each carrying its pipeline and a `## Output` section that is the extension
@@ -221,7 +243,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-Config schema, companion instructions, client-half settings page. **391 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+Config schema, companion instructions, client-half settings page. **425 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

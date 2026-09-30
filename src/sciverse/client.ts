@@ -22,7 +22,7 @@
 import { randomUUID } from 'node:crypto'
 import { timedFetch } from '../fetch/transport.js'
 import { sleep } from '../util/async.js'
-import { buildAgenticSearchPayload, buildMetaSearchPayload } from './payload.js'
+import { META_SEARCH_PAGE_SIZE_MAX, buildAgenticSearchPayload, buildMetaSearchPayload, clampNumber } from './payload.js'
 
 /** Public gateway endpoint (override for tests via the constructor baseUrl). */
 export const SCIVERSE_DEFAULT_ENDPOINT = 'https://api.sciverse.space'
@@ -47,6 +47,19 @@ export function isRetryableSciverseError(e: unknown): boolean {
 export const SCIVERSE_MAX_ATTEMPTS = 3
 /** Backoff between those attempts, ms (index = attempt - 1). */
 export const SCIVERSE_RETRY_BACKOFF_MS = [600, 1800]
+
+/**
+ * `/content` request defaults. An OMITTED `offset` makes the API return the
+ * whole document and ignore `limit` (docs: 「未传时返回全文」/「仅在传入 offset
+ * 时生效」), so the client always sends one. 4096 matches the official MCP
+ * server's default slice; the server's own `limit` default is 700.
+ */
+export const SCIVERSE_CONTENT_DEFAULT_OFFSET = 0
+export const SCIVERSE_CONTENT_DEFAULT_LIMIT = 4096
+
+/** `/content` documented bounds: `offset` ≥ 0, `limit` 1–524288 (silently clamped upstream). */
+export const SCIVERSE_CONTENT_LIMIT_MAX = 524288
+
 
 /**
  * JSON-ish error body → structured error with the documented `code`.
@@ -192,18 +205,36 @@ export class SciverseClient {
 
   /** Paginate a paper's citations / references / related works. */
   listPaperRelations(args: { unique_id: string; relation: string; page?: number; page_size?: number }, signal?: AbortSignal): Promise<unknown> {
+    // Documented bounds (page ≥ 1, page_size 1–200): the tool schema cannot
+    // express min/max, so clamp here rather than let the gateway answer 400.
+    const page = clampNumber(args.page, 1, Number.MAX_SAFE_INTEGER)
+    const pageSize = clampNumber(args.page_size, 1, META_SEARCH_PAGE_SIZE_MAX)
     return this.json('list_paper_relations', '/meta-paper-relations', {
       method: 'POST',
-      body: JSON.stringify(args),
+      body: JSON.stringify({
+        ...args,
+        ...(page !== undefined ? { page } : {}),
+        ...(pageSize !== undefined ? { page_size: pageSize } : {}),
+      }),
     }, signal)
   }
 
-  /** Character-offset slice of a paper's full text (extend RAG context). */
+  /**
+   * Character-offset slice of a paper's full text (extend RAG context).
+   *
+   * `offset` DEFAULTS TO 0 and is always sent: the API's documented behaviour
+   * for an omitted offset is "return the whole document", and `limit` is then
+   * ignored ("仅在传入 offset 时生效") — so a limit-only call would stream an
+   * entire paper instead of a bounded slice. Sending offset=0 makes the
+   * tool-facing "offset default 0" real. `limit` defaults to the same 4096 the
+   * official MCP server uses; the server default is 700 and is silently
+   * clamped above 524288.
+   */
   readContent(args: { doc_id: string; offset?: number; limit?: number }, signal?: AbortSignal): Promise<unknown> {
     const qs = new URLSearchParams()
     qs.set('doc_id', args.doc_id)
-    if (args.offset !== undefined) qs.set('offset', String(args.offset))
-    if (args.limit !== undefined) qs.set('limit', String(args.limit))
+    qs.set('offset', String(clampNumber(args.offset, 0, Number.MAX_SAFE_INTEGER) ?? SCIVERSE_CONTENT_DEFAULT_OFFSET))
+    qs.set('limit', String(clampNumber(args.limit, 1, SCIVERSE_CONTENT_LIMIT_MAX) ?? SCIVERSE_CONTENT_DEFAULT_LIMIT))
     return this.json('read_content', `/content?${qs.toString()}`, undefined, signal)
   }
 

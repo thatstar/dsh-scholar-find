@@ -58,7 +58,33 @@ describe('SciverseClient (direct REST, no SDK)', () => {
     const r = await sc.readContent({ doc_id: 'abc123', offset: 5 })
     const second = fetchMock.mock.calls[1]! as [string, RequestInit]
     expect(second[0]).toContain('/content?doc_id=abc123&offset=5')
+    expect(second[0]).toContain('limit=4096') // explicit caller offset still gets a bounded default slice
     expect(r).toMatchObject({ text: 'hello world', bytes_returned: 11 })
+  })
+
+  it('always sends an explicit offset (an omitted one returns the whole document)', async () => {
+    stubFetch(() => jsonResponse({ text: 'x', chars_returned: 1, next_offset: 1 }))
+    const sc = createSciverseClient('tk', 5000)
+    await sc.readContent({ doc_id: 'abc123' })
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit]
+    expect(url).toContain('/content?doc_id=abc123&offset=0&limit=4096')
+  })
+
+  it('clamps /content offset and limit into the documented range', async () => {
+    stubFetch(() => jsonResponse({ text: 'x', bytes_returned: 1, next_offset: 1 }))
+    const sc = createSciverseClient('tk', 5000)
+    await sc.readContent({ doc_id: 'd', offset: -5, limit: 9_999_999 })
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit]
+    expect(url).toContain('offset=0')
+    expect(url).toContain('limit=524288')
+  })
+
+  it('clamps relation page/page_size (the gateway 400s above 200)', async () => {
+    stubFetch(() => jsonResponse({ items: [], total_count: 0 }))
+    const sc = createSciverseClient('tk', 5000)
+    await sc.listPaperRelations({ unique_id: 'paper:x', relation: 'CITATIONS', page: 0, page_size: 500 })
+    const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ unique_id: 'paper:x', relation: 'CITATIONS', page: 1, page_size: 200 })
   })
 
   it('builds the meta-catalog query string', async () => {

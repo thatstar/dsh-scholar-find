@@ -1,10 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { buildAgenticSearchPayload, buildMetaSearchPayload } from '../src/sciverse/payload.js'
+import { buildAgenticSearchPayload, buildMetaSearchPayload, clampNumber, clampedPageWindow, pageWindowExceeded } from '../src/sciverse/payload.js'
 
 describe('buildMetaSearchPayload', () => {
   it('passes through scalar args only when defined', () => {
     const p = buildMetaSearchPayload({ query: 'neural networks', page: 2, page_size: 25, collection: 'papers' })
     expect(p).toEqual({ query: 'neural networks', page: 2, page_size: 25, collection: 'papers' })
+  })
+
+  it('clamps page/page_size into the documented range (no min/max in the schema DSL)', () => {
+    expect(buildMetaSearchPayload({ query: 'x', page_size: 500 })).toMatchObject({ page_size: 200 })
+    expect(buildMetaSearchPayload({ query: 'x', page_size: 0 })).toMatchObject({ page_size: 1 })
+    expect(buildMetaSearchPayload({ query: 'x', page: 0 })).toMatchObject({ page: 1 })
+    expect(buildMetaSearchPayload({ query: 'x', page_size: 25.9 })).toMatchObject({ page_size: 25 })
+    // non-finite input never becomes NaN on the wire
+    expect(buildMetaSearchPayload({ query: 'x', page_size: Number.NaN })).not.toHaveProperty('page_size')
+  })
+
+  it('reports the window that would actually be sent, and the ceiling', () => {
+    expect(clampedPageWindow(60, 500)).toEqual({ page: 60, page_size: 200, product: 12000 })
+    expect(clampedPageWindow(undefined, undefined)).toEqual({ page: 1, page_size: 25, product: 25 })
+    expect(clampedPageWindow(-5, 0)).toEqual({ page: 1, page_size: 1, product: 1 })
+  })
+
+  it('flags a page window above the API ceiling', () => {
+    expect(pageWindowExceeded(500, 50)).toBe(true)   // 25000
+    expect(pageWindowExceeded(400, 25)).toBe(false)  // 10000 exactly, allowed
+    expect(pageWindowExceeded(200, 50)).toBe(false)  // 10000 exactly
+    expect(pageWindowExceeded(1, 25)).toBe(false)
+    expect(pageWindowExceeded(undefined, undefined)).toBe(false)
   })
 
   it('maps structured constraints to filters', () => {
@@ -74,6 +97,14 @@ describe('buildMetaSearchPayload', () => {
 })
 
 describe('buildAgenticSearchPayload', () => {
+  it('clamps top_k into the documented 1-100 range', () => {
+    expect(buildAgenticSearchPayload({ query: 'q', top_k: 500 })).toMatchObject({ top_k: 100 })
+    expect(buildAgenticSearchPayload({ query: 'q', top_k: 0 })).toMatchObject({ top_k: 1 })
+    expect(buildAgenticSearchPayload({ query: 'q', top_k: 12.9 })).toMatchObject({ top_k: 12 })
+    expect(buildAgenticSearchPayload({ query: 'q', top_k: Number.NaN })).not.toHaveProperty('top_k')
+    expect(clampNumber(2.7, 1, 10)).toBe(2)
+  })
+
   it('maps mode fast to retrieval es', () => {
     expect(buildAgenticSearchPayload({ query: 'q', mode: 'fast', top_k: 5 })).toEqual({
       query: 'q',

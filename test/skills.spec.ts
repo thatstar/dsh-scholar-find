@@ -79,27 +79,32 @@ describe('scholar skills registry shape', () => {
   })
 })
 
-describe('scholar-tools catalog (selection-bias invariants)', () => {
+describe('scholar-tools routing map (selection-bias invariants)', () => {
   const catalog = byName.get('scholar-tools')!
 
-  it('names every one of the 28 tools', () => {
+  it('names every one of the 28 tools (word-boundary, so siblings cannot mask a gap)', () => {
     for (const tool of TOOL_NAMES) {
-      expect(catalog.content).toContain(`- ${tool}:`)
+      // A plain toContain would let `scholar_get_paper` be satisfied by
+      // `scholar_get_paper_snippets`, so require a non-identifier character after.
+      const pattern = new RegExp(tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)')
+      expect(catalog.content, tool).toMatch(pattern)
     }
   })
 
-  it('gives every tool the standardized Limitations / Exceptions / Prefer-when entries', () => {
-    expect((catalog.content.match(/  - Limitations:/g) ?? []).length).toBe(TOOL_NAMES.length)
-    expect((catalog.content.match(/  - Exceptions:/g) ?? []).length).toBe(TOOL_NAMES.length)
-    expect((catalog.content.match(/  - Prefer when:/g) ?? []).length).toBe(TOOL_NAMES.length)
+  it('routes the look-alike groups instead of restating per-tool behavior', () => {
+    // The per-call Limitations/Exceptions roster moved into the tool
+    // descriptions (see .notes/74) — the skill keeps only cross-tool policy.
+    expect(catalog.content).toContain('## Routing (which tool for which job)')
+    expect(catalog.content).not.toContain('  - Limitations:')
+    expect(catalog.content).not.toContain('  - Exceptions:')
+    expect(catalog.content).not.toContain('  - Prefer when:')
+    for (const group of ['Discovery', 'Reading', 'Citations', 'Authors', 'Acquisition', 'Writing', 'Aggregates']) {
+      expect(catalog.content, group).toContain(group)
+    }
   })
 
-  it('covers the tool families', () => {
-    expect(catalog.content).toContain('## scholar_search_*')
-    expect(catalog.content).toContain('## scholar_format_*')
-    expect(catalog.content).toContain('## paper_fetch_*')
-    expect(catalog.content).toContain('## arxiv_*')
-    expect(catalog.content).toContain('## sciverse_*')
+  it('stays lean: the on-demand cross-tool policy is a single small load', () => {
+    expect(catalog.content.length).toBeLessThan(6000)
   })
 
   it('carries no parameter rosters — schemas are the only parameter source', () => {
@@ -108,7 +113,7 @@ describe('scholar-tools catalog (selection-bias invariants)', () => {
 
   it('documents the citation/reference coverage verdicts', () => {
     expect(catalog.content).toContain('not_indexed')
-    expect(catalog.content).toContain('coverage (complete/truncated/partial/not_indexed/empty)')
+    expect(catalog.content).toContain('coverage` (complete/truncated/partial/not_indexed/empty)')
   })
 
   it('carries no workflow recipes — those live in the per-workflow skills', () => {

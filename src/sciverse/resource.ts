@@ -158,29 +158,36 @@ export interface GetResourceError {
  * gracefully instead of throwing raw and so the model gets a retry hint (esp.
  * on the per-endpoint 429 rate limit).
  *
- * Structured errors first: the direct client already classifies the status
- * (`retryable` = 5xx/429, never 4xx), so its verdict wins over message
- * sniffing — a 400/401/409/422 must NOT be labelled retryable just because
- * the body lacks the words "forbidden"/"not found". Only non-Sciverse
- * failures (timeouts, network errors) fall through to the heuristic below.
+ * Structured errors first: the HTTP status is mapped to a code and THAT decides
+ * retryability (429/5xx yes, everything else no), so a 400/401/409/422 is never
+ * labelled retryable just because the body lacks the words
+ * "forbidden"/"not found" — and 507, which the gateway returns for a
+ * well-formed but absent asset (live-verified), is a non-retryable `not_found`.
+ * Only non-Sciverse failures (timeouts, network errors) fall through to the
+ * heuristic below.
  */
 export function mapGetResourceError(e: unknown): GetResourceError {
   if (e instanceof SciverseHttpError) {
+    // 507 is the gateway's answer for a well-formed but ABSENT asset
+    // (live-verified): it is a missing resource, not a transient outage, so it
+    // must not be labelled retryable — the model is told "terminal, do not loop".
     const code = e.status === 429 ? 'rate_limited'
-      : e.status === 404 ? 'not_found'
-        : e.status === 403 ? 'forbidden'
+      : e.status === 404 || e.status === 507 ? 'not_found'
+        : e.status === 401 || e.status === 403 ? 'forbidden'
           : e.status >= 500 ? 'server_error'
             : 'validation_error'
     const markdown = code === 'rate_limited'
       ? 'Sciverse rate limit (429) reached. Back off ~60s before retrying this fetch.'
       : code === 'not_found'
-        ? 'Resource not found (404). This file may not exist in the paper\'s asset set.'
+        ? `Resource not available (${e.status}). This file is not in the paper's asset set — do not retry; re-check the \`file_name\` taken from sciverse_read_content.`
         : code === 'forbidden'
-          ? 'Access forbidden (403).'
+          ? `Access forbidden (${e.status}) — re-enter the "Sciverse API token" on the Web UI's Plugins page if it is a 401.`
           : code === 'server_error'
             ? `Sciverse server error (${e.status}). Transient — retry later.`
             : `Sciverse request rejected (${e.status}${e.code ? ` ${e.code}` : ''}). Not retryable — fix the input (bad token, invalid file_name, or upstream policy).`
-    return { code, retryable: e.retryable, markdown }
+    // The mapped code decides retryability, so the 507→not_found
+    // reclassification is not undone by SciverseHttpError's status-based verdict.
+    return { code, retryable: code === 'rate_limited' || code === 'server_error', markdown }
   }
   const msg = e instanceof Error ? e.message : String(e)
   const lower = msg.toLowerCase()

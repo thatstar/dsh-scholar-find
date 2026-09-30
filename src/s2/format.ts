@@ -95,12 +95,27 @@ export function formatAuthors(authors: readonly { name?: string; affiliations?: 
   return rows.join('\n')
 }
 
-/** BibTeX concatenation; requires the `citationStyles` field on every paper. */
-export function exportBibtex(papers: readonly PaperLike[]): string {
-  return papers
-    .map((p) => p.citationStyles?.bibtex)
-    .filter((b): b is string => Boolean(b))
+/**
+ * BibTeX concatenation.
+ *
+ * S2's `/paper/batch` answers `null` in every position it could not resolve
+ * (live-verified), so rows are optional and a missing/null row or a record
+ * without `citationStyles.bibtex` is skipped rather than thrown on.
+ */
+export function exportBibtex(papers: readonly (PaperLike | null | undefined)[]): string {
+  return bibtexEntries(papers)
+    .filter((b) => b !== '')
     .join('\n\n')
+}
+
+/**
+ * One BibTeX string per requested id, in the request order (`''` when that id
+ * produced no entry — a null row or a record without `citationStyles.bibtex`).
+ * Callers derive both "how many exported" and "which ids failed" from this one
+ * projection, so the counts can never contradict the rendered text.
+ */
+export function bibtexEntries(papers: readonly (PaperLike | null | undefined)[]): string[] {
+  return papers.map((p) => (typeof p?.citationStyles?.bibtex === 'string' ? p.citationStyles.bibtex : ''))
 }
 
 /** Project papers to the compact model-facing shape used in tool results. */

@@ -51,6 +51,50 @@ export const FILTER_OP_CONTAINS = 'FILTER_OP_CONTAINS'
 export const SORT_ORDER_DESC = 'SORT_ORDER_DESC'
 export const SORT_ORDER_ASC = 'SORT_ORDER_ASC'
 
+/**
+ * Documented `/meta-search` bounds (llms.txt §6.3): `page_size` 1–200, `page` ≥ 1,
+ * and page * page_size ≤ 10000 (deeper paging needs `cursor`). The tool schema
+ * DSL has no `minimum`/`maximum`, so the request layer enforces them — an
+ * out-of-range `page_size` used to reach the API and come back as a bare 400.
+ */
+export const META_SEARCH_PAGE_SIZE_MIN = 1
+export const META_SEARCH_PAGE_SIZE_MAX = 200
+export const META_SEARCH_PAGE_WINDOW = 10000
+
+/** `/agentic-search` `top_k` bound (docs §6.1: 1–100). */
+export const SEMANTIC_TOP_K_MAX = 100
+
+/**
+ * Truncate a numeric argument into `[min, max]`; `undefined` when it is not a
+ * finite number (so a malformed value never becomes `NaN` on the wire).
+ */
+export function clampNumber(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.min(Math.max(Math.trunc(value), min), max)
+}
+
+/**
+ * The page window as it would actually be SENT (page/page_size clamped to the
+ * documented bounds; an omitted page_size means the server default 25). Use
+ * `product` for error messages so they quote the request the gateway would see,
+ * not the caller's raw numbers.
+ */
+export function clampedPageWindow(page: unknown, pageSize: unknown): { page: number; page_size: number; product: number } {
+  const p = clampNumber(page, 1, Number.MAX_SAFE_INTEGER) ?? 1
+  const s = clampNumber(pageSize, META_SEARCH_PAGE_SIZE_MIN, META_SEARCH_PAGE_SIZE_MAX) ?? 25
+  return { page: p, page_size: s, product: p * s }
+}
+
+/**
+ * Would the requested page window exceed the API's paging ceiling? Callers use
+ * this to answer with a typed validation error instead of letting the API 400.
+ * Applies to `/meta-search` always and to `/meta-paper-relations` CITATIONS
+ * only (REFERENCES/RELATED_WORKS page freely — live-verified).
+ */
+export function pageWindowExceeded(page: unknown, pageSize: unknown): boolean {
+  return clampedPageWindow(page, pageSize).product > META_SEARCH_PAGE_WINDOW
+}
+
 /** The sortable year field name (per /meta-catalog). */
 const YEAR_FIELD = 'publication_published_year'
 
@@ -95,6 +139,18 @@ export function buildMetaSearchPayload(args: Record<string, unknown>): Record<st
 
   for (const k of META_SEARCH_PASSTHROUGH) {
     if (args[k] !== undefined && args[k] !== null) out[k] = args[k]
+  }
+  // Enforce the documented bounds here (the schema DSL has no min/max): an
+  // out-of-range page/page_size must not reach the gateway as a 400.
+  if (out.page !== undefined) {
+    const page = clampNumber(out.page, 1, Number.MAX_SAFE_INTEGER)
+    if (page === undefined) delete out.page
+    else out.page = page
+  }
+  if (out.page_size !== undefined) {
+    const size = clampNumber(out.page_size, META_SEARCH_PAGE_SIZE_MIN, META_SEARCH_PAGE_SIZE_MAX)
+    if (size === undefined) delete out.page_size
+    else out.page_size = size
   }
 
   if (args.title_contains !== undefined && args.title_contains !== null) {
@@ -188,6 +244,11 @@ const SEMANTIC_MODE_MAP: Record<string, Record<string, unknown>> = {
 export function buildAgenticSearchPayload(body: Record<string, unknown>): Record<string, unknown> {
   const { mode, ...rest } = body
   const out = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined))
+  if (out.top_k !== undefined) {
+    const topK = clampNumber(out.top_k, 1, SEMANTIC_TOP_K_MAX)
+    if (topK === undefined) delete out.top_k
+    else out.top_k = topK
+  }
   if (mode === undefined || mode === null) return out
   const mapped = SEMANTIC_MODE_MAP[String(mode)]
   if (!mapped) {

@@ -65,6 +65,18 @@ describe('mapGetResourceError', () => {
     expect(r.retryable).toBe(false)
   })
 
+  it('treats 507 as a missing asset, not a transient server error (live-verified)', () => {
+    const r = mapGetResourceError(new SciverseHttpError(507, undefined, 'insufficient storage'))
+    expect(r.code).toBe('not_found')
+    expect(r.retryable).toBe(false)
+    expect(r.markdown).toContain('not in the paper')
+    // 500/502/503/504 stay transient.
+    for (const status of [500, 502, 503, 504]) {
+      expect(mapGetResourceError(new SciverseHttpError(status, undefined, 'x'))).toMatchObject({ code: 'server_error', retryable: true })
+    }
+    expect(mapGetResourceError(new SciverseHttpError(400, 'INVALID_REQUEST', 'x'))).toMatchObject({ code: 'validation_error', retryable: false })
+  })
+
   it('maps 403 to forbidden and 5xx to a retryable server_error', () => {
     expect(mapGetResourceError(new Error('403 Forbidden'))).toMatchObject({ code: 'forbidden', retryable: false })
     expect(mapGetResourceError(new Error('HTTP 500 server error'))).toMatchObject({ code: 'server_error', retryable: true })
@@ -80,7 +92,8 @@ describe('mapGetResourceError', () => {
     // 400/401/409/422 must NOT be labelled retryable even when the body text
     // contains none of the words the regex heuristic looks for.
     expect(mapGetResourceError(new SciverseHttpError(400, 'INVALID_REQUEST', 'bad file_name'))).toMatchObject({ code: 'validation_error', retryable: false })
-    expect(mapGetResourceError(new SciverseHttpError(401, 'UNAUTHORIZED', 'token expired'))).toMatchObject({ code: 'validation_error', retryable: false })
+    // 401 shares the 403 story: a credential problem, not a bad argument.
+    expect(mapGetResourceError(new SciverseHttpError(401, 'UNAUTHORIZED', 'token expired'))).toMatchObject({ code: 'forbidden', retryable: false })
     expect(mapGetResourceError(new SciverseHttpError(429, 'RATE_LIMITED', 'slow down'))).toMatchObject({ code: 'rate_limited', retryable: true })
     expect(mapGetResourceError(new SciverseHttpError(404, 'NOT_FOUND', 'no such asset'))).toMatchObject({ code: 'not_found', retryable: false })
     expect(mapGetResourceError(new SciverseHttpError(403, 'PERMISSION_DENIED', 'nope'))).toMatchObject({ code: 'forbidden', retryable: false })
