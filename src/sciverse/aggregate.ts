@@ -120,6 +120,12 @@ export interface EvidenceItem {
   quote: string
   chunk_id?: string
   doc_id?: string
+  /**
+   * Deliberately NOT `unique_id`: the `/agentic-search` endpoint serves a fixed
+   * hit shape (verified live, `.notes/78` §11) with no `unique_id` and no `doi`,
+   * so an item on this path can never carry a paper key. The card is resolved
+   * from `title` instead, which every hit does have.
+   */
   offset?: number
   page_no?: number
   title?: string

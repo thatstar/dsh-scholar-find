@@ -14,7 +14,8 @@ export const SCHOLAR_TREND_SCAN_SKILL = {
 
 Per-year publication counts, top-cited papers, and venues for a topic.
 Cross-tool rules live in the scholar-tools skill's Shared behavior, as do the
-per-tool behavioral details.
+per-tool behavioral details. **Load \`scholar-tools\` first** — the steps below
+assume its Shared behavior.
 
 ## Pipeline
 

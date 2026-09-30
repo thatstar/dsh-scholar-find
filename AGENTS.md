@@ -3,7 +3,7 @@
 ## Mission
 
 Build a **scholar plugin** for DSH that offers **tools to the LLM** — not a
-predefined work loop. The plugin has five tool families plus companion
+predefined work loop. The plugin has six tool families plus companion
 instructions:
 
 1. **`scholar_search_*`** — Semantic Scholar Graph API: paper search (bulk /
@@ -16,7 +16,15 @@ instructions:
    record, list rows carry `verification: 'unverified'`, and every search hit
    carries venue / fieldsOfStudy / publicationTypes / isOpenAccess so discovery
    can be triaged (`offTopic` annotation for narrow queries, `strictTopic` to
-   drop) without opening each record. Citation/reference lists carry a
+   drop) without opening each record. The title comparison itself is
+   **Unicode-aware and variant-aware** (`src/verify.ts`): words for spaced
+   scripts, character bigrams for Han/Kana/Hangul, and the score is the best
+   pairing across `titleVariants` — because the Sciverse RAG endpoint renders a
+   title bilingually (`中文 | English`) while its metadata index is monolingual.
+   Both were live defects that made the gate return the refusing `mismatch` for
+   the SAME work, on the corpus this plugin advertises (`.notes/78` R1b,
+   `.notes/79`).
+   Citation/reference lists carry a
    `coverage` verdict (`complete`/`truncated`/`partial`/`not_indexed`/`empty`)
    instead of presenting an index gap as a total, and fall back to the Sciverse
    relations index when S2 serves nothing for a DOI.
@@ -60,9 +68,20 @@ instructions:
    non-retryable `not_found` to match the description. `test/prompts.spec.ts` pins
    that contract. The resident surface is budgeted: `test/prompts.spec.ts`
    guards the L1 total recursively — the tool description plus every nested
-   parameter/item description, i.e. all of `input_schema` — at ≤29,000 chars
-   (measured 28,634), and the `scholar-tools` skill is a single small load
-   (~5.7k chars).
+   parameter/item description, i.e. all of `input_schema` — at ≤31,100 chars
+   (measured 31,072). Raised from 29,000 by the `.notes/77` card tools, then
+   rebalanced by `.notes/78`: R2 moved the filter-operator semantics out of
+   `sciverse_search_papers` into `sciverse_list_catalog` (the declared
+   authority) and R3 spent part of it on the read-time card trigger (landing at
+   31,001); R4–R12 then closed three more gaps — a first attempt at putting
+   `unique_id` on evidence items (later reverted, `.notes/79`), the three
+   sibling readers named by `sciverse_read_content`, the card-recall pointer on
+   `scholar_list_library` — after trimming ~200 chars of fat. The on-demand side
+   fell ~1,900 chars in the same batch; the boolean `query` tutorial was then
+   cut to its operational essentials and the identity tools stopped emitting a
+   card path (R7/R12 tail). `.notes/79` added title-capable carding and the
+   variant-aware title gate, landing at 31,072. The `scholar-tools` skill is a single small
+   load (~5.8k chars).
 4. **`arxiv_*`** — official arXiv HTML full text: `arxiv_get_fulltext` fetches
    `https://arxiv.org/html/<id>` (arXiv's own LaTeXML-converted HTML,
    "experimental" — a subset of papers have no HTML version → `available:false`)
@@ -84,15 +103,50 @@ instructions:
    footnote-ready `[^n]:` block, so citation format is decided by the plugin
    once instead of re-derived per report. Pure formatters live in `src/cite.ts`.
 
-6. **Companion instructions** (variant D, one-sentence resident pointer) — the
+6. **`scholar_card_*`** — the memory card library: `scholar_card_save` records
+   ONE investigated paper and `scholar_card_list` recalls the library
+   (`identifier`, title, keywords, counts, `complete`). The format, the
+   append-only merge and the dedupe rules are a pure module
+   (`src/cardstore.ts`); the tool owns the filesystem and the network.
+   **Append-only is enforced by line surgery**, so anything the parser does not
+   model survives byte-for-byte; only the single `- coverage:` status line and
+   the `Keywords` line are ever refreshed rather than appended.
+   **Identity resolution is dual-source** (`.notes/78` R1): Semantic Scholar
+   first, then a Sciverse DOI lookup when S2 has no record — the corpus that
+   holds the paper verifies the paper — and only when BOTH miss does the card
+   degrade to `unverified` (the citation sections then record the S2 gap
+   explicitly instead of spending three doomed paced calls). The hard refusal is
+   reserved for the case the gate was built for: a resolved record whose title
+   genuinely differs. `referenceCount` rides along on the identity lookup, so a
+   card costs **three** paced S2 requests, not four (R7). Backtrack/Forwardtrack
+   come from S2 with the `coverage` label recorded verbatim, and evidence is
+   provenance-bound or not written at all. (An R5 attempt to carry `unique_id`
+   on evidence items was **reverted**: live probing showed `/agentic-search`
+   serves a fixed hit shape with no `unique_id` and no `doi`, and ignores every
+   projection — `.notes/79`.)
+   **`paperId` accepts a title as well as an id** (`.notes/79`): the Sciverse
+   RAG endpoint serves a fixed hit shape with no `unique_id` and no `doi`, so a
+   title is the only identifier that path has. A title resolves through
+   `scholar_match_title`, then a Sciverse BM25 lookup gated on the same title
+   check, and the card is still keyed by the real DOI the Sciverse row supplies.
+   Neither `scholar_get_paper` nor `scholar_match_title` emits a card path any
+   more (R7): with the path derived by the tool that writes, the line had no
+   consumer and read as state on a pure metadata lookup. The naming rule lives
+   in `scholar_card_save` alone. Written because two rounds of prompt-only
+   enforcement (`.notes/63`, 65) failed in real use: the model deferred carding
+   to report time or skipped it, so the mechanical lifecycle moved into a tool
+   (`.notes/77`).
+
+7. **Companion instructions** (variant D, one-sentence resident pointer) — the
    resident prompt section (`SCHOLAR_INSTRUCTIONS`, `src/instructions.ts`) is a
-   **single sentence**: it names the five tool families and points at the
+   **single sentence**: it names the six tool families, carries the read-time
+   carding hook, and points at the
    `scholar-*` skills as the only place the scholarly rules live. Everything
    else is on-demand, registered as runtime contributions via
    `ctx.skills.register`: the `scholar-tools` skill carries the cross-tool
    Shared behavior rulebook (error envelope, library directory, configuration,
    discovery triage, DOI hygiene, content chain, pacing, coverage verdicts,
-   exports) **plus a routing map** over the 28 tools (the look-alike groups) —
+   exports) **plus a routing map** over the 30 tools (the look-alike groups) —
    no per-tool roster: each tool's description/schema is the authoritative
    per-call reference (see `.notes/74`); one skill per workflow
    (`scholar-literature-review`, `scholar-scientific-rag`,
@@ -104,9 +158,14 @@ instructions:
    back/forward-track population per investigated paper, so final reports can
    recall what was examined and reproduce its sourcing. The four investigating
    workflows (literature-review, scientific-rag, systematic-screen,
-   evidence-pack) hook a "persist investigated DOIs as cards" line into their
-   `## Behavior`; trend-scan is deliberately excluded (it lists top-cited
-   papers without examining them). The eighth skill, `scholar-citation-style`,
+   evidence-pack) carry the card step as a **numbered Pipeline node at read
+   time** — `scholar_card_save` right after the read, before the next paper —
+   and a recall step (`scholar_card_list`) before the write-up; trend-scan is
+   deliberately excluded (it lists top-cited papers without examining them).
+   (Until `.notes/77` that hook was a `## Behavior` bullet, "persist every
+   investigated DOI as a card", which real use executed as report-time cleanup
+   over whatever survived into the report.) The eighth skill,
+   `scholar-citation-style`,
    is the citation/bibliography contract (first-mention-only `[^n]` markers,
    blank-line-separated definitions in first-reference order, no markers in
    summary tables, per-report style declaration, entry templates and
@@ -114,12 +173,21 @@ instructions:
    behaviour. The section is registered as a **provider function**
    (`text: () => ctx.get('skills') ? SCHOLAR_INSTRUCTIONS :
    SCHOLAR_INSTRUCTIONS_FALLBACK`), so the fallback is chosen per assembly:
-   a profile **with** the skill service pays the one sentence (456 chars ≈
-   120 tokens, down from the 6,458-char ≈ 1,700-token section);
+   a profile **with** the skill service pays the one sentence (546 chars ≈
+   140 tokens, down from the 6,458-char ≈ 1,700-token section);
    a profile **without** it renders `SCHOLAR_INSTRUCTIONS_FALLBACK` — the old
    full rulebook — because there is nothing left to load on demand.
    `skills` is deliberately NOT in `inject`, so such a profile still loads
-   every tool.
+   every tool. Every workflow names its dependencies as **load instructions**
+   ("Load `scholar-tools` … first"), not as cross-references — the same defect
+   the user reported for carding, one level up (`.notes/78` R6). `scholar-memory`
+   was cut to **2,371 chars** (from 5,393) by that batch's R8: it had been
+   restating the tool's own lifecycle, which is both wasted load and a drift
+   surface. The fallback is a near-clone of the `scholar-tools` Shared behavior
+   section and had silently drifted twice (it lost the `next_offset` paging rule
+   and kept calling `scholar_search_papers` "the default discovery tool" long
+   after every workflow moved to Sciverse entry); `test/skills.spec.ts` now pins
+   rule **coverage** between the two surfaces rather than wording (R10).
 
 The user configures plugin parameters (Unpaywall email, API keys, CloakBrowser
 toggle, proxy, output directory, …) on the **DSH Web UI's Plugins page** — the
@@ -227,14 +295,16 @@ the dev dependencies) together when the runtime generation changes.
 | `sciverseApiKeyRef` | Sciverse Open Platform Bearer token — a **DSH credential reference** (default `SCIVERSE_API_TOKEN`), entered on the page's write-only "Sciverse API token" control, which writes to the **DSH credentials domain**. Enables the `sciverse_*` tools. Sciverse is fetched **directly (no proxy)** — China-hosted. |
 | `cloakEnabled` | Opt-in CloakBrowser fallback for Cloudflare/WAF-gated PDFs (heavy; off by default). |
 | `proxyUrl` | Outbound HTTP proxy (e.g. `http://127.0.0.1:10808`); used for OA fetches, the CloakBrowser, and its binary download. |
-| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar), `cards/` (the `scholar-memory` DOI card library, written by the model via its file tools). |
+| `defaultOutputDir` | Root output directory. **Decided: `.scholar`** (resolved against the session workspace); each tool owns a subdirectory: `pdfs/` (PDFs), `md/` (Markdown, incl. `arxiv_get_fulltext`), `html/` (arXiv HTML pages), `figs/` (Sciverse figures), `idem/` (batch-idempotency sidecar), `cards/` (the `scholar-memory` DOI card library, written and read by the `scholar_card_*` tools). |
 | `maxResultsPerSearch`, `fetchTimeoutSec`, … | Tunables with safe defaults. |
 
 ## Code policy
 
 Implementation is **complete** and committed:
-The repository root is the pure-TypeScript DSH plugin (**28 tools**: `scholar_search_*`
+The repository root is the pure-TypeScript DSH plugin (**30 tools**: `scholar_search_*`
 incl. `scholar_get_paper_snippets` via the Ai2 Asta MCP server, `scholar_format_references`,
+`scholar_card_*` (the memory card library — `scholar_card_save` /
+`scholar_card_list`, backed by the pure `src/cardstore.ts`),
 `paper_fetch_*`,
 `arxiv_*` (`arxiv_get_fulltext` — official arXiv HTML full text as Markdown or
 article-scoped HTML, parse5-based), and
@@ -243,7 +313,7 @@ article-scoped HTML, parse5-based), and
 real values; `source:"sciverse"` = OpenAlex-topic-scoped Sciverse meta-search
 with exact counts below the server's 10000 cap and in-topic top-cited) and
 `sciverse_evidence_pack`),
-Config schema, companion instructions, client-half settings page. **426 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
+Config schema, companion instructions, client-half settings page. **465 passing unit tests**, `lib/` **not git-tracked** (built by `prepare`/`build`), **installed
 into the live profile** (`dsh plugin --profile web add .` — bundle reconciled).
 The fetch chain is OA-sources only (Unpaywall → S2 → arXiv → PMC → bioRxiv):
 direct → CloakBrowser fallback → last-resort title web-search fallback → report

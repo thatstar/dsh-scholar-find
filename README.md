@@ -100,9 +100,9 @@ key is configured. Nothing needs editing by hand.
   (`unpaywallEmail`), optional API keys (`s2ApiKeyRef` / `astaApiKeyRef` /
   `sciverseApiKeyRef`), a `proxyUrl` if you are behind a proxy, and a
   `defaultOutputDir` (default `.scholar`, with `pdfs/`/`md/`/`html/`/`figs/`/
-  `idem/`/`cards/` subfolders per tool — `cards/` holds the DOI card library
-  the assistant maintains for investigated papers). Everything else has safe
-  defaults.
+  `idem/`/`cards/` subfolders per tool — `cards/` holds the DOI card library of
+  investigated papers, written and recalled by the `scholar_card_*` tools).
+  Everything else has safe defaults.
 
 ## References
 

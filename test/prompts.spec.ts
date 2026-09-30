@@ -27,8 +27,8 @@ const tool = (name: string): CapturedTool => {
 const params = (name: string): Params => paramsOf(tool(name))
 
 describe('tool descriptions — shared skeleton', () => {
-  it('registers 28 tools', () => {
-    expect(harness.tools).toHaveLength(28)
+  it('registers 30 tools', () => {
+    expect(harness.tools).toHaveLength(30)
   })
 
   it('gives every description the full Use when / Not for / Returns skeleton', () => {
@@ -39,12 +39,25 @@ describe('tool descriptions — shared skeleton', () => {
     }
   })
 
-  it('keeps the resident tool surface within budget (see .notes/74)', () => {
+  it('keeps the resident tool surface within budget (see .notes/74, 77, 78)', () => {
     // L1 = everything the provider sends as the tool's `input_schema`: the tool
     // description plus EVERY nested parameter/item description (all of them are
     // prompt cost, so the walk is recursive). Measured 28,634 after the
     // .notes/74 cleanup + the .notes/75 review fixes (34,047 before the
     // cleanup); the guard stops the surface from silently growing back.
+    //
+    // Raised to 31,300 by .notes/77, which added the two `scholar_card_*` tools
+    // (2,496 chars) so the memory lifecycle is executed by a tool instead of
+    // re-derived by hand in every session. That trade is deliberate: the
+    // ~2.5k resident chars buy back the work the model was silently skipping.
+    // .notes/78 R2/R3 then moved the filter-operator semantics into the
+    // catalog (the declared authority) and spent part of the saving on the
+    // read-time card trigger, landing at 31,001 — so the guard tightened to
+    // 31,100. R4–R12 closed three more gaps (unique_id in the evidence pack,
+    // the three sibling readers named by sciverse_read_content, the card-recall
+    // pointer on scholar_list_library) and trimmed ~200 chars of fat to pay for
+    // them: net +91 for three real chain repairs, with ~3,000 chars removed
+    // from the on-demand side in the same batch. Guard moved to 31,200 to match.
     const surface = (node: unknown): number => {
       if (!node || typeof node !== 'object') return 0
       const schema = node as { description?: unknown; properties?: Record<string, unknown>; items?: unknown }
@@ -57,7 +70,7 @@ describe('tool descriptions — shared skeleton', () => {
       (sum, t) => sum + surface({ description: t.description, properties: t.parameters.properties }),
       0,
     )
-    expect(total).toBeLessThanOrEqual(29000)
+    expect(total).toBeLessThanOrEqual(31100)
     // A lower bound too: an empty/partial tool list must not pass the guard.
     expect(total).toBeGreaterThan(25000)
   })
@@ -99,7 +112,13 @@ describe('sciverse parameter semantics match the API docs', () => {
 
   it('warns on sort_by_year that query + explicit sort degrades the query', () => {
     expect(params('sciverse_search_papers').sort_by_year?.description).toContain('degrades the query')
-    expect(params('sciverse_search_papers').query?.description).toContain('Boolean syntax')
+    // Trimmed to the operational essentials (R12 tail); the rules that must
+    // survive are the operator set, precedence and the hard-requirement trap.
+    const q = params('sciverse_search_papers').query?.description ?? ''
+    expect(q).toContain('Boolean')
+    expect(q).toContain('NOT > AND > OR')
+    expect(q).toContain('EVERY term is required')
+    expect(q).toContain('64 terms')
   })
 
   it('states the boost gating (query-only, ignored with a sort)', () => {
@@ -107,9 +126,27 @@ describe('sciverse parameter semantics match the API docs', () => {
     expect(params('sciverse_search_papers').language_affinity?.description ?? '').toMatch(/hard-?exclude/i)
   })
 
-  it('requires catalog-exact field names and documents the operator set', () => {
-    expect(params('sciverse_search_papers').filters_advanced?.description).toContain('MUST match `sciverse_list_catalog`')
+  it('routes filter semantics to the catalog instead of restating them (R2)', () => {
+    // The operator set, the per-field applicable operators and the enum values
+    // moved OUT of this description and INTO the runtime catalog, which is the
+    // declared authority — restating them here cost resident chars and could
+    // drift. The pointer is what must survive.
+    const filters = params('sciverse_search_papers').filters_advanced?.description ?? ''
+    expect(filters).toContain('`sciverse_list_catalog`')
+    expect(filters).toMatch(/operator/i)
     expect(tool('sciverse_list_catalog').description).toContain('must match it exactly')
+    // The catalog must promise what its render actually delivers (see the
+    // render test in tools.spec.ts) — the two include_* params were no-ops.
+    expect(tool('sciverse_list_catalog').description).toContain('applicable filter operators')
+  })
+
+  it('names the card tool on every reader — the trigger belongs at read time (R3)', () => {
+    // .notes/78 NEW-2: zero tool descriptions mentioned `scholar_card_save`, so
+    // the only trigger was a resident sentence and a skill body. A paper becomes
+    // cardable at the moment it is READ, so the readers must say so.
+    for (const name of ['sciverse_read_content', 'arxiv_get_fulltext', 'scholar_get_paper_snippets', 'paper_pdf2md']) {
+      expect(tool(name).description, name).toContain('scholar_card_save')
+    }
   })
 
   it('documents the empty-title relation rows (OpenAlex ids are not resolvable)', () => {

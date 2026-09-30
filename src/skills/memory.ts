@@ -1,130 +1,57 @@
 /**
- * scholar-memory skill: the persistent DOI card library. Every investigated
- * paper gets a Markdown card under `<defaultOutputDir>/cards/`, named after
- * its DOI (`/` → `_`), so final reports can recall what was examined. The
- * append-only update rules and the card template are the core contract.
+ * scholar-memory skill: the persistent DOI card library — the plugin's working
+ * memory. One Markdown card per INVESTIGATED paper under
+ * `<defaultOutputDir>/cards/`, written at read time rather than report time.
+ *
+ * Since v0.2.0 the mechanical lifecycle (identity gate, citation population,
+ * append-only merge, provenance format, filenames) belongs to
+ * `scholar_card_save` / `scholar_card_list`. `.notes/78` R8 cut this skill back
+ * to what a tool cannot enforce — when to card, what counts as evidence, how to
+ * read a card honestly — because restating the tool's own behaviour was ~2/3 of
+ * its body and drifted from it.
  */
 
 export const SCHOLAR_MEMORY_SKILL = {
   name: 'scholar-memory',
   description:
-    'Track investigated papers as persistent Markdown DOI cards under the plugin output dir (cards/ subfolder), for final reports: append-only provenance-bound evidence, mandatory citation back/forward-tracking, keyword auto-completion. Load when investigating papers or building reports that must recall them.',
+    'Working memory for investigated papers: one persistent Markdown DOI card each under the output dir (cards/), written by scholar_card_save at read time (append-only, provenance-bound evidence, citation back/forward-tracking) and recalled by scholar_card_list before a report.',
   whenToUse: 'A DOI is under investigation, or a final report must recall previously examined papers.',
   source: 'runtime',
-  content: `# Scholar memory: DOI card library
+  content: `# Scholar memory: the DOI card library
 
-You are an academic research assistant. Your core task is to maintain a
-Markdown card library for investigated papers, so final reports can recall
-what was examined. The library lives in the \`cards/\` subfolder of the
-plugin's configured output directory (\`defaultOutputDir\`, default
-\`.scholar/\`, resolved against the current session workspace — see Shared
-behavior). Confirm the actual root from \`scholar_list_library\`'s reported
-root or from a path returned by a scholar tool before writing; do not assume
-\`.scholar/\`. One card per paper under \`{defaultOutputDir}/cards/\`, named by
-the canonical slug: every character outside \`[A-Za-z0-9._-]\` becomes \`_\`
-(so \`/ : < > " | ? *\` and spaces are all covered), runs collapse, and leading/
-trailing \`_\`/\`.\` are trimmed — \`10.1063/1.3506838\` →
-\`10.1063_1.3506838.md\`, \`10.1103/jwmw-3lds\` → \`10.1103_jwmw-3lds.md\`,
-\`arXiv:2402.08954\` → \`arXiv_2402.08954.md\`. **Prefer the \`cardPath\`
-returned by \`scholar_get_paper\` / \`scholar_match_title\`** — the plugin
-already applied that rule, including for non-DOI identifiers; only slug by hand
-when no tool returned it. Create cards only for papers that are actually
-investigated (fetched, read in depth, or cited into a report) — not for every
-search hit. Papers without a DOI (e.g. arXiv-only) may be carded under the
-arXiv id instead, or skipped. Note: the model's file tools are scoped to the
-session workspace, so keep \`defaultOutputDir\` workspace-relative.
+The card library is your **working memory**: one Markdown card per paper you
+actually investigated, under \`cards/\` in the plugin's output dir
+(\`defaultOutputDir\`, default \`.scholar/\`, resolved against the session
+workspace). A report recalls what was examined from these cards — which only
+works if the card is written *while you investigate*.
 
-## Card lifecycle (in order, at creation)
+Two tools own it: **\`scholar_card_save\`** (create/append) and
+**\`scholar_card_list\`** (recall). They handle identity lookup, the header,
+citation population, provenance formatting, the append-only merge and the
+filename. What is left to you:
 
-1. **Create** — write the card from the [Card template], filling \`## Basic
-   Information\` from the paper metadata.
-2. **Populate citations (mandatory)** — run \`scholar_get_references\` into
-   \`## Citation Backtrack\` and \`scholar_get_citations\` into \`## Citation
-   Forwardtrack\` (one entry per returned paper, deduplicated, DOI included
-   when available). This step is required, not optional. **Record the returned
-   \`coverage.label\` verbatim** next to the entries: a zero-row answer is
-   \`not_indexed\` (the graph has nothing for this record) rather than "cites
-   nothing", and a short list is \`partial\`/\`truncated\` — never write it as a
-   total. Only when the call genuinely errors, record
-   \`- no citation data (S2: <code or message>)\` instead of leaving the seed
-   empty.
-3. **Append evidence as you read** — bind every full-text excerpt with
-   provenance (see the Evidence rule below).
+- **Card at read time, not report time.** Call \`scholar_card_save\` the moment a
+  paper is fetched or read in depth, before the next one — never during the
+  write-up, where the card is reconstructed from the conversation. Card only
+  what you investigated; reading a paper again appends to its card.
+- **Always pass \`expectedTitle\`.** On a mismatch the tool writes **nothing**
+  (\`status: "refused"\`): re-resolve the id or ask the user, and never cite it. A
+  card marked \`unverified\` means no source held that record.
+- **The quote is the evidence.** Pass the verbatim \`quote\` with its \`docId\` /
+  \`offset\` (or \`page\`). Never rephrase a source's words — a finding description
+  without a quote is not evidence and is not written.
+- **Never overwrite a card by hand.** The merge is append-only: only the
+  \`- coverage:\` status line and the \`Keywords\` line are refreshed, and the tool
+  does both. Use your file tools to read a card, not to edit one.
+- **Check completeness before reporting.** \`scholar_card_list\` reports
+  \`complete\` per card — both citation sections populated (entries, or an
+  explicit "no citation data" line) and ≥1 provenance-bound evidence line. A
+  \`not_indexed\` section means the graph has nothing for that record, not that
+  the work cites nothing — never report it as a total.
+- **Recall before you write.** Run \`scholar_card_list\` first and write from the
+  cards it returns instead of re-deriving what you examined.
 
-## Operation guidelines (strictly follow)
-
-- **Reading and locating** — When the user provides a DOI, first check whether
-  \`{defaultOutputDir}/cards/{formatted_DOI}.md\` exists. If it does not,
-  create a new file according to the [Card template] below; if it exists, read
-  the full content of that file before updating.
-
-- **Verify the identifier before writing it (mandatory)** — a DOI/paperId taken
-  from a search list or enumeration table is a pointer, not a verified record:
-  such ids have resolved to unrelated papers (a hard-sphere nucleation row
-  recorded as a colloidal-gel PRL). Before writing a card, confirm the id with
-  \`scholar_get_paper({ paperId, expectedTitle })\` or \`scholar_match_title\`,
-  and read the returned \`titleCheck\`. On \`verdict: "mismatch"\` do **not**
-  write that DOI: record the correction (the id and the work it actually
-  resolved to) and re-resolve the title or ask the user. Never card an
-  identifier whose title you have not compared.
-
-- **Update rules (core principle: append-only)** — Never overwrite existing
-  content in the file; only append new lines at the end of the specified
-  sections.
-  - **Appending evidence (provenance-bound, verbatim)**: under \`## Evidence
-    List\`, add one line per full-text read, bound exactly as the review
-    contract binds claims:
-    \`- [doc_id | offset | page if available] "verbatim quote" — finding description (YYYY-MM-DD)\`
-    Route \`sciverse_read_content\` / \`sciverse_evidence_pack\` output into
-    the card verbatim — the quote is the source's words, never rephrased.
-    When there is no sciverse \`doc_id\` (arXiv HTML, a local PDF), record the
-    source instead: \`[arxiv:2402.08954 | page if available] "verbatim quote"\`.
-    Keep the finding description short; the quote carries the evidence.
-  - **Appending evaluation**: under \`## Evaluation Log\`, count existing
-    version numbers (v1, v2, ...) and add a new line:
-    \`- [v{new_number} | current date] new evaluation comment...\`
-  - **Updating metadata**: if later reads discover new references, append
-    them to \`## Citation Backtrack\` (avoid duplicates); if citing papers are
-    retrieved via an API later, append them to \`## Citation Forwardtrack\`
-    (avoid duplicates).
-  - **First-append seeds**: if a citation section is still its empty \`-\`
-    seed, replace that seed with the first real entry (the seed is a
-    placeholder, not content).
-
-- **Auto-completion of keywords** — After each update, extract 3–5 core
-  academic keywords. If the keyword list in the \`## Basic Information\`
-  section is missing entries or can be supplemented, directly modify that
-  keyword line (this field may be overwritten, as keywords are a single set
-  and do not require appending).
-
-- **Verify after writing** — After creating or appending to a card, list the
-  library (\`scholar_list_library\`, subdir \`cards\`) and confirm the card
-  appears under \`{defaultOutputDir}/cards/\`; if it does not, the write went
-  to the wrong location — correct it. A card is complete only when \`##
-  Citation Backtrack\` and \`## Citation Forwardtrack\` are non-empty (or
-  carry an explicit "no citation data" entry) and \`## Evidence List\` has at least one provenance-bound line. Before
-  reporting a card, re-open it and confirm those sections.
-
-## Card template (to be generated when creating a new card)
-
-\`\`\`markdown
-# DOI: {DOI}
-
-## Basic Information
-- **Title**: {to be extracted}
-- **Authors**: {to be extracted}
-- **Abstract**: {to be extracted}
-- **Keywords**: {to be extracted}
-
-## Citation Backtrack
--
-
-## Citation Forwardtrack
--
-
-## Evidence List
-
-## Evaluation Log
-\`\`\`
-`,
+The tool keys and names every card (a DOI becomes \`10.1063_1.3506838.md\`, an
+arXiv id \`arXiv_2402.08954.md\`); you never derive a path. Sections: Basic Information,
+Citation Backtrack, Citation Forwardtrack, Evidence List, Evaluation Log.`,
 }

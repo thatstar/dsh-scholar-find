@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SCHOLAR_INSTRUCTIONS, SCHOLAR_INSTRUCTIONS_FALLBACK } from '../src/instructions.js'
 import { SCHOLAR_SKILLS } from '../src/skills/index.js'
 
-/** All 28 registered tool names (src/tools/register.ts). */
+/** All 30 registered tool names (src/tools/register.ts). */
 const TOOL_NAMES = [
   'scholar_search_papers',
   'scholar_search_papers_by_snippet',
@@ -16,6 +16,8 @@ const TOOL_NAMES = [
   'scholar_get_author',
   'scholar_get_author_papers',
   'scholar_export_bibtex',
+  'scholar_card_save',
+  'scholar_card_list',
   'paper_fetch_resolve',
   'paper_fetch_download',
   'paper_fetch_batch',
@@ -82,7 +84,7 @@ describe('scholar skills registry shape', () => {
 describe('scholar-tools routing map (selection-bias invariants)', () => {
   const catalog = byName.get('scholar-tools')!
 
-  it('names every one of the 28 tools (word-boundary, so siblings cannot mask a gap)', () => {
+  it('names every one of the 30 tools (word-boundary, so siblings cannot mask a gap)', () => {
     for (const tool of TOOL_NAMES) {
       // A plain toContain would let `scholar_get_paper` be satisfied by
       // `scholar_get_paper_snippets`, so require a non-identifier character after.
@@ -144,14 +146,22 @@ describe('workflow skills (output-control extension points)', () => {
     }
   })
 
-  it('hooks the investigating workflows to the card library (scholar-memory)', () => {
+  it('cards investigated papers inside the Pipeline — write-time, not report-time', () => {
+    // The defect this pins (.notes/77): the card instruction used to sit in
+    // `## Behavior` as "Persist every investigated DOI as a card", which the
+    // model executed as report-time cleanup over the papers that survived into
+    // the report. The step now lives in the numbered Pipeline, at read time.
     // trend-scan only lists top-cited papers (never examines them), so it is
     // deliberately excluded — cards are for investigated papers only.
     for (const name of WORKFLOW_SKILL_NAMES.filter((n) => n !== 'scholar-trend-scan')) {
       const content = byName.get(name)!.content
-      expect(content, name).toContain('Persist every investigated DOI as a card under `{defaultOutputDir}/cards/`, binding full-text quotes with provenance (see `scholar-memory`)')
+      const pipeline = content.slice(content.indexOf('## Pipeline'), content.indexOf('## Behavior'))
+      expect(pipeline, name).toContain('scholar_card_save')
+      expect(content, name).toContain('scholar-memory')
+      // The old deferral wording must not creep back.
+      expect(content, name).not.toContain('Persist every investigated DOI')
     }
-    expect(byName.get('scholar-trend-scan')!.content).not.toContain('Persist every investigated DOI')
+    expect(byName.get('scholar-trend-scan')!.content).not.toContain('scholar_card_save')
   })
 })
 
@@ -164,61 +174,73 @@ describe('scholar-memory (DOI card library invariants)', () => {
     expect(memory.content).toContain('`.scholar/`')
   })
 
-  it('documents the canonical card-filename slug (all unsafe characters)', () => {
-    expect(memory.content).toContain('canonical slug')
-    expect(memory.content).toContain('[A-Za-z0-9._-]')
+  it('names the tool-derived filename rule without re-teaching it (.notes/78 R8)', () => {
+    // The slug algorithm moved into the tool; the skill only needs to say the
+    // tool owns the name and show what one looks like.
+    expect(memory.content).toContain('keys and names every card')
     expect(memory.content).toContain('`10.1063_1.3506838.md`')
-    expect(memory.content).toContain('`10.1103_jwmw-3lds.md`')
     expect(memory.content).toContain('`arXiv_2402.08954.md`')
+    expect(memory.content).toContain('you never derive a path')
   })
 
-  it('points the model at the tool-supplied cardPath', () => {
-    expect(memory.content).toContain('cardPath')
-    expect(memory.content).toContain('scholar_get_paper')
+  it('no longer tells the model to derive or fetch a card path (R7)', () => {
+    // `scholar_card_save` owns the path; `scholar_get_paper` stopped reporting it.
+    expect(memory.content).toContain('you never derive a path')
+    expect(memory.content).not.toContain('cardPath')
   })
 
-  it('carries the operation guidelines, append-only core, and the card template', () => {
-    expect(memory.content).toContain('## Operation guidelines')
+  it('lists the card sections it may read back, and the append-only core', () => {
     expect(memory.content).toContain('Never overwrite')
-    expect(memory.content).toContain('## Card template')
-    expect(memory.content).toContain('## Evidence List')
-    expect(memory.content).toContain('## Evaluation Log')
-    expect(memory.content).toContain('## Citation Backtrack')
-    expect(memory.content).toContain('## Citation Forwardtrack')
-    expect(memory.content).toContain('## Basic Information')
+    expect(memory.content).toContain('append-only')
+    for (const section of ['Evidence List', 'Evaluation Log', 'Citation Backtrack', 'Citation Forwardtrack', 'Basic Information']) {
+      expect(memory.content, section).toContain(section)
+    }
   })
 
-  it('resolves the Backtrack/Forwardtrack empty `-` seeds on first append', () => {
-    expect(memory.content).toContain('First-append seeds')
-    expect(memory.content).toContain('replace that seed with the first real entry')
+  it('binds evidence to a verbatim quote with provenance', () => {
+    expect(memory.content).toContain('verbatim')
+    expect(memory.content).toContain('Never rephrase')
+    expect(memory.content).toContain('is not evidence')
+    expect(memory.content).toContain('`docId`')
+    expect(memory.content).toContain('`offset`')
   })
 
-  it('binds evidence with full-text provenance (doc_id/offset/page + verbatim quote)', () => {
-    expect(memory.content).toContain('provenance-bound, verbatim')
-    expect(memory.content).toContain('[doc_id | offset | page if available]')
-    expect(memory.content).toContain('never rephrased')
-    expect(memory.content).toContain('sciverse_evidence_pack')
-    expect(memory.content).toContain('arxiv:2402.08954')
-  })
-
-  it('mandates citation back/forward-track population at card creation', () => {
-    expect(memory.content).toContain('Card lifecycle')
-    expect(memory.content).toContain('Populate citations (mandatory)')
-    expect(memory.content).toContain('scholar_get_references')
-    expect(memory.content).toContain('scholar_get_citations')
-    expect(memory.content).toContain('required, not optional')
+  it('leaves citation population to the tool but keeps the completeness check', () => {
+    // The two citation sections are the tool's job now; what the model must
+    // still know is that completeness depends on them and how to check.
+    expect(memory.content).toContain('scholar_card_list')
+    expect(memory.content).toContain('`complete`')
     expect(memory.content).toContain('no citation data')
+    expect(memory.content).toContain('provenance-bound evidence line')
   })
 
-  it('treats a card as complete only with populated citations and provenance-bound evidence', () => {
-    expect(memory.content).toContain('A card is complete only when')
-    expect(memory.content).toContain('at least one provenance-bound line')
+  it('hands the mechanical lifecycle to the tools and keeps only the discipline', () => {
+    // .notes/77: the hand-authored lifecycle (template + two citation calls +
+    // provenance formatting) was skipped or deferred twice in real use, so the
+    // tools own it now. .notes/78 R8 then cut the skill back to what a tool
+    // CANNOT enforce — it had been restating the tool's behaviour at ~2/3 of
+    // its length, which is also how the two drift apart.
+    expect(memory.content).toContain('scholar_card_save')
+    expect(memory.content).toContain('scholar_card_list')
+    expect(memory.content).toContain('Card at read time, not report time')
+    expect(memory.content).toContain('Recall before you write')
+    expect(memory.content).toContain('expectedTitle')
+    expect(memory.content).toContain('a finding description')
+    // The old escape hatch let the model defer to report time by treating a
+    // cited paper as an investigated one.
+    expect(memory.content).not.toContain('or cited into a report')
+    // And the restated tool internals must not creep back.
+    expect(memory.content).not.toContain('## Card template')
+    expect(memory.content).not.toContain('[doc_id | offset | page if available]')
   })
 
-  it('requires the citation coverage label to be recorded verbatim', () => {
-    expect(memory.content).toContain('coverage.label')
+  it('stays a small load: the discipline only, not the tool implementation (5,393 -> under 2,500, less than half)', () => {
+    expect(memory.content.length).toBeLessThan(2500)
+  })
+
+  it('reads a coverage verdict honestly (not_indexed is not "cites nothing")', () => {
     expect(memory.content).toContain('not_indexed')
-    expect(memory.content).toContain('never write it as a')
+    expect(memory.content).toContain('never report it as a total')
   })
 
   it('is triggered by DOIs and report recall', () => {
@@ -282,8 +304,43 @@ describe('resident instructions (one-sentence pointer + skill-carried detail)', 
     expect(SCHOLAR_INSTRUCTIONS).toContain('paper_fetch_*')
     expect(SCHOLAR_INSTRUCTIONS).toContain('arxiv_*')
     expect(SCHOLAR_INSTRUCTIONS).toContain('sciverse_*')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar_card_*')
     expect(SCHOLAR_INSTRUCTIONS).toContain('`skill` tool')
     expect(SCHOLAR_INSTRUCTIONS).toContain('scholar-*')
+  })
+
+  it('carries the read-time carding hook — the one rule that cannot wait for a skill load', () => {
+    // The reported defect (.notes/77) was a card written at report time rather
+    // than at read time. The workflow skills carry the full contract, but this
+    // is the reminder that has to survive even when no skill is loaded.
+    expect(SCHOLAR_INSTRUCTIONS).toContain('scholar_card_save')
+    expect(SCHOLAR_INSTRUCTIONS).toContain('as you read it')
+  })
+
+  it('keeps the fallback rulebook in step with the scholar-tools skill (R10)', () => {
+    // The fallback (rendered only when the profile exposes no skills service) is
+    // a near-clone of the Shared behavior section, and it had already drifted
+    // twice: it lost the `next_offset` paging rule and still called
+    // scholar_search_papers "the default discovery tool" while every workflow
+    // enters from Sciverse. Nothing guarded it, because it is invisible to the
+    // L1 budget walk. This pins rule coverage, not wording, so the two cannot
+    // silently diverge again.
+    const catalog = SCHOLAR_SKILLS.find((s) => s.name === 'scholar-tools')!.content
+    // Shared behavior only — the routing map is deliberately NOT duplicated in
+    // the fallback, and the sub-bullets of a split rule are not labels.
+    const shared = catalog.slice(catalog.indexOf('## Shared behavior (cross-tool)'), catalog.indexOf('## Routing'))
+    const labels = shared
+      .split('\n')
+      .filter((l) => l.startsWith('- '))
+      .map((l) => /^- ([^:—]+)/.exec(l)?.[1]?.trim())
+      .filter((l): l is string => Boolean(l))
+    expect(labels.length).toBeGreaterThanOrEqual(8)
+    for (const label of labels) {
+      expect(SCHOLAR_INSTRUCTIONS_FALLBACK, label).toContain(`- ${label}`)
+    }
+    // The specific rule that drifted.
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).toContain('next_offset')
+    expect(SCHOLAR_INSTRUCTIONS_FALLBACK).not.toContain('the default discovery tool')
   })
 
   it('stays under a hard length guard', () => {

@@ -14,8 +14,26 @@
  * @module dsh-scholar-find/verify
  */
 
-/** Anything but alphanumerics/whitespace is a token boundary. */
-const NON_TOKEN_RE = /[^a-z0-9\s]/g
+/**
+ * Anything that is not a letter, a number or whitespace is a token boundary.
+ * Unicode-aware on purpose: the ASCII-only form (`[^a-z0-9\s]`) deleted every
+ * CJK character, so a Chinese title normalized to the empty string and
+ * `titleSimilarity` returned 0 — for two IDENTICAL titles. Since 0 is the
+ * `mismatch` verdict, the identity gate refused every Chinese work it was
+ * shown, including the GB/T 7714-2015 corpus this plugin advertises
+ * (.notes/78 R1b).
+ */
+const NON_TOKEN_RE = /[^\p{L}\p{N}\s]/gu
+
+/**
+ * Scripts written without spaces. Such a run is one "word" to a whitespace
+ * tokenizer, so two different Chinese titles share no token at all; these runs
+ * are tokenized into character bigrams instead, which makes a near-identical
+ * title score high and an unrelated one score low.
+ */
+const TOKEN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}]+/gu
+/** Per-character test used to route a matched piece to the bigram path. */
+const UNSPACED_CHAR_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
 
 /** Similarity at or above which two titles are the same work. */
 export const TITLE_MATCH_MIN = 0.85
@@ -30,9 +48,25 @@ export function normalizeTitle(title: string): string {
   return title.toLowerCase().replace(NON_TOKEN_RE, ' ').replace(/\s+/g, ' ').trim()
 }
 
-/** Normalized token set (lowercase, alphanumeric) for title similarity. */
+/**
+ * Normalized token set for title similarity: words for spaced scripts,
+ * character bigrams for the unspaced ones (Han/Kana/Hangul).
+ */
 export function titleTokens(title: string): Set<string> {
-  return new Set(normalizeTitle(title).split(' ').filter(Boolean))
+  const tokens = new Set<string>()
+  for (const match of normalizeTitle(title).matchAll(TOKEN_RE)) {
+    const piece = match[0]
+    if (!UNSPACED_CHAR_RE.test(piece)) {
+      tokens.add(piece)
+      continue
+    }
+    if (piece.length === 1) {
+      tokens.add(piece)
+      continue
+    }
+    for (let i = 0; i < piece.length - 1; i++) tokens.add(piece.slice(i, i + 2))
+  }
+  return tokens
 }
 
 /** Jaccard similarity between two titles (0..1). Exact/close titles -> high. */
@@ -63,15 +97,47 @@ export interface TitleCheck {
 }
 
 /**
+ * The Sciverse RAG endpoint renders a paper's title BILINGUALLY
+ * (`中文标题 | English title`) while its metadata index stores one language, so
+ * a literal comparison scores the same work as `mismatch` — verified live
+ * against `10.19678/j.issn.1000-3428.0063687` (`.notes/78` §11). A title is
+ * therefore compared as its whole string AND as each `|`-separated segment.
+ *
+ * Deliberately conservative: only the bilingual bar splits a title (splitting
+ * on `/` would turn "A/B testing" into a one-token variant that matches
+ * unrelated short titles), and only segments with enough tokens to be
+ * meaningful are offered.
+ */
+const BILINGUAL_SEP = /\s*[|｜]\s*/
+
+/** The strings a title may legitimately be compared as. */
+export function titleVariants(title: string): string[] {
+  const t = (title ?? '').trim()
+  if (!t || !BILINGUAL_SEP.test(t)) return t ? [t] : []
+  const parts = t.split(BILINGUAL_SEP).map((s) => s.trim()).filter(Boolean)
+  const substantial = parts.filter((p) => titleTokens(p).size >= 3)
+  return [t, ...substantial.filter((p) => p !== t)]
+}
+
+/**
  * Compare an expected title against the title a resolver actually returned.
  * A missing/empty title on either side is `unknown`, never a silent pass:
  * "we could not check" must not read as "it is the right paper".
+ *
+ * The score is the best pairing across {@link titleVariants}, so a bilingual
+ * rendering and a monolingual record still recognise each other.
  */
 export function titleVerdict(expected?: string, actual?: string): TitleCheck {
   const e = (expected ?? '').trim()
   const a = (actual ?? '').trim()
   if (!e || !a) return { verdict: 'unknown', similarity: 0, ...(e ? { expected: e } : {}), ...(a ? { actual: a } : {}) }
-  const similarity = titleSimilarity(e, a)
+  let similarity = 0
+  for (const ev of titleVariants(e)) {
+    for (const av of titleVariants(a)) {
+      const s = titleSimilarity(ev, av)
+      if (s > similarity) similarity = s
+    }
+  }
   const verdict: TitleVerdict = similarity >= TITLE_MATCH_MIN ? 'match' : similarity >= TITLE_SIMILARITY_MIN ? 'near' : 'mismatch'
   return { verdict, similarity, expected: e, actual: a }
 }

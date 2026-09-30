@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeTitleCheck, normalizeTitle, TITLE_MATCH_MIN, titleAccepted, titleSimilarity, titleTokens, titleVerdict } from '../src/verify.js'
+import { describeTitleCheck, normalizeTitle, TITLE_MATCH_MIN, titleAccepted, titleSimilarity, titleTokens, titleVariants, titleVerdict } from '../src/verify.js'
 
 describe('normalizeTitle / titleTokens', () => {
   it('lowercases, strips punctuation, collapses whitespace', () => {
@@ -9,6 +9,46 @@ describe('normalizeTitle / titleTokens', () => {
 
   it('yields an empty token set for punctuation-only input', () => {
     expect(titleTokens('— —').size).toBe(0)
+  })
+
+  it('keeps non-ASCII letters instead of deleting them', () => {
+    // The ASCII-only tokenizer deleted every CJK character, so a Chinese title
+    // normalized to '' and scored 0 against ITSELF — a `mismatch`, the refusing
+    // verdict, for every Chinese work (.notes/78 R1b).
+    expect(normalizeTitle('注意力机制综述')).toBe('注意力机制综述')
+    expect(titleSimilarity('注意力机制综述', '注意力机制综述')).toBe(1)
+    expect(titleVerdict('注意力机制综述', '注意力机制综述').verdict).toBe('match')
+  })
+
+  it('separates near-identical from unrelated CJK titles (character bigrams)', () => {
+    const same = titleSimilarity('注意力机制综述', '注意力机制研究综述')
+    const other = titleSimilarity('注意力机制综述', '蛋白质折叠预测')
+    expect(same).toBeGreaterThanOrEqual(0.5)
+    expect(other).toBeLessThan(0.5)
+    expect(titleAccepted(titleVerdict('注意力机制综述', '注意力机制研究综述'))).toBe(true)
+    expect(titleVerdict('注意力机制综述', '蛋白质折叠预测').verdict).toBe('mismatch')
+  })
+
+  it('recognises a bilingual RAG title against its monolingual record (.notes/78 §11)', () => {
+    // Live: the Sciverse RAG endpoint renders `中文标题 | English title` while its
+    // metadata index stores one language, so a literal comparison called the
+    // SAME paper a mismatch (10.19678/j.issn.1000-3428.0063687).
+    const zh = '基于倒金字塔深度学习网络的三维医学图像分割'
+    const en = '3D Medical Image Segmentation Based on Inverted Pyramid Deep Learning Network'
+    expect(titleVerdict(`${zh}  |  ${en}`, en).verdict).toBe('match')
+    expect(titleVerdict(`${zh}  |  ${en}`, zh).verdict).toBe('match')
+    expect(titleVerdict(en, `${zh}  |  ${en}`).verdict).toBe('match')
+    // A different work is still a mismatch through every variant.
+    expect(titleVerdict(`${zh}  |  ${en}`, 'Protein structure prediction with transformers').verdict).toBe('mismatch')
+  })
+
+  it('does not split on "/" — a short variant would match unrelated titles', () => {
+    expect(titleVariants('A/B testing')).toEqual(['A/B testing'])
+    expect(titleVerdict('A/B testing', 'A').verdict).toBe('mismatch')
+  })
+
+  it('still tokenizes spaced scripts as words, mixing with CJK runs', () => {
+    expect(titleTokens('Café 注意力')).toEqual(new Set(['café', '注意', '意力']))
   })
 })
 

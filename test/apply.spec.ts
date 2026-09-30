@@ -124,12 +124,12 @@ describe('apply() host wiring', () => {
     expect(text({})).toContain('## Shared behavior')
   })
 
-  it('registers every one of the 28 tools through the tools service', () => {
+  it('registers every one of the 30 tools through the tools service', () => {
     const { ctx, toolDefinitions } = makeContext()
     apply(ctx)
-    expect(toolDefinitions).toHaveLength(28)
+    expect(toolDefinitions).toHaveLength(30)
     const names = toolDefinitions.map((t) => t.name)
-    for (const expected of ['scholar_search_papers', 'paper_pdf2md', 'scholar_list_library', 'arxiv_get_fulltext', 'sciverse_evidence_pack', 'scholar_format_references']) {
+    for (const expected of ['scholar_search_papers', 'paper_pdf2md', 'scholar_list_library', 'arxiv_get_fulltext', 'sciverse_evidence_pack', 'scholar_format_references', 'scholar_card_save', 'scholar_card_list']) {
       expect(names).toContain(expected)
     }
   })

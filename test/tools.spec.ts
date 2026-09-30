@@ -4,6 +4,9 @@
  * back as a confident record when it resolves to a different work.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { execFor, jsonResponse, makeScholarContext, runTool, stubFetch } from './harness.js'
 
 afterEach(() => {
@@ -397,21 +400,46 @@ describe('sciverse_semantic_search — doc_id_index', () => {
   })
 })
 
-describe('card library path', () => {
-  it('returns the canonical card path for a DOI', async () => {
+describe('card library path — the identity tools no longer advertise one', () => {
+  it('stops emitting a card path from scholar_get_paper (.notes/78 R7)', async () => {
+    // It was informational once `scholar_card_save` derived the path itself, and
+    // a "Card path …" line on a metadata lookup reads like state ("a card is
+    // recorded there") when it is only a hint. The read-time trigger lives on
+    // the reading tools now.
     stubFetch(() => jsonResponse({ paperId: 'p1', title: 'Array programming with NumPy', externalIds: { DOI: '10.1038/s41586-020-2649-2' } }))
     const h = makeScholarContext()
     const out = await runTool(h, 'scholar_get_paper', { paperId: 'DOI:10.1038/s41586-020-2649-2' })
-    expect(out.cardPath).toBe('.scholar/cards/10.1038_s41586-020-2649-2.md')
-    expect(out.markdown).toContain('.scholar/cards/10.1038_s41586-020-2649-2.md')
+    expect(out.cardPath).toBeUndefined()
+    expect(out.markdown).not.toContain('Card path')
+    expect(out.markdown).not.toContain('cards/')
   })
 
-  it('follows the configured output dir and falls back to the arXiv id', async () => {
+  it('stops emitting a card path from scholar_match_title', async () => {
     stubFetch(() => jsonResponse({ data: [{ paperId: 'p2', title: 'A preprint', externalIds: { ArXiv: '2402.08954' } }] }))
     const h = makeScholarContext({ defaultOutputDir: 'notes/lib' })
     const out = await runTool(h, 'scholar_match_title', { title: 'A preprint' })
     expect(out.matched).toBe(true)
-    expect(out.cardPath).toBe('notes/lib/cards/arXiv_2402.08954.md')
+    expect(out.cardPath).toBeUndefined()
+    expect(out.markdown).not.toContain('Card path')
+  })
+
+  it('still keys and names the card itself from the DOI, else the arXiv id', async () => {
+    // The naming rule did not go away — it moved into the tool that writes.
+    const dir = await mkdtemp(join(tmpdir(), 'scholar-card-key-'))
+    try {
+      stubFetch((url) => {
+        const u = decodeURIComponent(url)
+        if (u.includes('/references')) return jsonResponse({ offset: 0, data: [] })
+        if (u.includes('/citations')) return jsonResponse({ offset: 0, data: [] })
+        if (u.includes('/paper/')) return jsonResponse({ paperId: 'p2', title: 'A preprint', externalIds: { ArXiv: '2402.08954' } })
+        return jsonResponse({ error: `unexpected ${url}` }, 404)
+      })
+      const h = makeScholarContext()
+      const out = await runTool(h, 'scholar_card_save', { paperId: 'ARXIV:2402.08954' }, execFor(dir))
+      expect(out.path).toBe('.scholar/cards/arXiv_2402.08954.md')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -716,6 +744,319 @@ describe('sciverse_search_papers triage', () => {
     expect(out.markdown).toContain('some_source_field: ISSN 1234-5678')
     expect(out.markdown).not.toContain('untitled')
     expect(out.markdown).not.toContain('no id returned')
+  })
+})
+
+describe('scholar_card_save / scholar_card_list — the memory library', () => {
+  const CARD = '.scholar/cards/10.5555_3295222.3295349.md'
+  const PAPER = {
+    paperId: 'p1',
+    title: 'Attention Is All You Need',
+    year: 2017,
+    venue: 'NeurIPS',
+    abstract: 'The dominant sequence transduction models are based on complex recurrent networks.',
+    authors: [{ name: 'Ashish Vaswani' }, { name: 'Noam Shazeer' }],
+    externalIds: { DOI: '10.5555/3295222.3295349', ArXiv: '1706.03762' },
+  }
+  const REFS = { offset: 0, data: [{ citedPaper: { title: 'Ref A', year: 1999, authors: [{ name: 'X' }], externalIds: { DOI: '10.2/a' } } }] }
+  const CITES = { offset: 0, data: [{ citingPaper: { title: 'Cite A', year: 2020, authors: [{ name: 'Y' }], externalIds: { DOI: '10.3/a' } } }] }
+  const COUNTS = { title: PAPER.title, citationCount: 1, referenceCount: 1 }
+
+  /** Temp session workspaces, so a card write is a real write. */
+  const dirs: string[] = []
+  const makeTmp = async (): Promise<string> => {
+    const d = await mkdtemp(join(tmpdir(), 'scholar-cards-'))
+    dirs.push(d)
+    return d
+  }
+  afterEach(async () => {
+    for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true })
+  })
+
+  const stubCardFetch = (overrides: { references?: () => Response } = {}): void => {
+    stubFetch((url) => {
+      const u = decodeURIComponent(url)
+      if (u.includes('/references')) return overrides.references?.() ?? jsonResponse(REFS)
+      if (u.includes('/citations')) return jsonResponse(CITES)
+      if (u.includes('fields=title,citationCount,referenceCount')) return jsonResponse(COUNTS)
+      if (u.includes('/paper/')) return jsonResponse(PAPER)
+      return jsonResponse({ error: `unexpected ${url}` }, 404)
+    })
+  }
+
+  const readCard = (dir: string): Promise<string> => readFile(join(dir, CARD), 'utf8')
+
+  it('writes the card to disk from one call, with provenance and citations', async () => {
+    const dir = await makeTmp()
+    stubCardFetch()
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: 'DOI:10.5555/3295222.3295349',
+      quote: 'the transformer follows this overall architecture',
+      docId: 'doc-1',
+      offset: 42,
+      page: '3',
+      finding: 'architecture',
+      keywords: ['transformer', 'attention'],
+    }, execFor(dir))
+
+    expect(out.status).toBe('created')
+    expect(out.path).toBe(CARD)
+    expect(out.created).toBe(true)
+    expect(out.added).toMatchObject({ evidence: 1, backtrack: 1, forwardtrack: 1 })
+
+    const text = await readCard(dir)
+    expect(text).toContain('# DOI: 10.5555/3295222.3295349')
+    expect(text).toContain('- **Title**: Attention Is All You Need')
+    expect(text).toContain('- **Keywords**: transformer, attention')
+    expect(text).toContain('- [doc-1 | offset 42 | page 3] "the transformer follows this overall architecture" — architecture')
+    expect(text).toContain('- Ref A (1999). X. DOI: 10.2/a')
+    expect(text).toContain('- Cite A (2020). Y. DOI: 10.3/a')
+    expect(text).toContain('- coverage:')
+    expect(text).not.toMatch(/^-\n/m)
+  })
+
+  it('refuses to write anything when the id resolves to a different work', async () => {
+    const dir = await makeTmp()
+    stubCardFetch()
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: 'DOI:10.5555/3295222.3295349',
+      expectedTitle: 'Colloidal gelation of hard spheres',
+      quote: 'irrelevant',
+    }, execFor(dir))
+
+    expect(out.status).toBe('refused')
+    expect(out.markdown).toContain('Nothing written')
+    // The whole point of the gate: no file, not even an empty card directory.
+    await expect(readCard(dir)).rejects.toThrow()
+  })
+
+  it('appends only what is new — append-only, deduplicated, versioned', async () => {
+    const dir = await makeTmp()
+    stubCardFetch()
+    const h = makeScholarContext()
+    const first = { paperId: 'DOI:10.5555/3295222.3295349', quote: 'first finding', docId: 'doc-1' }
+    await runTool(h, 'scholar_card_save', first, execFor(dir))
+    const second = await runTool(h, 'scholar_card_save', { ...first, quote: 'second finding', docId: 'doc-2' }, execFor(dir))
+
+    expect(second.status).toBe('updated')
+    expect(second.created).toBe(false)
+    expect(second.added).toMatchObject({ evidence: 1, backtrack: 0, forwardtrack: 0 })
+    const text = await readCard(dir)
+    expect(text.split('first finding')).toHaveLength(2)
+    expect(text.split('second finding')).toHaveLength(2)
+    expect(text.split('Ref A (1999)')).toHaveLength(2)
+    expect(text).toContain('[v2 |')
+  })
+
+  it('still writes the card when the citation lookup genuinely fails', async () => {
+    const dir = await makeTmp()
+    // 404 is non-retryable in the S2 client, so this fails fast and honestly.
+    stubCardFetch({ references: () => jsonResponse({ error: 'nope' }, 404) })
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: 'DOI:10.5555/3295222.3295349',
+      quote: 'q',
+      docId: 'doc-1',
+    }, execFor(dir))
+
+    expect(out.status).toBe('created')
+    const text = await readCard(dir)
+    expect(text).toMatch(/- no citation data \(S2: references unavailable \(/)
+    expect(text).toContain('Cite A (2020)') // the other section still populated
+    expect(out.markdown).toContain('citation population failed')
+  })
+
+  it('recalls the library, flags incomplete cards and filters by keyword', async () => {
+    const dir = await makeTmp()
+    stubCardFetch()
+    const h = makeScholarContext()
+    await runTool(h, 'scholar_card_save', {
+      paperId: 'DOI:10.5555/3295222.3295349',
+      quote: 'q',
+      docId: 'doc-1',
+      keywords: ['transformer'],
+    }, execFor(dir))
+
+    const all = await runTool(h, 'scholar_card_list', {}, execFor(dir))
+    expect(all.total).toBe(1)
+    expect(all.cards[0]).toMatchObject({
+      identifier: '10.5555/3295222.3295349',
+      title: 'Attention Is All You Need',
+      evidence: 1,
+      backtrack: 1,
+      forwardtrack: 1,
+      complete: true,
+      path: CARD,
+    })
+    expect(all.markdown).toContain('| Identifier | Title |')
+
+    expect((await runTool(h, 'scholar_card_list', { keyword: 'transformer' }, execFor(dir))).total).toBe(1)
+    expect((await runTool(h, 'scholar_card_list', { keyword: 'protein folding' }, execFor(dir))).total).toBe(0)
+  })
+
+  it('cards a paper Semantic Scholar does not index, verifying against Sciverse', async () => {
+    // .notes/78 R1: the feeding chains are Sciverse-native, and Sciverse holds
+    // Chinese journals and theses S2 does not — the GB/T 7714 case. A S2 404
+    // must not fail the write.
+    const dir = await makeTmp()
+    stubFetch((url, init) => {
+      const u = decodeURIComponent(url)
+      if (u.includes('api.sciverse.space/meta-search')) {
+        expect(String(init?.body)).toContain('"field":"doi"')
+        expect(String(init?.body)).toContain('10.1234/cn.2021.001')
+        return jsonResponse({ total_count: 1, results: [{ title: '注意力机制综述', publication_published_year: 2021, author: ['张三'], doi: '10.1234/cn.2021.001' }] })
+      }
+      return jsonResponse({ error: 'not found' }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 'sciverse-token' }) } })
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: 'paper:10.1234/cn.2021.001', // the Sciverse unique_id form
+      expectedTitle: '注意力机制综述',
+      quote: '注意力机制是……',
+      docId: 'doc-cn-1',
+      offset: 12,
+    }, execFor(dir))
+
+    expect(out.status).toBe('created')
+    expect(out.identityCheck).toMatchObject({ verdict: 'match', source: 'sciverse' })
+    const text = await readFile(join(dir, '.scholar/cards/10.1234_cn.2021.001.md'), 'utf8')
+    expect(text).toContain('# DOI: 10.1234/cn.2021.001')
+    expect(text).toContain('- **Title**: 注意力机制综述')
+    expect(text).toContain('- [doc-cn-1 | offset 12] "注意力机制是……"')
+    // The S2 gap is recorded once, honestly, instead of three doomed calls.
+    expect(text).toContain('- no citation data (S2: not indexed by S2 (not_found))')
+    expect(out.markdown).toContain('Sciverse')
+  })
+
+  it('still writes an UNVERIFIED card when no source has the record', async () => {
+    // No Sciverse credential configured is the common case; a totally
+    // unresolvable id must degrade, never abort the write.
+    const dir = await makeTmp()
+    stubFetch(() => jsonResponse({ error: 'not found' }, 404))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_save', { paperId: 'DOI:10.9999/ghost', quote: 'a quote' }, execFor(dir))
+
+    expect(out.status).toBe('created')
+    expect(out.identityCheck).toMatchObject({ verdict: 'unverified', source: 'none' })
+    expect(out.markdown).toContain('UNVERIFIED')
+    const text = await readFile(join(dir, '.scholar/cards/10.9999_ghost.md'), 'utf8')
+    expect(text).toContain('# DOI: 10.9999/ghost')
+    expect(text).toContain('- **Title**: (not recorded)')
+    expect(text).toContain('- no citation data (S2: not indexed by S2 (not_found))')
+    // The evidence the model actually had is preserved even with no record.
+    expect(text).toContain('a quote')
+  })
+
+  it('refuses only on a resolved record that genuinely differs', async () => {
+    // `unknown` (nothing to compare) is NOT a mismatch — that distinction is
+    // the whole of R1's gate change.
+    const dir = await makeTmp()
+    stubFetch(() => jsonResponse({ error: 'not found' }, 404))
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: 'DOI:10.9999/ghost',
+      expectedTitle: 'A paper nobody indexed',
+    }, execFor(dir))
+    expect(out.status).toBe('created')
+    expect(out.identityCheck.verdict).toBe('unknown')
+  })
+
+  it('cards a paper from its TITLE alone — the only identifier a RAG hit has', async () => {
+    // Live finding (.notes/78 §11): /agentic-search returns a fixed hit shape
+    // with no unique_id and no doi, so the Sciverse RAG path can only offer a
+    // title. The card tool must resolve it, or carding at read time is
+    // impossible on exactly the corpus this plugin targets.
+    const dir = await makeTmp()
+    stubFetch((url) => {
+      const u = decodeURIComponent(url)
+      if (u.includes('api.sciverse.space/meta-search')) {
+        return jsonResponse({ total_count: 1, results: [{ title: '基于深度学习的医学图像分割', unique_id: 'paper:10.1234/zh.2020.1', doi: '10.1234/zh.2020.1', publication_published_year: 2020 }] })
+      }
+      return jsonResponse({ error: 'not found' }, 404) // S2 match + getPaper both miss
+    })
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 'tok' }) } })
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: '基于深度学习的医学图像分割',
+      expectedTitle: '基于深度学习的医学图像分割',
+      quote: '本文提出一种分割网络',
+      docId: 'd1',
+    }, execFor(dir))
+
+    expect(out.status).toBe('created')
+    expect(out.path).toBe('.scholar/cards/10.1234_zh.2020.1.md')
+    expect(out.identityCheck).toMatchObject({ verdict: 'match', source: 'sciverse' })
+    const text = await readFile(join(dir, '.scholar/cards/10.1234_zh.2020.1.md'), 'utf8')
+    expect(text).toContain('# DOI: 10.1234/zh.2020.1')
+    expect(text).toContain('- **Title**: 基于深度学习的医学图像分割')
+  })
+
+  it('never attaches a title resolution that lands on a different work', async () => {
+    // The Sciverse title lookup is gated the same way an id is: a BM25 near-miss
+    // must not become a card for the wrong paper.
+    const dir = await makeTmp()
+    stubFetch((url) => {
+      const u = decodeURIComponent(url)
+      if (u.includes('api.sciverse.space/meta-search')) {
+        return jsonResponse({ total_count: 1, results: [{ title: '蛋白质结构预测综述', unique_id: 'paper:10.1234/other' }] })
+      }
+      return jsonResponse({ error: 'not found' }, 404)
+    })
+    const h = makeScholarContext({}, { credentials: { resolve: async () => ({ value: 'tok' }) } })
+    const out = await runTool(h, 'scholar_card_save', {
+      paperId: '基于深度学习的医学图像分割',
+      expectedTitle: '基于深度学习的医学图像分割',
+    }, execFor(dir))
+    // Nothing matched, so the card is written UNVERIFIED under the given title
+    // rather than silently attached to the wrong record.
+    expect(out.identityCheck.source).toBe('none')
+    expect(out.status).toBe('created')
+    expect(out.markdown).toContain('UNVERIFIED')
+  })
+
+  it('reports an empty library as an empty answer, not an error', async () => {
+    const dir = await makeTmp()
+    const h = makeScholarContext()
+    const out = await runTool(h, 'scholar_card_list', {}, execFor(dir))
+    expect(out.total).toBe(0)
+    expect(out.markdown).toContain('No memory cards')
+    expect(out.markdown).toContain('scholar_card_save')
+  })
+})
+
+describe('sciverse_list_catalog — the render must deliver what the description promises', () => {
+  const CRED = { resolve: async () => ({ value: 'sciverse-token' }) }
+
+  it('surfaces operators, sortability and enum samples from the API response', async () => {
+    // .notes/78 R2: the render printed only name + description, so
+    // `include_sample_values` / `include_field_stats` changed JSON the model
+    // never sees. The description declares the catalog authoritative for filter
+    // operators — that has to reach the model.
+    stubFetch(() => jsonResponse({
+      fields: [{
+        field_name: 'publication_published_year',
+        description: 'Publication year',
+        filterable: true,
+        sortable: true,
+        operators: ['EQ', 'GTE', 'LTE'],
+        sample_values: [2019, 2020, 2021],
+      }],
+    }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_list_catalog', { collection: 'papers', include_sample_values: true })
+    expect(out.markdown).toContain('`publication_published_year`')
+    expect(out.markdown).toContain('operators: EQ, GTE, LTE')
+    expect(out.markdown).toContain('filterable: true')
+    expect(out.markdown).toContain('sample_values: 2019, 2020, 2021')
+  })
+
+  it('falls back to whichever name key the API uses', async () => {
+    stubFetch(() => jsonResponse({ fields: [{ name: 'doi', operators: ['EQ'] }] }))
+    const h = makeScholarContext({}, { credentials: CRED })
+    const out = await runTool(h, 'sciverse_list_catalog', {})
+    expect(out.markdown).toContain('`doi`')
+    expect(out.markdown).toContain('operators: EQ')
   })
 })
 

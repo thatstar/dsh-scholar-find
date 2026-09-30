@@ -470,19 +470,23 @@ export async function getPaper(client: ScholarClient, paperId: PaperId, fields?:
 export async function getCitations(
   client: ScholarClient,
   paperId: PaperId,
-  options: { maxResults?: number; publicationDate?: string; withIntents?: boolean } = {},
+  options: { maxResults?: number; publicationDate?: string; withIntents?: boolean; fields?: string } = {},
 ): Promise<{ items: any[]; hasMore: boolean }> {
   const maxResults = options.maxResults ?? DEFAULT_CITATIONS
-  const fields = options.withIntents
+  const fields = options.fields ?? (options.withIntents
     ? 'title,year,citationCount,authors,venue,contextsWithIntent'
-    : 'title,year,citationCount,authors,venue'
+    : 'title,year,citationCount,authors,venue')
   const params: Record<string, string | undefined> = { fields, ...(options.publicationDate ? { publicationDateOrYear: options.publicationDate } : {}) }
   return paginateWithMeta(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/citations`, params, maxResults)
 }
 
-/** What a paper cites. */
-export async function getReferences(client: ScholarClient, paperId: PaperId, options: { maxResults?: number } = {}): Promise<{ items: any[]; hasMore: boolean }> {
-  return paginateWithMeta(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: 'title,year,citationCount,authors,venue' }, options.maxResults ?? DEFAULT_CITATIONS)
+/**
+ * What a paper cites. `fields` is opt-in because the memory cards need
+ * `externalIds` (to store each entry's DOI) while the tool-facing default stays
+ * the leaner projection it has always served.
+ */
+export async function getReferences(client: ScholarClient, paperId: PaperId, options: { maxResults?: number; fields?: string } = {}): Promise<{ items: any[]; hasMore: boolean }> {
+  return paginateWithMeta(client, `${GRAPH}/paper/${encodeURIComponent(paperId)}/references`, { fields: options.fields ?? 'title,year,citationCount,authors,venue' }, options.maxResults ?? DEFAULT_CITATIONS)
 }
 
 /**

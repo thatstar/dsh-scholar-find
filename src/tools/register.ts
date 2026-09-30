@@ -25,13 +25,14 @@ import { astaSnippetSearch, ASTA_DEFAULT_LIMIT, ASTA_TIMEOUT_MS, type AstaSnippe
 import { mineruParseUrl, mineruParseFile, MINERU_TIMEOUT_MS } from '../mineru/client.js'
 import { arxivGetFulltext } from '../arxiv/html.js'
 import { resolveInsideRoot, resolveRootDir, resolveSubDir } from '../outdir.js'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { formatLibrary, pickSubdirs, type LibraryFile } from '../library.js'
 import { sanitizeForOutput } from '../util/sanitize.js'
 import { computeCoverage, type Coverage } from '../coverage.js'
 import { describeTitleCheck, titleAccepted, titleVerdict } from '../verify.js'
-import { cardIdentifier, cardPath } from '../cards.js'
+import { cardFilename, cardIdentifier, cardPath } from '../cards.js'
+import * as cardstore from '../cardstore.js'
 import { topicOverlap } from '../topic.js'
 import { CITATION_STYLES, footnoteBlock, formatReferences, referenceMetaFromS2Paper, type CitationStyle, type ReferenceMeta } from '../cite.js'
 
@@ -127,6 +128,23 @@ const EVIDENCE_READ_LEN = 2000
 /** Wall-clock cap for the workflow tools (multi-call loops: trend spans 10
  * years x 2 calls, evidence packs 5 claims x 2 calls, each internally paced). */
 const SCIVERSE_WORKFLOW_TIMEOUT_MS = 180_000
+/** scholar_card_save: entries stored per citation section. A card is a working
+ * index of what an investigation touched, not a citation archive — the full
+ * lists stay behind `scholar_get_references` / `scholar_get_citations`. */
+const CARD_CITATION_CAP = 25
+/** Card citation fields: `externalIds` is what puts a DOI on each entry, which
+ * is what makes a cross-session citation list useful. */
+const CARD_CITATION_FIELDS = 'title,year,authors,venue,externalIds'
+/**
+ * Record fields for `scholar_card_save`. `referenceCount` is the point: it is
+ * not in `DEFAULT_PAPER_FIELDS`, and asking for it here removes the separate
+ * `getPaperCounts` request — one of four paced S2 calls per card, i.e. ~5 s of
+ * anonymous pacing, saved on the critical path of every investigating workflow
+ * (.notes/78 R7).
+ */
+const CARD_PAPER_FIELDS = `${s2.DEFAULT_PAPER_FIELDS},abstract,openAccessPdf,referenceCount`
+/** scholar_card_list: default row cap. */
+const CARD_LIST_DEFAULT_LIMIT = 50
 
 /** Minimal view over the agent a tool call runs for. */
 interface AgentLike {
@@ -461,12 +479,10 @@ Returns: \`matched\` plus a \`titleCheck\` verdict; when the best hit is a diffe
           markdown: `**No confident match for "${args.title}".**\n\nThe best Semantic Scholar hit is a different work (${describeTitleCheck(check)}):\n\n- returned: ${paper.title ?? 'untitled'}${fmt.doiOfPaper(paper) ? ` (DOI: ${fmt.doiOfPaper(paper)})` : ''}\n\nAsk the user for the DOI, or re-query with the exact published title — do not use this record.`,
         } as any
       }
-      const card = cardIdentifier(paper)
       return {
         matched: true,
         titleCheck: check,
-        ...(card ? { cardPath: cardPath(env.settings().defaultOutputDir, card) } : {}),
-        markdown: `${fmt.formatResults([paper], args.title)}${card ? `\n> Card path for the memory library: \`${cardPath(env.settings().defaultOutputDir, card)}\`` : ''}`,
+        markdown: fmt.formatResults([paper], args.title),
         paper: fmt.compactPapers([paper])[0],
       } as any
     },
@@ -480,7 +496,7 @@ Returns: \`matched\` plus a \`titleCheck\` verdict; when the best hit is a diffe
 ID forms: DOI:10.xxxx/..., ARXIV:2106.15928, PMID:..., PMCID:..., CorpusId:....
 Use when: a DOI or arXiv id is already in hand and its metadata (or an identity check) is needed.
 Not for: title lookup (\`scholar_match_title\`) or full text (\`scholar_get_paper_snippets\`, \`arxiv_get_fulltext\`, \`sciverse_read_content\`).
-Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for ids taken from a list/table; a mismatch means the id resolves to a DIFFERENT work — do not cite it), and the canonical card path for the memory library.`,
+Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for ids taken from a list/table; a mismatch means the id resolves to a DIFFERENT work — do not cite it). Record it with \`scholar_card_save\`, which derives the card's path itself.`,
     parameters: {
       paperId: { type: 'string', description: 'Paper id with prefix, e.g. DOI:10.1038/s41586-020-2649-2', required: true },
       includeAbstract: { type: 'boolean', description: 'Also fetch the abstract and render it as its own **Abstract:** line (plus the `paper.abstract` field) — larger response; search results never carry one.' },
@@ -502,13 +518,10 @@ Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for id
           ? `> ⚠️ **Title mismatch for \`${args.paperId}\`** — ${describeTitleCheck(check)}.\n> - expected: ${check.expected}\n> - returned: ${check.actual ?? '(no title)'}\n> Do **not** cite this identifier or write it into a card; re-resolve with \`scholar_match_title\` or ask the user for the correct DOI.\n\n`
           : `> ${describeTitleCheck(check)}\n\n`
         : ''
-      const card = cardIdentifier(paper)
-      const cardFile = card ? cardPath(env.settings().defaultOutputDir, card) : undefined
       return {
         paperId: args.paperId,
         ...(check && checkJson ? { titleCheck: checkJson, verification: check.verdict } : { verification: 'unverified' }),
-        ...(cardFile ? { cardPath: cardFile } : {}),
-        markdown: `${warning}${fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120))}${cardFile ? `\n> Card path for the memory library: \`${cardFile}\`` : ''}`,
+        markdown: `${warning}${fmt.formatResults([paper], (paper.title ?? args.paperId).slice(0, 120))}`,
         paper: fmt.compactPapers([paper])[0] ?? null,
       }
     },
@@ -521,7 +534,8 @@ Returns: the record plus a \`titleCheck\` verdict (pass \`expectedTitle\` for id
     description: `Get ~500-word full-text content snippets from the Ai2 Asta corpus (the Semantic Scholar owner's full-text index, not exposed by the public S2 API).
 Use when: a specific passage from one known paper is needed and the Asta key is configured.
 Not for: whole-paper reading (\`arxiv_get_fulltext\`, \`sciverse_read_content\`, \`paper_pdf2md\`) or discovery (\`scholar_search_papers\`).
-Returns: verbatim snippets plus paper metadata. A \`query\` is required; pass \`paperIds\` to scope. An unconfigured key is reported as such — point the user at the Plugins page, do not retry.`,
+Returns: verbatim snippets plus paper metadata. A \`query\` is required; pass \`paperIds\` to scope. An unconfigured key is reported as such — point the user at the Plugins page, do not retry.
+Card it: \`scholar_card_save\` (see \`scholar-memory\`).`,
     parameters: {
       query: { type: 'string', description: 'Text to find in the paper(s) — the topic, a phrase, or the paper title. Required.', required: true },
       paperIds: { type: 'string', description: 'Restrict to these papers: comma-separated S2 IDs, CorpusId:<id>, DOI:<doi>, ARXIV:<id>, PMID:<id>, PMCID:<id>.' },
@@ -848,6 +862,292 @@ Returns: numbered \`entries\` plus \`footnote_block\` — ready \`[^n]: entry\` 
   }))
 
   // -------------------------------------------------------------------------
+  // scholar_card_* — the persistent memory card library (working memory)
+  //
+  // The card library is the plugin's memory of what has been INVESTIGATED, as
+  // opposed to what has been searched. It used to be authored entirely by the
+  // model from the `scholar-memory` skill; two real-world rounds (.notes/63,
+  // 65) showed the hand-rolled template + two citation calls + provenance
+  // formatting being deferred to report time or skipped outright, which is
+  // exactly when a memory stops being one (.notes/77). These two tools take
+  // over the mechanical half — identity gate, citation population, append-only
+  // merge, provenance format — so the model's remaining job is one call at the
+  // moment it finishes reading a paper.
+  // -------------------------------------------------------------------------
+
+  register(defineTool({
+    name: 'scholar_card_save',
+    description: `Persist ONE investigated paper as a memory card (\`cards/\` under the output dir): verify its identity, populate Citation Backtrack/Forwardtrack, bind an optional verbatim quote with provenance. Append-only.
+Use when: a paper has just been fetched or read — call it before moving to the next paper. This is working memory, not report-time cleanup.
+Not for: discovery or reading (\`scholar_search_*\`, \`sciverse_*\`, \`arxiv_get_fulltext\`, \`paper_pdf2md\`) or recalling the library (\`scholar_card_list\`).
+Returns: \`status\` (created/updated/refused), the card \`path\`, what each section gained, the \`coverage\` label recorded per citation section, and \`identityCheck\`. \`refused\` means NOTHING was written — the id resolved to a different work than \`expectedTitle\`; re-resolve it and do not cite it.`,
+    parameters: {
+      paperId: { type: 'string', description: 'The work to card: an id (DOI:/ARXIV:/`paper:<doi>`/…) **or its title** — a title is resolved via Semantic Scholar, then Sciverse. Keyed by the DOI, else the arXiv id, else the Sciverse key.', required: true },
+      expectedTitle: { type: 'string', description: 'Title it should resolve to; enables the identity gate (pass the title you actually saw). A mismatch writes NOTHING.' },
+      quote: { type: 'string', description: "Verbatim excerpt to bind as evidence (the source's own words, never rephrased); omit only when nothing has been read yet." },
+      docId: { type: 'string', description: 'Provenance: the Sciverse doc_id the quote came from (stored beside the quote — it churns on re-ingest).' },
+      offset: { type: 'integer', description: 'Provenance: character offset of the quote inside that doc_id.' },
+      page: { type: 'string', description: 'Provenance: page number, when the source exposes one.' },
+      finding: { type: 'string', description: 'Short note on what the quote shows; the quote carries the evidence.' },
+      keywords: { type: 'array', items: { type: 'string', description: 'One keyword' }, description: "3-5 core keywords for the card's Keywords line (a set — completed, not appended)." },
+      citations: { type: 'boolean', description: 'Populate Citation Backtrack/Forwardtrack from S2 (default true; 2 paced requests). Set false only when the quota is exhausted.' },
+    },
+    output: markdownOutput(
+      { status: { type: 'string' }, path: { type: 'string' }, created: { type: 'boolean' }, added: { type: 'json' }, coverage: { type: 'json' }, identityCheck: { type: 'json' } },
+      (value) => `Card ${value.status ?? 'unknown'}${value.path ? ` at ${value.path}` : ''}.`,
+    ),
+    async execute(args, exec) {
+      const { s2: client } = runtimeOf(ctx, env, exec)
+      const settings = env.settings()
+      const raw = (args.paperId ?? '').trim()
+      // A title is a first-class input (see `looksLikePaperId`): the Sciverse RAG
+      // path produces titles, not ids.
+      const asTitle = Boolean(raw) && !looksLikePaperId(raw)
+      const paperId = normalizeCardPaperId(raw)
+
+      // Resolve the record. S2 is the primary identity authority, but every
+      // chain that feeds this tool is Sciverse-native and Sciverse holds works
+      // S2 does not (Chinese journals, theses). A S2 miss therefore falls
+      // through to the source that actually has the paper, and only a total
+      // miss degrades to `unverified` — failing the write on a 404 is what
+      // .notes/78 R1 removed, because it turned "cards get deferred" into
+      // "cards never happen" on exactly that corpus.
+      let record: Record<string, any> | undefined
+      let identitySource: 'semantic-scholar' | 'sciverse' | 'none' = 'none'
+      let s2Miss: string | undefined
+      if (!asTitle) {
+        try {
+          record = await s2.getPaper(client, paperId, CARD_PAPER_FIELDS)
+          identitySource = 'semantic-scholar'
+        } catch (err) {
+          s2Miss = err instanceof s2.ScholarHttpError ? err.code : 'request_failed'
+        }
+        if (!record) {
+          const alt = await sciverseIdentityLookup(env, paperId, exec.signal)
+          if (alt) {
+            record = alt
+            identitySource = 'sciverse'
+          }
+        }
+      } else {
+        // Title path: S2 first (it yields a DOI), then the Sciverse index. Both
+        // are gated on the title matching, so a near-miss cannot become a card.
+        try {
+          const d = await s2.matchTitle(client, raw)
+          const hit = (d?.data ?? [])[0]
+          if (hit?.title && titleAccepted(titleVerdict(raw, hit.title))) {
+            record = hit
+            identitySource = 'semantic-scholar'
+          }
+          s2Miss = 'title_not_matched'
+        } catch (err) {
+          s2Miss = err instanceof s2.ScholarHttpError ? err.code : 'request_failed'
+        }
+        if (!record) {
+          const alt = await sciverseTitleLookup(env, raw, exec.signal)
+          if (alt) {
+            record = alt
+            identitySource = 'sciverse'
+          }
+        }
+      }
+
+      const check = args.expectedTitle ? titleVerdict(args.expectedTitle, record?.title) : undefined
+      // The identity gate is the whole reason the card is written by a tool: a
+      // DOI copied out of a list has resolved to an unrelated work in practice.
+      // It refuses ONLY on a resolved record that genuinely differs — `unknown`
+      // means there was nothing to compare, which must never be a refusal.
+      if (check?.verdict === 'mismatch') {
+        return {
+          status: 'refused',
+          identityCheck: { verdict: check.verdict, similarity: check.similarity, expected: check.expected ?? null, actual: check.actual ?? null, source: identitySource },
+          markdown: `**Nothing written.** \`${raw}\` resolves to a different work (${describeTitleCheck(check)}):\n\n- expected: ${check.expected}\n- returned: ${check.actual ?? '(no title)'}\n\nRe-resolve the id with \`scholar_match_title\`, or ask the user for the correct DOI — do not cite this identifier.`,
+        } as any
+      }
+      // Key from the resolved record when there is one, else from what the
+      // caller passed: a card under a verified key beats no card at all.
+      const identifier = cardIdentifier(record) ?? identifierFromPaperId(paperId)
+      if (!identifier) {
+        return { status: 'refused', markdown: `**Nothing written.** \`${args.paperId}\` carries no DOI, arXiv id or paperId to key a card by.` } as any
+      }
+      const relPath = cardPath(settings.defaultOutputDir, identifier)
+      const dir = resolveSubDir(resolveRootDir(settings.defaultOutputDir, baseDirOf(exec)), 'cards')
+      const dest = join(dir, cardFilename(identifier))
+      let existing: string | undefined
+      try {
+        existing = await readFile(dest, 'utf8')
+      } catch {
+        existing = undefined // absent (or unreadable) -> a fresh card is rendered
+      }
+
+      const citationErrors: string[] = []
+      let backtrack: cardstore.CitationUpdate | undefined
+      let forwardtrack: cardstore.CitationUpdate | undefined
+      let backtrackCoverage: Coverage | undefined
+      let forwardtrackCoverage: Coverage | undefined
+      if (args.citations !== false && identitySource === 'semantic-scholar') {
+        // The record's own counts came with the identity lookup above, so no
+        // extra `getPaperCounts` request is needed (R7).
+        const back = await cardCitationSection(client, paperId, 'references', typeof record?.referenceCount === 'number' ? record.referenceCount : undefined)
+        const fwd = await cardCitationSection(client, paperId, 'citations', typeof record?.citationCount === 'number' ? record.citationCount : undefined)
+        backtrack = back.update
+        forwardtrack = fwd.update
+        backtrackCoverage = back.coverage
+        forwardtrackCoverage = fwd.coverage
+        if (back.error) citationErrors.push(`references: ${back.error}`)
+        if (fwd.error) citationErrors.push(`citations: ${fwd.error}`)
+      } else if (args.citations !== false) {
+        // S2 has no record, so the citation endpoints would 404 identically:
+        // record the gap once instead of spending three paced calls re-learning
+        // it. The sections still carry an explicit "no citation data" line, so
+        // the completeness rule is satisfied honestly rather than skipped.
+        const gap = `not indexed by S2 (${s2Miss ?? 'no record'})`
+        backtrack = { entries: [], coverage: gap }
+        forwardtrack = { entries: [], coverage: gap }
+      }
+
+      const date = new Date().toISOString().slice(0, 10)
+      const priorEvaluations = existing ? cardstore.parseCard(existing).evaluations.length : 0
+      const update: cardstore.CardUpdate = {
+        meta: {
+          identifier,
+          ...(typeof record?.title === 'string' ? { title: record.title } : {}),
+          authors: (record?.authors ?? []).map((a: any) => (typeof a === 'string' ? a : a?.name)).filter((n: any) => typeof n === 'string' && n !== ''),
+          ...(record?.year !== undefined && record?.year !== null ? { year: record.year } : {}),
+          ...(typeof record?.venue === 'string' && record.venue ? { venue: record.venue } : {}),
+          ...(typeof record?.abstract === 'string' && record.abstract ? { abstract: record.abstract } : {}),
+          ...(args.keywords?.length ? { keywords: args.keywords } : {}),
+        },
+        ...(args.quote && args.quote.trim()
+          ? { evidence: [{ quote: args.quote, ...(args.docId ? { docId: args.docId } : {}), ...(args.offset !== undefined ? { offset: args.offset } : {}), ...(args.page !== undefined ? { page: args.page } : {}), ...(args.finding ? { finding: args.finding } : {}) }] }
+          : {}),
+        ...(backtrack ? { backtrack } : {}),
+        ...(forwardtrack ? { forwardtrack } : {}),
+        ...(existing
+          ? { evaluation: `- [v${priorEvaluations + 1} | ${date}] re-checked via scholar_card_save${args.quote ? ' (evidence appended)' : ''}` }
+          : {}),
+      }
+
+      const merged = cardstore.mergeCard(existing, update, date)
+      await mkdir(dir, { recursive: true })
+      await writeFile(dest, merged.markdown, 'utf8')
+
+      const gained = [
+        merged.delta.evidence ? `evidence +${merged.delta.evidence}` : '',
+        merged.delta.backtrack ? `backtrack +${merged.delta.backtrack}` : '',
+        merged.delta.forwardtrack ? `forwardtrack +${merged.delta.forwardtrack}` : '',
+        merged.delta.keywords ? 'keywords set' : '',
+      ].filter(Boolean).join(', ') || 'no new content'
+      const dup = merged.delta.duplicates ? ` (${merged.delta.duplicates} duplicate line(s) skipped)` : ''
+      const coverageLines = [
+        backtrackCoverage ? `\`${backtrackCoverage.label}\`` : '',
+        forwardtrackCoverage ? `\`${forwardtrackCoverage.label}\`` : '',
+      ].filter(Boolean)
+      // Say plainly which source verified the title, or that nothing did. The
+      // card is still written in the latter case — but the model must be able
+      // to tell a verified card from an unverified one.
+      const identityLines = identitySource === 'sciverse'
+        ? [`- ⚠️ Semantic Scholar has no record for this id (${s2Miss ?? 'no record'}) — the title was checked against the **Sciverse** record instead, and both citation sections record the S2 gap.`]
+        : identitySource === 'none'
+          ? ['- ⚠️ **UNVERIFIED**: neither Semantic Scholar nor Sciverse returned a record for this id — the card is keyed by the id you passed and its bibliographic fields are empty. Verify the DOI before citing it.']
+          : []
+      const markdown = [
+        `**Card ${merged.created ? 'created' : 'updated'}**: \`${relPath}\``,
+        '',
+        `- ${gained}${dup}`,
+        ...(coverageLines.length ? [`- coverage — backtrack: ${backtrackCoverage?.label ?? 'not populated'}; forwardtrack: ${forwardtrackCoverage?.label ?? 'not populated'}`] : []),
+        ...(citationErrors.length ? [`- ⚠️ citation population failed (${citationErrors.join('; ')}) — the section records the failure; re-run when the quota recovers`] : []),
+        ...identityLines,
+        `- identity: ${check ? describeTitleCheck(check) : 'not checked (no `expectedTitle` passed)'}`,
+      ].join('\n')
+
+      return {
+        status: merged.created ? 'created' : 'updated',
+        path: relPath,
+        created: merged.created,
+        added: merged.delta,
+        ...(backtrackCoverage || forwardtrackCoverage
+          ? { coverage: { ...(backtrackCoverage ? { backtrack: coverageJson(backtrackCoverage) } : {}), ...(forwardtrackCoverage ? { forwardtrack: coverageJson(forwardtrackCoverage) } : {}), ...(citationErrors.length ? { errors: citationErrors } : {}) } }
+          : {}),
+        identityCheck: {
+          verdict: check?.verdict ?? (identitySource === 'none' ? 'unverified' : 'not_checked'),
+          similarity: check?.similarity ?? 0,
+          expected: check?.expected ?? null,
+          actual: check?.actual ?? record?.title ?? null,
+          source: identitySource,
+        },
+        markdown,
+      }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  register(defineTool({
+    name: 'scholar_card_list',
+    description: `List the memory cards of investigated papers: the summary a report needs to recall them without re-reading every file.
+Use when: before writing a report (recall what was examined instead of re-deriving it from the conversation), or to check whether a paper is already carded.
+Not for: one paper's metadata (\`scholar_get_paper\`) or the other library artifacts (\`scholar_list_library\`).
+Returns: one row per card — identifier, path, title, keywords, evidence count, backtrack/forwardtrack counts, last evaluation, and \`complete\`. Incomplete cards are listed as such, not hidden.`,
+    parameters: {
+      keyword: { type: 'string', description: 'Only cards whose identifier, title or keywords contain this text (case-insensitive).' },
+      limit: { type: 'integer', description: `Row cap (default ${CARD_LIST_DEFAULT_LIMIT}).` },
+    },
+    output: markdownOutput(
+      { root: { type: 'string' }, total: { type: 'integer' }, returned: { type: 'integer' }, cards: { type: 'array', items: { type: 'json' } } },
+      (value) => `${value.total ?? 0} cards.`,
+    ),
+    async execute(args, exec) {
+      const settings = env.settings()
+      const dir = resolveSubDir(resolveRootDir(settings.defaultOutputDir, baseDirOf(exec)), 'cards')
+      let entries: string[]
+      try {
+        entries = await readdir(dir)
+      } catch {
+        entries = [] // no cards yet -> an empty library is a normal answer
+      }
+      const relRoot = (settings.defaultOutputDir || '.scholar').replace(/\/+$/, '')
+      const all: Array<cardstore.CardSummary & { path: string }> = []
+      for (const file of entries.filter((f) => f.endsWith('.md') && !f.startsWith('.')).sort()) {
+        try {
+          const text = await readFile(join(dir, file), 'utf8')
+          all.push({ ...cardstore.summarizeCard(text, file), path: `${relRoot}/cards/${file}` })
+        } catch {
+          // unreadable card: skip rather than fail the whole recall
+        }
+      }
+      const needle = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : ''
+      const matched = needle
+        ? all.filter((c) => [c.identifier ?? '', c.title ?? '', c.keywords.join(' ')].join(' ').toLowerCase().includes(needle))
+        : all
+      const limit = Math.max(1, Math.trunc(args.limit ?? CARD_LIST_DEFAULT_LIMIT))
+      // `any[]` for the same reason the other list tools use it: the tool result
+      // must satisfy the JSON value contract, and the row shape is already
+      // pinned by `CardSummary`.
+      const cards: any[] = matched.slice(0, limit)
+      const incomplete = matched.filter((c) => !c.complete).length
+      const unrecognized = matched.filter((c) => !c.recognized).length
+      const rows = cards.map((c) =>
+        `| ${c.identifier ?? '?'} | ${(c.title ?? '(untitled)').replace(/\|/g, '\\|').slice(0, 60)} | ${c.year ?? '?'} | ${c.backtrack}/${c.forwardtrack} | ${c.evidence} | ${c.complete ? 'yes' : 'no'} | ${c.keywords.join(', ').slice(0, 40)} | \`${c.path}\` |`,
+      )
+      const markdown = cards.length
+        ? [
+            `**${matched.length} card(s)** under \`${relRoot}/cards/\`${needle ? ` matching "${args.keyword}"` : ''}${matched.length > cards.length ? ` (showing ${cards.length})` : ''}.`,
+            '',
+            '| Identifier | Title | Year | Refs/Cites | Evidence | Complete | Keywords | Path |',
+            '|---|---|---|---|---|---|---|---|',
+            ...rows,
+            ...(incomplete ? ['', `> ${incomplete} card(s) are **incomplete** — both citation sections must be populated (or carry an explicit "no citation data" line) and \`## Evidence List\` needs at least one provenance-bound quote. Re-run \`scholar_card_save\` for those.`] : []),
+            ...(unrecognized ? ['', `> ${unrecognized} file(s) in \`cards/\` are not scholar cards — left untouched.`] : []),
+          ].join('\n')
+        : `No memory cards under \`${relRoot}/cards/\`${needle ? ` matching "${args.keyword}"` : ''} yet. Card an investigated paper with \`scholar_card_save\`.`
+      return { root: dir, total: matched.length, returned: cards.length, cards, markdown }
+    },
+    timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
+    isConcurrencySafe: NON_CONCURRENT,
+  }))
+
+  // -------------------------------------------------------------------------
   // paper_fetch_* — acquisition
   // -------------------------------------------------------------------------
 
@@ -999,7 +1299,8 @@ Returns: the file paths. An empty list is normal before any download.`,
     description: `Convert a single PDF (an https://...pdf URL or a local file path) to Markdown full text via the MinerU Agent lightweight parse API.
 Use when: the user wants full Markdown of one non-arXiv PDF that is already at hand (a URL or a downloaded file).
 Not for: arXiv papers (\`arxiv_get_fulltext\` first) or passage-level evidence (\`sciverse_read_content\`).
-Returns: the saved \`.md\` path (default .scholar/md) plus a short excerpt. No API key; IP rate-limited; ≤10MB cap (page limit is server-side) — split the source or fall back to sciverse slices on oversize/parse errors.`,
+Returns: the saved \`.md\` path (default .scholar/md) plus a short excerpt. No API key; IP rate-limited; ≤10MB cap (page limit is server-side) — split the source or fall back to sciverse slices on oversize/parse errors.
+Card it: \`scholar_card_save\` (see \`scholar-memory\`).`,
     parameters: {
       pdf: { type: 'string', description: 'PDF to convert: an https://...pdf URL or a local file path.', required: true },
       timeoutSec: { type: 'integer', description: `Poll timeout in seconds (default ${Math.floor(MINERU_TIMEOUT_MS / 1000)}, clamped to ${MINERU_MIN_TIMEOUT_SEC}-${MINERU_MAX_TIMEOUT_SEC})` },
@@ -1041,7 +1342,8 @@ Returns: the saved \`.md\` path (default .scholar/md) plus a short excerpt. No A
     description: `Fetch the official arXiv HTML full text of a paper by its arXiv id (arXiv's "experimental" HTML: a subset of papers have none → available:false).
 Use when: the content of an arXiv paper is wanted — first choice over PDF-to-Markdown.
 Not for: non-arXiv works (\`paper_pdf2md\`, \`sciverse_read_content\`, \`scholar_get_paper_snippets\`).
-Returns: Markdown by default (math as LaTeX $...$); md:false gives article-scoped raw HTML. save:true (default) writes .scholar/md/<id>.md (or .scholar/html/) plus the figures under .scholar/figs/, returning the paths; save:false returns the content inline (cap with maxChars) with figures attached as images for vision models. No API key; fetched through the proxy.`,
+Returns: Markdown by default (math as LaTeX $...$); md:false gives article-scoped raw HTML. save:true (default) writes .scholar/md/<id>.md (or .scholar/html/) plus the figures under .scholar/figs/, returning the paths; save:false returns the content inline (cap with maxChars) with figures attached as images for vision models. No API key; fetched through the proxy.
+Card it: \`scholar_card_save\` (see \`scholar-memory\`).`,
     parameters: {
       arxivId: { type: 'string', description: 'arXiv id (e.g. 2402.08954, 2402.08954v2, hep-ex/0307015) or an abs/pdf/html URL', required: true },
       save: { type: 'boolean', description: 'Save under the library dir (default true). When false, the full content is returned inline instead of a file path, and the figures are attached as inline images (for vision models).' },
@@ -1115,7 +1417,7 @@ Returns: Markdown by default (math as LaTeX $...$); md:false gives article-scope
     description: `List everything the plugin has produced under the output dir (default .scholar), grouped by subdirectory (pdfs/md/html/figs/cards).
 Use when: resuming work, or reporting which artifacts exist and where.
 Not for: PDF-only listings (\`paper_fetch_library\`).
-Returns: the file paths under the library root; empty subdirs are simply skipped.`,
+Returns: the file paths under the library root; empty subdirs are simply skipped. For the memory cards themselves, \`scholar_card_list\` recalls them with titles and completeness.`,
     parameters: {
       subdir: { type: 'string', enum: ['pdfs', 'md', 'html', 'figs', 'cards', 'all'], description: 'Which subdirectory to list (default all).' },
     },
@@ -1157,6 +1459,190 @@ Returns: the file paths under the library root; empty subdirs are simply skipped
 async function bestEffortSeedCounts(client: s2.ScholarClient, paperId: string): Promise<{ citationCount?: number; referenceCount?: number } | undefined> {
   try {
     return await s2.getPaperCounts(client, paperId)
+  } catch {
+    return undefined
+  }
+}
+
+/** Citation rows as a card stores them: title, year, authors, DOI. */
+function citationEntries(items: readonly any[], pick: 'citedPaper' | 'citingPaper'): cardstore.CitationEntry[] {
+  return items
+    .map((it) => it?.[pick] ?? {})
+    .filter((p: any) => typeof p?.title === 'string' && p.title !== '')
+    .map((p: any) => ({
+      title: p.title,
+      ...(p.year !== undefined && p.year !== null ? { year: p.year } : {}),
+      authors: (p.authors ?? []).map((a: any) => a?.name).filter((n: any) => typeof n === 'string' && n !== ''),
+      ...(typeof p.externalIds?.DOI === 'string' && p.externalIds.DOI ? { doi: p.externalIds.DOI } : {}),
+    }))
+}
+
+/**
+ * One card citation section. A failed call is a first-class outcome: the card
+ * is still written (its metadata and evidence outlive a transient 429) and the
+ * section records the failure rather than staying blank — the `scholar-memory`
+ * rule is "record `no citation data (S2: <code>)`", never an empty seed.
+ */
+async function cardCitationSection(
+  client: s2.ScholarClient,
+  paperId: string,
+  kind: 'references' | 'citations',
+  seedCount: number | undefined,
+): Promise<{ update: cardstore.CitationUpdate; coverage?: Coverage; error?: string }> {
+  const label = kind === 'references' ? 'references' : 'citing papers'
+  try {
+    const page = kind === 'references'
+      ? await s2.getReferences(client, paperId, { maxResults: CARD_CITATION_CAP, fields: CARD_CITATION_FIELDS })
+      : await s2.getCitations(client, paperId, { maxResults: CARD_CITATION_CAP, fields: CARD_CITATION_FIELDS })
+    const coverage = computeCoverage({
+      returned: page.items.length,
+      requestedCap: CARD_CITATION_CAP,
+      hasMore: page.hasMore,
+      ...(seedCount !== undefined ? { seedCount } : {}),
+      kind: label,
+    })
+    return {
+      update: { entries: citationEntries(page.items, kind === 'references' ? 'citedPaper' : 'citingPaper'), coverage: coverage.label },
+      coverage,
+    }
+  } catch (err) {
+    const code = err instanceof s2.ScholarHttpError ? err.code : 'request_failed'
+    return { update: { entries: [], coverage: `${label} unavailable (${code})` }, error: code }
+  }
+}
+
+/**
+ * One catalog field as a readable line: the name, then every non-empty
+ * property the API actually sent (description, filter/sort flags, the operator
+ * list, enum samples, stats). Deliberately schema-agnostic — the catalog is the
+ * authority, so the render must not depend on a field list we guessed.
+ */
+function renderCatalogField(f: any): string {
+  const name = f?.field_name ?? f?.name ?? f?.field ?? '?'
+  const parts: string[] = []
+  if (typeof f?.description === 'string' && f.description) parts.push(f.description)
+  for (const [key, value] of Object.entries(f ?? {})) {
+    if (key === 'field_name' || key === 'name' || key === 'field' || key === 'description') continue
+    if (typeof value === 'string' && value) parts.push(`${key}: ${value}`)
+    else if (typeof value === 'number' || typeof value === 'boolean') parts.push(`${key}: ${value}`)
+    else if (Array.isArray(value) && value.length) parts.push(`${key}: ${value.slice(0, 20).map((v) => (typeof v === 'object' ? JSON.stringify(v) : String(v))).join(', ')}`)
+  }
+  return `- \`${name}\` — ${parts.join(' · ')}`
+}
+
+/** Sciverse hands out `paper:<doi>`; Semantic Scholar wants `DOI:<doi>`. */
+function normalizeCardPaperId(raw: string): string {
+  const s = (raw ?? '').trim()
+  return /^paper:/i.test(s) ? `DOI:${s.slice(6).trim()}` : s
+}
+
+/**
+ * A card key derived from the request id alone, for when no source resolved a
+ * record. Mirrors `cardIdentifier`'s precedence (DOI → arXiv → raw id) so the
+ * key is the same one a resolved record would have produced.
+ */
+function identifierFromPaperId(paperId: string): string | undefined {
+  const s = (paperId ?? '').trim()
+  if (!s) return undefined
+  const m = /^([a-z]+):(.+)$/i.exec(s)
+  if (!m) return s
+  const kind = m[1] ?? ''
+  const v = (m[2] ?? '').trim()
+  if (!v) return undefined
+  if (/^doi$/i.test(kind)) return v
+  if (/^arxiv$/i.test(kind)) return `arXiv:${v}`
+  return s // pmid / pmcid / corpusid carry no better key
+}
+
+/** True when the caller passed an identifier rather than a title. A title is a
+ * legitimate input: a Sciverse RAG hit carries `title` + `doc_id` and nothing
+ * else identifiable (verified live — `/agentic-search` serves a fixed hit shape
+ * with no `unique_id` and no `doi`), so title resolution is the only way that
+ * path can produce a card at all (`.notes/78` §11). */
+function looksLikePaperId(value: string): boolean {
+  const s = (value ?? '').trim()
+  if (/^(doi|arxiv|pmid|pmcid|corpusid|paper):/i.test(s)) return true
+  return /^10\.\d{4,9}\/\S+$/.test(s)
+}
+
+/** One Sciverse meta-search row as the record shape the card writer expects. */
+function recordFromSciverseRow(row: any, fallbackDoi?: string): Record<string, any> | undefined {
+  const title = typeof row?.title === 'string' && row.title !== '' ? row.title : undefined
+  if (!title) return undefined
+  const authors = (Array.isArray(row.author) ? row.author : [])
+    .map((a: any) => (typeof a === 'string' ? a : a?.name))
+    .filter((n: any) => typeof n === 'string' && n !== '')
+    .map((name: string) => ({ name }))
+  const uniqueId = typeof row.unique_id === 'string' && row.unique_id ? row.unique_id : undefined
+  // `paper:<doi>` is Sciverse's paper key; its remainder IS the DOI.
+  const fromUnique = uniqueId && /^paper:/i.test(uniqueId) ? uniqueId.slice(6).trim() : undefined
+  const doi = (typeof row.doi === 'string' && row.doi ? row.doi : undefined) ?? fallbackDoi ?? fromUnique
+  return {
+    title,
+    ...(authors.length ? { authors } : {}),
+    ...(typeof row.publication_published_year === 'number' ? { year: row.publication_published_year } : {}),
+    ...(typeof row.publication_venue_name_unified === 'string' && row.publication_venue_name_unified ? { venue: row.publication_venue_name_unified } : {}),
+    ...(doi ? { externalIds: { DOI: doi } } : {}),
+    // No DOI anywhere: fall back to the Sciverse key so the card is still keyed
+    // by a stable paper id rather than by its title.
+    ...(!doi && uniqueId ? { paperId: uniqueId } : {}),
+  }
+}
+
+/**
+ * The identity fallback: the corpus that HAS the paper verifies the paper.
+ *
+ * Used only when Semantic Scholar serves no record. The chains that feed
+ * `scholar_card_save` are Sciverse-native, and Sciverse indexes Chinese
+ * journals and theses that S2 does not — exactly the GB/T 7714 use case — so a
+ * S2 404 must not become a failed write (`.notes/78` R1). Best-effort by
+ * design: a missing token or an API error degrades to "unverified", never to a
+ * refusal.
+ */
+async function sciverseIdentityLookup(
+  env: ScholarToolEnv,
+  paperId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, any> | undefined> {
+  const doi = doiFromPaperId(paperId)
+  if (!doi) return undefined
+  const key = await env.resolveSciverseKey()
+  if (!key) return undefined
+  try {
+    const sc = createSciverseClient(key, SCIVERSE_FALLBACK_TIMEOUT_MS, { maxAttempts: 2, backoffMs: [600] })
+    const r = (await sc.searchPapers({
+      filters_advanced: [{ field: 'doi', operator: FILTER_OP_EQ, value: doi }],
+      page: 1,
+      page_size: 1,
+    }, signal)) as any
+    const row = Array.isArray(r?.results) ? r.results[0] : undefined
+    return recordFromSciverseRow(row, doi)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Resolve a TITLE through the Sciverse metadata index. Only a row whose own
+ * title passes the identity gate is accepted, so a BM25 near-miss cannot become
+ * a card for the wrong work.
+ */
+async function sciverseTitleLookup(
+  env: ScholarToolEnv,
+  title: string,
+  signal?: AbortSignal,
+): Promise<Record<string, any> | undefined> {
+  const key = await env.resolveSciverseKey()
+  if (!key) return undefined
+  try {
+    const sc = createSciverseClient(key, SCIVERSE_FALLBACK_TIMEOUT_MS, { maxAttempts: 2, backoffMs: [600] })
+    const r = (await sc.searchPapers({ query: title, page: 1, page_size: 3 }, signal)) as any
+    const rows = Array.isArray(r?.results) ? r.results : []
+    for (const row of rows) {
+      const rec = recordFromSciverseRow(row)
+      if (rec?.title && titleAccepted(titleVerdict(title, rec.title))) return rec
+    }
+    return undefined
   } catch {
     return undefined
   }
@@ -1568,7 +2054,14 @@ Returns: the collection's \`fields\` — call once and cache. \`include_sample_v
         const sc = createSciverseClient(key, SCIVERSE_CLIENT_TIMEOUT_MS)
         const r = (await sc.listCatalog(args as { include_sample_values?: boolean; include_field_stats?: boolean; collection?: string }, exec.signal)) as any
         const fields = Array.isArray(r?.fields) ? r.fields : []
-        return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${fields.map((f: any) => `- \`${f.field_name ?? f.name ?? f.field}\` — ${f.description ?? ''}`).join('\n')}` }
+        // The model never sees the JSON, only this render — so the render has to
+        // carry what the description promises (operators, sortability, enum
+        // samples). It previously printed name + description only, which made
+        // `include_sample_values` / `include_field_stats` invisible no-ops.
+        // Rendering whatever non-empty properties the API sends (rather than a
+        // guessed field list) keeps this honest as the catalog evolves.
+        const rows = fields.map(renderCatalogField)
+        return { ok: true, collection: args.collection ?? 'papers', fields, markdown: `**Sciverse catalog** (\`${args.collection ?? 'papers'}\`): ${fields.length} fields\n\n${rows.join('\n')}` }
       })
     },
     timeoutMs: SCHOLAR_TOOL_TIMEOUT_MS,
@@ -1583,18 +2076,18 @@ Not for: natural-language questions (\`sciverse_semantic_search\`), full text (\
 Returns: rows with unique_id (always) and doc_id (when full text exists) plus OA / venue-type / (projected) topic evidence — the \`is_content_accessible\` flag is advisory, not a gate (\`doc_id\` is what \`sciverse_read_content\` needs); collections authors/sources render the entity's name and present summary fields. Counts cap at ${SCIVERSE_TOTAL_HITS_CAP} for keyword/broad filters; page * page_size = ${SCIVERSE_TOTAL_HITS_CAP} is the ceiling (a larger window is rejected with a validation error; no \`cursor\`). Citation-sorted keyword pools surface the corpus's most-cited papers regardless of topic — verify titles are on-topic.`,
     parameters: {
       collection: { type: 'string', enum: ['papers', 'authors', 'sources'], description: 'Entity collection (default papers). The convenience fields are papers-only; for authors/sources use `filters_advanced` with that collection\'s fields (see `sciverse_list_catalog`).' },
-      query: { type: 'string', description: 'BM25 over title/abstract/venue/keywords; empty = structured filters only. Boolean syntax works: UPPERCASE AND / OR / NOT, ( ) grouping and "quoted phrases"; NOT > AND > OR, adjacent words implicitly AND, and in boolean mode every term is a hard requirement (0 hits = 0). Lowercase and/or are plain words. Search terms ONLY — a label like `检索式1（预后预测）` becomes a required term. Max 64 terms in boolean mode (65+ → 400). With an explicit sort the query degrades to a plain hit filter.' },
+      query: { type: 'string', description: 'BM25 over title/abstract/venue/keywords; empty = structured filters only. Boolean: UPPERCASE AND/OR/NOT, ( ) grouping and "quoted phrases"; NOT > AND > OR, adjacent words imply AND, and in boolean mode EVERY term is required (0 hits = 0) — lowercase and/or are plain words, and a label like `检索式1` becomes a required term. Max 64 terms (65+ → 400). With an explicit sort the query degrades to a hit filter.' },
       title_contains: { type: 'string', description: 'Word the title must contain (title field only).' },
       abstract_contains: { type: 'string', description: 'Word the abstract must contain — folded into the full-text `query` (abstract is not filterable).' },
-      authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match; the backend `author` filter). For surname-only fuzzy matching use `filters_advanced` field `author` + FILTER_OP_MATCH.' },
+      authors: { type: 'array', items: { type: 'string' }, description: 'Author names (any match; the backend `author` filter).' },
       year_from: { type: 'integer', description: 'Earliest publication year (inclusive)' },
       year_to: { type: 'integer', description: 'Latest publication year (inclusive)' },
-      journals: { type: 'array', items: { type: 'string' }, description: 'Venue names (any match) — pass VERBATIM as returned (the index stores HTML-escaped forms; the plain "&" matches nothing). Containing matches: `filters_advanced` publication_venue_name_unified + FILTER_OP_MATCH_PHRASE.' },
+      journals: { type: 'array', items: { type: 'string' }, description: 'Venue names (any match) — pass VERBATIM as returned (the index stores HTML-escaped forms; the plain "&" matches nothing).' },
       subjects: { type: 'array', items: { type: 'string' }, description: 'Subject categories, e.g. "computer science"' },
       fields: { type: 'array', items: { type: 'string' }, description: 'Extra projections, e.g. ["primary_topic","topics","subjects"]. Projection is REPLACIVE, so the tool unions your list with the identity fields; the default already carries access_is_oa, publication_venue_type, metadata_type.' },
-      filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Item shape {field, operator?, value}; `operator` defaults to FILTER_OP_EQ and the set is EQ / NE / GT / GTE / LT / LTE / IN / NIN / CONTAINS / MATCH / MATCH_PHRASE. Field names MUST match `sciverse_list_catalog` exactly. Hints: author/keywords → MATCH (fuzzy), venue → MATCH_PHRASE, doi → EQ (normalized). Citation reverse-lookup: field "references_unique_id" with the target unique_id, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"}] (deep paging + arbitrary sorting).' },
+      filters_advanced: { type: 'array', items: { type: 'json' }, description: 'Item shape {field, operator?, value}; `operator` defaults to EQ. The full operator set, the applicable operators PER FIELD and the enum values come from `sciverse_list_catalog` — call it rather than guessing (a wrong field or operator is a 400). Citation reverse-lookup: field "references_unique_id" with the target unique_id, e.g. [{"field":"references_unique_id","value":"paper:10.1109/cvpr.2016.90"}] (deep paging + arbitrary sorting).' },
       sort_by_year: { type: 'string', enum: ['auto', 'desc', 'asc', 'none'], description: 'Year ordering (default auto: no year sort when `query`/`sort_advanced` is set — relevance and boosts rank; newest-first for pure filters). ⚠️ `query` + explicit sort is NOT "relevant and recent": the sort degrades the query to an OR hit filter and disables all boosts — use `freshness_boost` instead.' },
-      sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Hard sort fields, e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] (order defaults DESC). With a query the query becomes a hit filter and all boosts are ignored. Sortable: publication_published_year / publication_published_date / reference_count / citation_count / influential_citation_count / fwci.' },
+      sort_advanced: { type: 'array', items: { type: 'json' }, description: 'Hard sort fields, e.g. [{"field":"citation_count","order":"SORT_ORDER_DESC"}] (order defaults DESC). With a query the query becomes a hit filter and all boosts are ignored. Sortable fields: `sciverse_list_catalog`.' },
       freshness_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Recency weighting (MILD=10y, STRONG=3y). Only with a non-empty `query` when no sort is set; stackable; paging is shallow while active.' },
       impact_boost: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Citation-impact weighting (bounded; zero-citation neutral). Only with a non-empty `query` when no sort is set; stackable.' },
       language_affinity: { type: 'string', enum: ['NONE', 'MILD', 'STRONG'], description: 'Demotes (never excludes) results not in the query\'s language (MILD ×0.5 / STRONG ×0.2; unknown language stays neutral; the target is detected from the query text). Effective only with a query and when no sort is set. To hard-exclude instead: filters_advanced [{"field":"language","value":"en"}].' },
@@ -1757,10 +2250,11 @@ Returns: entries (id / id_type / title) plus total_count (in-corpus only, ~1% of
     name: 'sciverse_read_content',
     description: `Read a character-range slice of a paper's full text by doc_id (offsets/limits are Unicode code points).
 Use when: verifying a passage from \`sciverse_semantic_search\`, or reading around its offset.
-Not for: topic search (\`sciverse_search_papers\`, \`sciverse_semantic_search\`) or figure bytes (\`sciverse_get_resource\`).
+Not for: topic search (\`sciverse_search_papers\`, \`sciverse_semantic_search\`), figure bytes (\`sciverse_get_resource\`), or a whole work's text (\`arxiv_get_fulltext\`/\`scholar_get_paper_snippets\`/\`paper_pdf2md\`).
 Returns: the slice text, the API's \`bytes_returned\` count and \`next_offset\` (page with that, not with the count); an empty slice usually means the end; the text may carry \`![alt](file_name)\` placeholders for \`sciverse_get_resource\`.
-Server rules: \`offset\` is always sent (default 0) — omitting it upstream returns the WHOLE document and ignores \`limit\`; \`limit\` defaults to 4096 (API default 700, only with an offset; >524288 clamped).
-Recovery: CONTENT_NOT_FOUND or 502 FETCH_FAILED → pass \`alt_doc_ids\` from \`doc_id_index\`; the walk reports \`doc_id_used\` / \`attempts\` as a typed envelope.`,
+Server rules: \`offset\` is always sent (default 0) — omitting it returns the WHOLE document and ignores \`limit\`; \`limit\` defaults to 4096 (>524288 clamped).
+Recovery: CONTENT_NOT_FOUND or 502 FETCH_FAILED → pass \`alt_doc_ids\` from \`doc_id_index\`; the walk reports \`doc_id_used\` / \`attempts\` as a typed envelope.
+Card it: \`scholar_card_save\` (see \`scholar-memory\`).`,
     parameters: {
       doc_id: { type: 'string', description: 'Full-text artifact id (sha256) from a sciverse search/semantic hit', required: true },
       offset: { type: 'integer', description: 'Character offset (code points) to start from. Defaults to 0 and is always sent (clamped to >= 0) — omitting it upstream returns the WHOLE document and ignores `limit`.' },
@@ -1996,7 +2490,7 @@ Topic resolution (sciverse): pass \`topic_id\` (OpenAlex URL, e.g. https://opena
     description: `Build a verifiable citation pack for up to ${EVIDENCE_MAX_CLAIMS} claims: per claim, semantic search for the best passage, then read the full-text slice at its offset to verify the quote is in the source.
 Use when: grounding a draft or answer with checkable quotes, or fact-checking claims.
 Not for: broad discovery (\`sciverse_search_papers\`) or one claim's passage (\`sciverse_semantic_search\`).
-Returns: per claim {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} — quotes are verbatim, never rewritten. Unverified items stay marked unverified: report, never silently drop. Batch larger drafts into several calls.`,
+Returns: per claim {claim, quote, chunk_id, doc_id, offset, page_no, title, score, confidence, verified, matched} — quotes are verbatim, never rewritten. The item's \`title\` is what \`scholar_card_save\` takes (this endpoint serves no id/DOI). Unverified items stay marked unverified: report, never silently drop. Batch larger drafts into several calls.`,
     parameters: {
       claims: { type: 'array', items: { type: 'string' }, description: `Claims to ground (1-${EVIDENCE_MAX_CLAIMS}); each is used as the semantic query`, required: true },
       top_k: { type: 'integer', description: `Semantic hits per claim (default ${EVIDENCE_DEFAULT_TOP_K}, cap ${EVIDENCE_MAX_TOP_K})` },
